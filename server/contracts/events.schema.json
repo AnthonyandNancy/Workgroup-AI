@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://workgroup.invalid/schema/wg-v1-event.json",
+  "title": "Workgroup AI Realtime Event Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "eventId", "type", "issuedAt", "payload"],
+  "properties": {
+    "schemaVersion": { "const": "wg.v1" },
+    "eventId": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "type": { "type": "string", "enum": [
+      "message.created", "invitation.created", "task.approval_requested",
+      "task.approved", "task.cancelled", "task.progress", "task.shared",
+      "group_memory.changed", "ack", "error", "hello"
+    ] },
+    "issuedAt": { "type": "string", "format": "date-time" },
+    "roomId": { "type": "string" },
+    "roomSeq": { "type": "integer", "minimum": 1 },
+    "requestId": { "type": "string" },
+    "payload": { "type": "object" }
+  },
+  "description": "Envelope 草案。具体事件 payload 要按业务类型再定义子 schema，客户端需拒绝未识别字段组合。"
+}

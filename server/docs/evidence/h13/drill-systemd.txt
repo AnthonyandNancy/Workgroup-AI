@@ -1,0 +1,77 @@
+
+== 1. the service is running under systemd as a non-root user
+active
+MainPID=106
+User=workgroup-hub
+Group=workgroup-hub
+ProtectSystem=strict
+NoNewPrivileges=yes
+
+== 2. liveness and readiness over real HTTP
+{"status":"ok","service":"workgroup-ai-hub","version":"0.1.0","protocol":"wg.v1","uptimeSeconds":10}
+{"status":"ready","checks":{"database":{"checkedAt":"2026-10-15T00:18:18.201Z"},"startedAt":"2026-10-15T00:18:18.201Z","journalMode":"wal"}}
+
+== 3. a real client registers (admin_secret mode)
+{"user":{"id":"34eb8740-65bd-47d4-8570-ffdfe9af5d42","userHandle":"drilluser","displayName":"Drill User","status":"active","createdAt":"2026-10-15T00:18:18.240Z"}}
+
+== 4. registration without the bootstrap secret is refused
+status=403
+
+== 5. the client signs in and receives a device-bound token
+{"user":{"id":"34eb8740-65bd-47d4-8570-ffdfe9af5d42","userHandle":"drilluser","displayName":"Drill User","status":"active","createdAt":"2026-10-15T00:18:18.240Z
+
+token kid: k1
+
+== 6. a workgroup is created and a message is posted
+{"room":{"id":"4de344ff-2172-40ba-8161-6b7a9460edbb","name":"H-13 drill room","ownerUserId":"34eb8740-65bd-47d4-8570-ffdfe9af5d42","createdAt":"2026-10-15T00:18:18.295Z","myRole":"owner"}}
+{"message":{"id":"9024d8f0-691a-466d-89b0-1d8cf043f478","roomId":"4de344ff-2172-40ba-8161-6b7a9460edbb","roomSeq":1,"senderUserId":"34eb8740-65bd-47d4-8570-ffdfe9af5d42","senderDisplayName":"Drill User","clientMessageId":"drill-message-0001","body":"hello from the drill","createdAt":"2026-10-15T00:18:18.304Z"},"duplicate":false}
+
+== 7. the throttle refuses a password spray (12 attempts, budget 10)
+401 401 401 401 401 401 401 401 401 401 429 429 
+
+== 8. a scheduled backup, run through the systemd unit rather than by hand
+Result=success
+ExecMainStatus=0
+Oct 15 00:18:18 2e564624d440 node[158]: Wrote /var/lib/workgroup-ai/backups/scheduled-2026-10-15T00-18-18-725Z-1f21d110.sqlite
+Oct 15 00:18:18 2e564624d440 node[158]:   bytes: 282624, pages: 69, createdAt: 2026-10-15T00:18:18.725Z
+Oct 15 00:18:18 2e564624d440 node[158]:   manifest: /var/lib/workgroup-ai/backups/scheduled-2026-10-15T00-18-18-725Z-1f21d110.sqlite.manifest.json
+Oct 15 00:18:18 2e564624d440 node[158]:   artifact objects: 0 (0 bytes) at /var/lib/workgroup-ai/backups/scheduled-2026-10-15T00-18-18-725Z-1f21d110-objects
+Oct 15 00:18:18 2e564624d440 systemd[1]: workgroup-hub-backup.service: Deactivated successfully.
+Oct 15 00:18:18 2e564624d440 systemd[1]: Finished workgroup-hub-backup.service - Workgroup AI Hub scheduled backup.
+
+== 9. the backup is drilled against every entity count it recorded
+backup: /var/lib/workgroup-ai/backups/scheduled-2026-10-15T00-18-18-725Z-1f21d110.sqlite
+drill of /var/lib/workgroup-ai/backups/scheduled-2026-10-15T00-18-18-725Z-1f21d110.sqlite
+  recorded at: 2026-10-15T00:18:18.725Z
+  migrations:  0001_schema.sql, 0002_identity.sql, 0003_bot_directory.sql, 0004_dispatch_grants.sql, 0005_artifacts_shared_storage.sql, 0006_audit_retention.sql
+  entities:    16 tables, 10 rows
+  result:      every recorded count matches; the backup is complete
+
+== 10. total data loss: the database and its sidecars are destroyed in place
+backups
+
+== 11. restore from the scheduled backup
+Restored /var/lib/workgroup-ai/hub.sqlite from /var/lib/workgroup-ai/backups/scheduled-2026-10-15T00-18-18-725Z-1f21d110.sqlite
+  there was no previous database file to keep a safety copy of
+  migrations present in the restored file: 1, 2, 3, 4, 5, 6
+  ownership: uid 997, gid 997, mode 644 (taken from the data directory)
+  artifact objects: restored 0, already present 0
+/var/lib/workgroup-ai/hub.sqlite: ok
+  migrations: 1, 2, 3, 4, 5, 6
+  tables: 20
+
+== 12. the restored database serves the same collaboration data
+{"rooms":[{"id":"4de344ff-2172-40ba-8161-6b7a9460edbb","name":"H-13 drill room","ownerUserId":"34eb8740-65bd-47d4-8570-ffdfe9af5d42","createdAt":"2026-10-15T00:18:18.295Z","myRole":"owner"}]}
+{"messages":[{"id":"9024d8f0-691a-466d-89b0-1d8cf043f478","roomId":"4de344ff-2172-40ba-8161-6b7a9460edbb","roomSeq":1,"senderUserId":"34eb8740-65bd-47d4-8570-ffdfe9af5d42","clientMessageId":"drill-message-0001","body":"hello from the drill","createdAt":"2026-10-15T00:18:18.304Z"}],"nextAfterSeq":1,"hasMore":false}
+
+== 13. deploy-check agrees this copy is self-contained
+server-only deployment check
+  ok    configuration valid for NODE_ENV=production
+  ok    /var/lib/workgroup-ai is readable and writable
+  ok    TLS is terminated upstream; the Hub itself listens in cleartext behind it
+  ok    /opt/workgroup-ai/server contains the Hub sources and its migrations
+  ok    34 source files import only declared packages and Node's own modules
+  ok    2 declared dependencies
+  ok    nothing outside server/ is required to run this copy
+
+DRILL COMPLETE

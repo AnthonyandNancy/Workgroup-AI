@@ -1,0 +1,28 @@
+# Workgroup AI Hub — backup schedule.
+#
+# Daily at 03:30 with up to 15 minutes of spread, so a fleet of Hubs does not wake up together
+# and so the backup lands outside working hours. `Persistent=true` runs a missed backup after a
+# reboot: a schedule that silently skips because the machine was off is how a retention window
+# ends up with a hole in it.
+#
+# Retention is not this unit's job — `hub backup` prunes to
+# HUB_BACKUP_RETENTION_COUNT as part of the same run, so the count and the copies it keeps
+# cannot drift apart.
+#
+# Check on it with:
+#   systemctl list-timers workgroup-hub-backup.timer
+#   journalctl -u workgroup-hub-backup.service -n 50
+#   node src/cli/hub.js backup-drill <newest backup file>
+[Unit]
+Description=Workgroup AI Hub backup timer
+Documentation=file:/opt/workgroup-ai/server/deploy/DEPLOYMENT.md
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=900
+Persistent=true
+AccuracySec=1min
+Unit=workgroup-hub-backup.service
+
+[Install]
+WantedBy=timers.target

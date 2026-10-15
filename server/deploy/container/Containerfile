@@ -1,0 +1,57 @@
+# Workgroup AI Hub — container image.
+#
+# The image contains the Hub and nothing else: no Electron, no DSH, no DS Bot. That is the whole
+# point of the deployment split — the server runs a collaboration control plane, while every
+# agent runtime stays on the machine of the employee who owns it.
+#
+# Build from the repository root so the build context is `server/` alone:
+#   podman build -f deploy/container/Containerfile -t workgroup-ai-hub:0.1.0 .
+#
+# Run:
+#   podman run -d --name workgroup-hub \
+#     -p 8443:8443 \
+#     -v /srv/workgroup-ai:/var/lib/workgroup-ai:Z \
+#     -v /etc/workgroup-ai:/etc/workgroup-ai:ro,Z \
+#     --env-file /etc/workgroup-ai/hub.env \
+#     workgroup-ai-hub:0.1.0
+
+# Pin the major version: the Hub requires Node 24 or newer (`server/package.json` enforces it, and
+# the configuration check refuses to start below it).
+FROM docker.io/library/node:24-alpine
+
+# `tini` reaps orphans and forwards signals. The Hub closes its database on SIGTERM, so signal
+# handling is not optional here: without it a container stop would leave WAL files mid-checkpoint.
+RUN apk add --no-cache tini
+
+WORKDIR /opt/workgroup-ai/server
+
+# Dependencies first, so a source change does not reinstall them.
+COPY package.json package-lock.json ./
+# `npm ci` needs the lockfile and installs exactly what it pins. If no native module is present the
+# build fails loudly rather than silently resolving different versions.
+RUN npm ci --omit=dev --no-audit --no-fund
+
+COPY src ./src
+COPY db ./db
+COPY contracts ./contracts
+COPY deploy ./deploy
+COPY docs ./docs
+COPY README.md ./
+COPY .env.example ./
+
+# The data directory is a volume, never part of the image: SQLite, attachments, and backups live
+# on the host so a new image does not discard them.
+RUN mkdir -p /var/lib/workgroup-ai && chown -R node:node /var/lib/workgroup-ai
+VOLUME ["/var/lib/workgroup-ai"]
+
+# The `node` user ships with the image; the Hub has no reason to run as root.
+USER node
+ENV HUB_DATA_DIR=/var/lib/workgroup-ai
+EXPOSE 8443
+
+# Readiness, not liveness: a Hub that cannot write its database must not be reported healthy.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.HUB_PORT??8443)+'/api/v1/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "src/index.js"]

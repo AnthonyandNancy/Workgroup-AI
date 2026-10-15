@@ -1,0 +1,19 @@
+== stop the service, as the runbook requires ==
+== run the restore AS ROOT (this is the case that used to break) ==
+0
+backup: /var/lib/workgroup-ai/backups/scheduled-2026-10-15T00-10-00-372Z-4a7f5752.sqlite
+Restored /var/lib/workgroup-ai/hub.sqlite from /var/lib/workgroup-ai/backups/scheduled-2026-10-15T00-10-00-372Z-4a7f5752.sqlite
+  previous database kept at /var/lib/workgroup-ai/hub.sqlite.pre-restore-2026-10-15T00-10-25-361Z
+  migrations present in the restored file: 1, 2, 3, 4, 5, 6
+  ownership preserved from the replaced database: uid 997, gid 997, mode 644
+  artifact objects: restored 0, already present 0
+== ownership of the restored file ==
+-rw-r--r-- 1 workgroup-hub workgroup-hub 282624 Oct 15 00:10 /var/lib/workgroup-ai/hub.sqlite
+== the service account must be able to write it ==
+WRITABLE-BY-SERVICE-ACCOUNT
+== start the service and confirm it comes up healthy (no restart loop) ==
+active
+NRestarts=0
+ExecMainStatus=0
+{"status":"ready","checks":{"database":{"checkedAt":"2026-10-15T00:10:31.402Z"},"startedAt":"2026-10-15T00:09:59.828Z","journalMode":"wal"}}
+ROOT RESTORE DRILL COMPLETE

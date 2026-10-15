@@ -1,0 +1,61 @@
+{
+  "rows": [
+    "Plugins",
+    "Bot",
+    "Automation tasks"
+  ],
+  "results": [
+    [
+      true,
+      "the Plugins entry is present (index 0)"
+    ],
+    [
+      true,
+      "a Bot entry is present (index 1)"
+    ],
+    [
+      true,
+      "Bot is directly below Plugins (Plugins=0, Bot=1)"
+    ],
+    [
+      true,
+      "there is exactly one Bot entry (found 1)"
+    ],
+    [
+      true,
+      "the first-level navigation has no \"Chief\" entry"
+    ],
+    [
+      true,
+      "the first-level navigation has no \"Writer\" entry"
+    ],
+    [
+      true,
+      "the first-level navigation has no \"Coder\" entry"
+    ],
+    [
+      true,
+      "the first-level navigation has no \"Group chats\" entry"
+    ],
+    [
+      true,
+      "the first-level navigation has no \"Chats\" entry"
+    ],
+    [
+      true,
+      "the first-level navigation has no \"Bots\" entry"
+    ],
+    [
+      true,
+      "entering the Bot entry mounts the team surface (attribute set)"
+    ],
+    [
+      true,
+      "leaving the Bot entry withdraws the team surface"
+    ],
+    [
+      true,
+      "the first-level navigation is intact (3 rows)"
+    ]
+  ]
+}

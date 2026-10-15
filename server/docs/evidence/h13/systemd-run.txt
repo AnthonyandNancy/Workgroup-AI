@@ -1,0 +1,53 @@
+● workgroup-hub.service - Workgroup AI Hub
+     Loaded: loaded (/etc/systemd/system/workgroup-hub.service; enabled; preset: enabled)
+     Active: active (running) since Thu 2026-10-15 00:02:00 UTC; 31s ago
+ Invocation: 5302b352f1234b5baf045d8ff83f5be8
+       Docs: file:/opt/workgroup-ai/server/deploy/DEPLOYMENT.md
+   Main PID: 240 (MainThread)
+      Tasks: 11 (limit: 512)
+     Memory: 40.8M (max: 1G, available: 983.1M)
+     CGroup: /docker/c14e6a4d5b5ff1f7f7d7fa61448b3c4555fa04df72abe878a64a95ead614930a/system.slice/workgroup-hub.service
+             └─240 /usr/bin/node src/index.js
+
+Oct 15 00:01:55 c14e6a4d5b5f systemd[1]: workgroup-hub.service: Failed with result 'signal'.
+Oct 15 00:02:00 c14e6a4d5b5f systemd[1]: workgroup-hub.service: Scheduled restart job, restart counter is at 1.
+Oct 15 00:02:00 c14e6a4d5b5f systemd[1]: Started workgroup-hub.service - Workgroup AI Hub.
+Oct 15 00:02:01 c14e6a4d5b5f node[240]: [hub] schema is current (6 migration(s) already applied)
+Oct 15 00:02:01 c14e6a4d5b5f node[240]: {"level":30,"time":1792022521247,"pid":240,"hostname":"c14e6a4d5b5f","msg":"Server listening at http://127.0.0.1:8443"}
+Oct 15 00:02:01 c14e6a4d5b5f node[240]: {"level":30,"time":1792022521247,"pid":240,"hostname":"c14e6a4d5b5f","version":"0.1.0","protocol":"wg.v1","node":"24.22.0","dataDir":"/var/lib/workgroup-ai","tls":"off (terminate TLS at a proxy, or set HUB_TLS_CERT/HUB_TLS_KEY)","msg":"Workgroup AI Hub is listening"}
+Oct 15 00:02:12 c14e6a4d5b5f node[240]: {"level":30,"time":1792022532085,"pid":240,"hostname":"c14e6a4d5b5f","reqId":"2d3340a6-a5d0-49cb-b37c-dae2a0ee9066","req":{"method":"GET","url":"/api/v1/health/live","host":"127.0.0.1:8443","remoteAddress":"127.0.0.1","remotePort":38724},"msg":"incoming request"}
+Oct 15 00:02:12 c14e6a4d5b5f node[240]: {"level":30,"time":1792022532088,"pid":240,"hostname":"c14e6a4d5b5f","reqId":"2d3340a6-a5d0-49cb-b37c-dae2a0ee9066","res":{"statusCode":200},"responseTime":3.1529050000008283,"msg":"request completed"}
+
+NEXT                            LEFT LAST PASSED UNIT                       ACTIVATES
+Thu 2026-10-15 03:42:07 UTC 3h 39min -         - workgroup-hub-backup.timer workgroup-hub-backup.service
+
+1 timers listed.
+Pass --all to see loaded but inactive timers, too.
+
+MemoryMax=1073741824
+TasksMax=512
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+NoNewPrivileges=yes
+
+Oct 15 00:01:07 c14e6a4d5b5f node[118]: [hub] migration 0001_schema.sql: applied
+Oct 15 00:01:07 c14e6a4d5b5f node[118]: [hub] migration 0002_identity.sql: applied
+Oct 15 00:01:07 c14e6a4d5b5f node[118]: [hub] migration 0003_bot_directory.sql: applied
+Oct 15 00:01:07 c14e6a4d5b5f node[118]: [hub] migration 0004_dispatch_grants.sql: applied
+Oct 15 00:01:07 c14e6a4d5b5f node[118]: [hub] migration 0005_artifacts_shared_storage.sql: applied
+Oct 15 00:01:07 c14e6a4d5b5f node[118]: [hub] migration 0006_audit_retention.sql: applied
+Oct 15 00:01:07 c14e6a4d5b5f node[118]: [hub] applied 6 migration(s): 0001_schema.sql, 0002_identity.sql, 0003_bot_directory.sql, 0004_dispatch_grants.sql, 0005_artifacts_shared_storage.sql, 0006_audit_retention.sql
+Oct 15 00:01:07 c14e6a4d5b5f node[118]: {"level":30,"time":1792022467603,"pid":118,"hostname":"c14e6a4d5b5f","msg":"Server listening at http://127.0.0.1:8443"}
+Oct 15 00:01:07 c14e6a4d5b5f node[118]: {"level":30,"time":1792022467604,"pid":118,"hostname":"c14e6a4d5b5f","version":"0.1.0","protocol":"wg.v1","node":"24.22.0","dataDir":"/var/lib/workgroup-ai","tls":"off (terminate TLS at a proxy, or set HUB_TLS_CERT/HUB_TLS_KEY)","msg":"Workgroup AI Hub is listening"}
+Oct 15 00:01:22 c14e6a4d5b5f node[118]: {"level":30,"time":1792022482728,"pid":118,"hostname":"c14e6a4d5b5f","reqId":"5eec3d0f-eae9-429d-b2a0-99d51d88ecb0","req":{"method":"GET","url":"/api/v1/health/ready","host":"127.0.0.1:8443","remoteAddress":"127.0.0.1","remotePort":36846},"msg":"incoming request"}
+Oct 15 00:01:22 c14e6a4d5b5f node[118]: {"level":30,"time":1792022482732,"pid":118,"hostname":"c14e6a4d5b5f","reqId":"5eec3d0f-eae9-429d-b2a0-99d51d88ecb0","res":{"statusCode":200},"responseTime":3.546955000001617,"msg":"request completed"}
+Oct 15 00:01:55 c14e6a4d5b5f systemd[1]: workgroup-hub.service: Main process exited, code=killed, status=9/KILL
+Oct 15 00:01:55 c14e6a4d5b5f systemd[1]: workgroup-hub.service: Failed with result 'signal'.
+Oct 15 00:02:00 c14e6a4d5b5f systemd[1]: workgroup-hub.service: Scheduled restart job, restart counter is at 1.
+Oct 15 00:02:00 c14e6a4d5b5f systemd[1]: Started workgroup-hub.service - Workgroup AI Hub.
+Oct 15 00:02:01 c14e6a4d5b5f node[240]: [hub] schema is current (6 migration(s) already applied)
+Oct 15 00:02:01 c14e6a4d5b5f node[240]: {"level":30,"time":1792022521247,"pid":240,"hostname":"c14e6a4d5b5f","msg":"Server listening at http://127.0.0.1:8443"}
+Oct 15 00:02:01 c14e6a4d5b5f node[240]: {"level":30,"time":1792022521247,"pid":240,"hostname":"c14e6a4d5b5f","version":"0.1.0","protocol":"wg.v1","node":"24.22.0","dataDir":"/var/lib/workgroup-ai","tls":"off (terminate TLS at a proxy, or set HUB_TLS_CERT/HUB_TLS_KEY)","msg":"Workgroup AI Hub is listening"}
+Oct 15 00:02:12 c14e6a4d5b5f node[240]: {"level":30,"time":1792022532085,"pid":240,"hostname":"c14e6a4d5b5f","reqId":"2d3340a6-a5d0-49cb-b37c-dae2a0ee9066","req":{"method":"GET","url":"/api/v1/health/live","host":"127.0.0.1:8443","remoteAddress":"127.0.0.1","remotePort":38724},"msg":"incoming request"}
+Oct 15 00:02:12 c14e6a4d5b5f node[240]: {"level":30,"time":1792022532088,"pid":240,"hostname":"c14e6a4d5b5f","reqId":"2d3340a6-a5d0-49cb-b37c-dae2a0ee9066","res":{"statusCode":200},"responseTime":3.1529050000008283,"msg":"request completed"}

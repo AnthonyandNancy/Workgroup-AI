@@ -1,0 +1,31 @@
+● workgroup-hub.service - Workgroup AI Hub
+     Loaded: loaded (/etc/systemd/system/workgroup-hub.service; enabled; preset: enabled)
+     Active: active (running) since Thu 2026-10-15 00:10:25 UTC; 6s ago
+ Invocation: 0f918a757f0f4378893ec111c359ea8a
+       Docs: file:/opt/workgroup-ai/server/deploy/DEPLOYMENT.md
+   Main PID: 308 (MainThread)
+      Tasks: 11 (limit: 512)
+     Memory: 40.4M (max: 1G, available: 983.5M)
+     CGroup: /docker/929f02343943585f86a914e443f9f3ae68c78da637ab2c9bb5bf8f2cdd54c4fc/system.slice/workgroup-hub.service
+             └─308 /usr/bin/node src/index.js
+
+Oct 15 00:10:25 929f02343943 systemd[1]: Started workgroup-hub.service - Workgroup AI Hub.
+Oct 15 00:10:25 929f02343943 node[308]: [hub] schema is current (6 migration(s) already applied)
+Oct 15 00:10:25 929f02343943 node[308]: {"level":30,"time":1792023025598,"pid":308,"hostname":"929f02343943","msg":"Server listening at http://127.0.0.1:8443"}
+Oct 15 00:10:25 929f02343943 node[308]: {"level":30,"time":1792023025599,"pid":308,"hostname":"929f02343943","version":"0.1.0","protocol":"wg.v1","node":"24.22.0","dataDir":"/var/lib/workgroup-ai","tls":"off (terminate TLS at a proxy, or set HUB_TLS_CERT/HUB_TLS_KEY)","msg":"Workgroup AI Hub is listening"}
+Oct 15 00:10:31 929f02343943 node[308]: {"level":30,"time":1792023031401,"pid":308,"hostname":"929f02343943","reqId":"e879bca3-c991-4c76-90d0-0bd1fc1ab024","req":{"method":"GET","url":"/api/v1/health/ready","host":"127.0.0.1:8443","remoteAddress":"127.0.0.1","remotePort":33232},"msg":"incoming request"}
+Oct 15 00:10:31 929f02343943 node[308]: {"level":30,"time":1792023031406,"pid":308,"hostname":"929f02343943","reqId":"e879bca3-c991-4c76-90d0-0bd1fc1ab024","res":{"statusCode":200},"responseTime":3.9560099999998783,"msg":"request completed"}
+
+NEXT                            LEFT LAST PASSED UNIT                       ACTIVATES
+Thu 2026-10-15 03:32:55 UTC 3h 22min -         - workgroup-hub-backup.timer workgroup-hub-backup.service
+
+1 timers listed.
+Pass --all to see loaded but inactive timers, too.
+
+MemoryMax=1073741824
+TasksMax=512
+ReadWritePaths=/var/lib/workgroup-ai
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+NoNewPrivileges=yes

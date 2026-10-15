@@ -1,0 +1,59 @@
+# Workgroup AI Hub — systemd unit.
+#
+# The Hub is one process writing one SQLite file, so the unit is deliberately the only thing that
+# starts it: `Restart=always` after a crash, and no automatic duplicate instance. A second Hub on
+# the same data directory contends for the WAL lock and one of them serves stale reads.
+#
+# Install:
+#   install -m 0644 workgroup-hub.service /etc/systemd/system/
+#   install -m 0600 hub.env /etc/workgroup-ai/hub.env      # from server/.env.example
+#   systemctl daemon-reload && systemctl enable --now workgroup-hub
+[Unit]
+Description=Workgroup AI Hub
+Documentation=file:/opt/workgroup-ai/server/deploy/DEPLOYMENT.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=workgroup-hub
+Group=workgroup-hub
+WorkingDirectory=/opt/workgroup-ai/server
+# Secrets and deployment values come from this file, not from the unit, so the unit can live in
+# version control without a signing key in it.
+EnvironmentFile=/etc/workgroup-ai/hub.env
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=5s
+# A SIGTERM is how the Hub closes its sockets and its database; give it time to finish.
+KillSignal=SIGTERM
+TimeoutStopSec=30s
+
+# The Hub needs its data directory and nothing else. The hardening below is what keeps a bug in
+# the HTTP surface from becoming a bug on the host.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+# Only the data directory is writable; HUB_DATA_DIR must match ReadWritePaths below.
+ReadWritePaths=/var/lib/workgroup-ai
+# Listening on a privileged port would need this; the Hub defaults to 8443 and is expected to sit
+# behind a reverse proxy or a TLS terminator.
+AmbientCapabilities=
+CapabilityBoundingSet=
+
+# A single Hub with WAL is memory-hungry under load; these caps keep one runaway request from
+# taking the machine with it.
+MemoryMax=1G
+TasksMax=512
+
+[Install]
+WantedBy=multi-user.target

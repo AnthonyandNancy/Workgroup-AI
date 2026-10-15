@@ -1,0 +1,19 @@
+# Docker reads this file from the build-context root, not from the Containerfile's directory —
+# a copy under `deploy/container/` would never be consulted. The build context is `server/` alone,
+# so this is the file that decides what the image carries.
+#
+# What is excluded and why:
+#   node_modules  the image installs its own from the lockfile; a copied tree would bake in the
+#                 developer's platform and any local patch.
+#   data          the database, attachments, and backups are a host volume, never image content.
+#   *.sqlite*     a stray database file committed by accident must not ship.
+#   .env          secrets never enter an image layer; the deployment passes them at run time.
+#   tests         the suite is a development artifact. Keeping it out also keeps the image from
+#                 advertising test fixtures and expected secrets to anyone who can pull it.
+node_modules
+data
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.env
+tests

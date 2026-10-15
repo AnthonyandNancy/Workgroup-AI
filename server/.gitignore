@@ -1,0 +1,9 @@
+node_modules
+dist
+*.log
+.env.local
+.env.*.local
+
+.playwright-cli/
+output*/
+.idea*/

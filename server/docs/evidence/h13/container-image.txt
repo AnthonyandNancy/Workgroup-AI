@@ -1,0 +1,22 @@
+# H-13 container drill — real Linux, real Docker, real HTTP
+# Date: 2026-10-15T00:02:37Z
+# Host: Windows + Docker Desktop Windows_NT | Kernel: 5.15.167.4-microsoft-standard-WSL2
+# Image: workgroup-ai-hub:h13 built FROM docker.io/library/node:24-alpine
+# Node inside the image: v24.22.0
+
+## image contents (server-only purity)
+README.md
+contracts
+db
+deploy
+docs
+node_modules
+package-lock.json
+package.json
+src
+--- DSH/DS Bot/Electron/workspace markers ---
+none-present
+--- tests directory ---
+tests-excluded
+--- node_modules matches ---
+no-dsh-no-ds-bot-no-electron

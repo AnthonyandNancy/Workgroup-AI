@@ -1,0 +1,24 @@
+{
+  "name": "workgroup-ai-hub",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Workgroup AI Hub: the standalone collaboration control plane (users, devices, rooms, messages, approvals, tasks, group memory, artifacts, audit).",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test tests/"
+  },
+  "dependencies": {
+    "@fastify/websocket": "^11.3.4",
+    "fastify": "^5.12.7"
+  },
+  "bin": {
+    "hub": "src/cli/hub.js"
+  }
+}

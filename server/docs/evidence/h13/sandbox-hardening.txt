@@ -1,0 +1,23 @@
+# H-13 sandbox hardening: directives are declared AND enforced
+# Date: 2026-10-15T00:10:39Z
+
+## systemd state as reported by systemd itself
+MemoryMax=1073741824
+TasksMax=512
+ReadWritePaths=/var/lib/workgroup-ai
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+
+## ProtectSystem=strict is real: writing outside the data directory fails inside the service mount namespace
+$ nsenter -t $PID -m -- touch /usr/canary
+touch: cannot touch '/usr/canary': Read-only file system
+$ nsenter -t $PID -m -- touch /etc/canary
+touch: cannot touch '/etc/canary': Read-only file system
+
+## the data directory remains writable (ReadWritePaths)
+$ nsenter -t $PID -m -- touch /var/lib/workgroup-ai/canary
+OK

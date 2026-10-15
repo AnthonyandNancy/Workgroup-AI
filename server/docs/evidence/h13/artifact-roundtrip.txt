@@ -1,0 +1,26 @@
+room: 44645bb7-084d-4ed9-888e-ae0f67fd096c
+== upload a real attachment through HTTP ==
+{"artifact":{"id":"ae935413-98cb-423a-bc5c-e7290514e463","roomId":"44645bb7-084d-4ed9-888e-ae0f67fd096c","taskId":null,"uploaderUserId":"d00c34b9-3a4f-4a30-b54a-4d1edf424171","fileName":"report.csv","sizeBytes":28,"sha256":"cac2710399f2c440de1b1e0f905e7ad2b0d59a50850e624df5498fa054959ea6","contentType":"text/csv","recipientUserIds":["d00c34b9-3a4f-4a30-b54a-4d1edf424171"],"createdAt":"2026-10-15T00:11:07.217Z"}}
+artifact: ae935413-98cb-423a-bc5c-e7290514e463
+== the bytes are on disk under the content-addressed path ==
+sha256: cac2710399f2c440de1b1e0f905e7ad2b0d59a50850e624df5498fa054959ea6
+-rw-r--r-- 1 workgroup-hub workgroup-hub 28 Oct 15 00:11 /var/lib/workgroup-ai/artifacts/ca/c2/cac2710399f2c440de1b1e0f905e7ad2b0d59a50850e624df5498fa054959ea6
+== take a backup: it must copy the object ==
+node:internal/modules/cjs/loader:1568
+  throw err;
+  ^
+
+Error: Cannot find module '/src/cli/hub.js'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1564:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1118:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1142:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1169:12)
+    at Module._load (node:internal/modules/cjs/loader:1341:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.22.0

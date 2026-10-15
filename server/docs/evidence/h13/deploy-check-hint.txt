@@ -1,0 +1,6 @@
+server-only deployment check
+  ok    /opt/workgroup-ai/server contains the Hub sources and its migrations
+  ok    34 source files import only declared packages and Node's own modules
+  ok    2 declared dependencies
+  FAIL  configuration: Hub configuration is invalid:; - HUB_TOKEN_SIGNING_KEY is required when NODE_ENV=production; - HUB_ADMIN_BOOTSTRAP_SECRET is required when HUB_REGISTRATION=admin_secret
+  hint  this shell has not loaded /etc/workgroup-ai/hub.env; run: set -a; . /etc/workgroup-ai/hub.env; set +a

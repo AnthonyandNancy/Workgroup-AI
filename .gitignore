@@ -1,0 +1,40 @@
+# 依赖与构建产物（不进入发布仓库）
+node_modules/
+.pnpm-store/
+dist/
+lib/
+*.tsbuildinfo
+dist-exe/
+.artifacts/
+.dsh-build/
+.dsh-report/
+.storages/
+.sessions/
+.cache/
+coverage/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+website/.dist/
+website/.generated/
+apps/desktop/.desktop-build/
+.playwright-cli/
+.worktrees/
+worktrees/
+.typert-*/
+
+# 本地临时与凭据（绝不提交）
+.env
+.env.local
+.env.*.local
+.credentials.yaml
+.dsh-test*/
+*.log
+.idea*/
+.DS_Store
+.specstory/
+
+# 本地留存与备份
+backups/
+*.preset
+_shots/

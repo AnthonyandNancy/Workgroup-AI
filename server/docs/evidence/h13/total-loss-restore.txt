@@ -1,0 +1,32 @@
+== make some real state ==
+state created in room b9150be3-4fe4-4854-a067-614c8f1057d7
+Wrote /var/lib/workgroup-ai/backups/total-loss-2026-10-15T00-18-24-886Z-28669ffa.sqlite
+  bytes: 282624, pages: 69, createdAt: 2026-10-15T00:18:24.886Z
+  manifest: /var/lib/workgroup-ai/backups/total-loss-2026-10-15T00-18-24-886Z-28669ffa.sqlite.manifest.json
+  artifact objects: 1 (28 bytes) at /var/lib/workgroup-ai/backups/total-loss-2026-10-15T00-18-24-886Z-28669ffa-objects
+backup: /var/lib/workgroup-ai/backups/total-loss-2026-10-15T00-18-24-886Z-28669ffa.sqlite
+== TOTAL LOSS: stop the service, destroy database, sidecars, attachments, and all backups except ours ==
+--- what is left of the data directory ---
+backups
+== restore as root, into a data directory whose database no longer exists ==
+0
+Restored /var/lib/workgroup-ai/hub.sqlite from /var/lib/workgroup-ai/backups/total-loss-2026-10-15T00-18-24-886Z-28669ffa.sqlite
+  there was no previous database file to keep a safety copy of
+  migrations present in the restored file: 1, 2, 3, 4, 5, 6
+  ownership: uid 997, gid 997, mode 644 (taken from the data directory)
+  artifact objects: restored 1, already present 0
+== ownership must follow the data directory, not root ==
+-rw-r--r-- 1 workgroup-hub workgroup-hub 282624 Oct 15 00:18 /var/lib/workgroup-ai/hub.sqlite
+drwxr-xr-x 1 workgroup-hub workgroup-hub 4096 Oct 15 00:18 /var/lib/workgroup-ai
+WRITABLE-BY-SERVICE-ACCOUNT
+== the service must start and stay up ==
+active
+NRestarts=0
+ExecMainStatus=0
+{"status":"ready","checks":{"database":{"checkedAt":"2026-10-15T00:18:33.050Z"},"startedAt":"2026-10-15T00:18:18.201Z","journalMode":"wal"}}
+== and the collaboration data is back, including the attachment ==
+{"rooms":[{"id":"b9150be3-4fe4-4854-a067-614c8f1057d7","name":"Survivor room","ownerUserId":"f3db50d6-f6e8-4c3e-9c29-ba67a740b651","createdAt":"2026-10-15T00:18:24.835Z","myRole":"owner"}]}
+evidence,value
+survives,yes
+ATTACHMENT BYTES SURVIVED TOTAL LOSS IDENTICALLY
+TOTAL LOSS DRILL COMPLETE

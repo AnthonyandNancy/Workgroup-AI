@@ -1,0 +1,208 @@
+openapi: 3.1.0
+info:
+  title: Workgroup AI Hub API
+  version: 1.0.0-draft
+  description: 本文件是独立新项目的协议草案；实现时需要补齐安全细节与代码生成。
+servers:
+  - url: https://hub.example.local/api/v1
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Room:
+      type: object
+      required: [id, name, ownerUserId, createdAt]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string, minLength: 1, maxLength: 120}
+        ownerUserId: {type: string, format: uuid}
+        createdAt: {type: string, format: date-time}
+    Message:
+      type: object
+      required: [id, roomId, roomSeq, senderUserId, body, createdAt]
+      properties:
+        id: {type: string, format: uuid}
+        roomId: {type: string, format: uuid}
+        roomSeq: {type: integer, minimum: 1}
+        senderUserId: {type: string, format: uuid}
+        clientMessageId: {type: string, maxLength: 96}
+        body: {type: string, maxLength: 50000}
+        createdAt: {type: string, format: date-time}
+    Task:
+      type: object
+      required: [id, roomId, requesterUserId, ownerUserId, state, description]
+      properties:
+        id: {type: string, format: uuid}
+        roomId: {type: string, format: uuid}
+        requesterUserId: {type: string, format: uuid}
+        ownerUserId: {type: string, format: uuid}
+        targetBotId: {type: string, nullable: true}
+        description: {type: string, maxLength: 20000}
+        state:
+          type: string
+          enum: [PENDING_APPROVAL, APPROVED, QUEUED, RUNNING, REVIEW_REQUIRED, COMPLETED, SHARED, REJECTED, CANCELLING, CANCELLED, EXPIRED, FAILED]
+        version: {type: integer, minimum: 0}
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string}
+        message: {type: string}
+paths:
+  /health/live:
+    get:
+      security: []
+      summary: Liveness
+      responses:
+        '200': {description: Running}
+  /health/ready:
+    get:
+      summary: DB and readiness
+      responses:
+        '200': {description: Ready}
+        '503': {description: Not ready}
+  /rooms:
+    get:
+      summary: 我的工作群
+      responses:
+        '200':
+          description: Rooms for authenticated user
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Room'}
+    post:
+      summary: 创建工作群
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 120}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Room'}
+  /rooms/{roomId}/invitations:
+    parameters: [{name: roomId, in: path, required: true, schema: {type: string, format: uuid}}]
+    post:
+      summary: 邀请用户到工作群（需要管理员权限）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targetUserId]
+              properties:
+                targetUserId: {type: string, format: uuid}
+                role: {type: string, enum: [member, admin], default: member}
+      responses:
+        '201': {description: Invitation created}
+  /invitations/{invitationId}/accept:
+    parameters: [{name: invitationId, in: path, required: true, schema: {type: string, format: uuid}}]
+    post:
+      summary: 仅邀请收件人可接受
+      responses:
+        '200': {description: Member joined}
+        '403': {description: Forbidden}
+  /rooms/{roomId}/messages:
+    parameters: [{name: roomId, in: path, required: true, schema: {type: string, format: uuid}}]
+    get:
+      summary: 获取工作群消息，用于断线补拉
+      parameters:
+        - name: afterSeq
+          in: query
+          schema: {type: integer, minimum: 0, default: 0}
+      responses:
+        '200':
+          description: Ordered messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Message'}
+    post:
+      summary: 发送消息（成员且幂等）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clientMessageId, body]
+              properties:
+                clientMessageId: {type: string, minLength: 8, maxLength: 96}
+                body: {type: string, minLength: 1, maxLength: 50000}
+      responses:
+        '201':
+          description: Message accepted
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Message'}
+  /rooms/{roomId}/tasks:
+    parameters: [{name: roomId, in: path, required: true, schema: {type: string, format: uuid}}]
+    post:
+      summary: 创建待 B 本人审批的跨用户任务
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ownerUserId, description]
+              properties:
+                ownerUserId: {type: string, format: uuid}
+                targetBotId: {type: string}
+                description: {type: string, maxLength: 20000}
+      responses:
+        '201':
+          description: Awaiting approval
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Task'}
+  /tasks/{taskId}/decision:
+    parameters: [{name: taskId, in: path, required: true, schema: {type: string, format: uuid}}]
+    post:
+      summary: 仅任务数据所有者本人可批准/拒绝
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, expectedVersion]
+              properties:
+                decision: {type: string, enum: [approve, reject]}
+                expectedVersion: {type: integer, minimum: 0}
+                assignmentMode: {type: string, enum: [existing_bot, chief_auto, create_bot]}
+                assignedBotId: {type: string}
+                approvedScope:
+                  type: object
+                  additionalProperties: true
+                  description: 实现时必须定义严格 JSON Schema，不得直接信任客户端任意字段
+      responses:
+        '200':
+          description: Decision committed
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Task'}
+        '403': {description: Approval forbidden}
+        '409': {description: State/version conflict}
+  /tasks/{taskId}/cancel:
+    parameters: [{name: taskId, in: path, required: true, schema: {type: string, format: uuid}}]
+    post:
+      summary: 取消任务与吊销执行授权
+      responses:
+        '200': {description: Cancellation requested}

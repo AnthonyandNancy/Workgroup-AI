@@ -1,0 +1,52 @@
+# Workgroup AI Hub — scheduled backup.
+#
+# H-12 shipped `hub backup` and recorded the gap: it is a manual command, and a backup that
+# depends on somebody remembering it is not a backup. This unit is the missing scheduler — a
+# oneshot service run by `workgroup-hub-backup.timer`, not a daemon of its own.
+#
+# Why a systemd oneshot and not a loop inside the Hub: the Hub is a single process writing a
+# single SQLite file, and a backup is a *read* of that file through SQLite's online backup API.
+# Running it as a separate short-lived process means a backup can never hold a second writer,
+# and a failed backup cannot take the Hub down with it.
+#
+# The backup command talks to the database file directly rather than over HTTP, so this works
+# even when the Hub is stopped or unhealthy — which is exactly when an operator wants a copy.
+#
+# Install:
+#   install -m 0644 workgroup-hub-backup.service workgroup-hub-backup.timer /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now workgroup-hub-backup.timer
+#   systemctl list-timers workgroup-hub-backup.timer
+[Unit]
+Description=Workgroup AI Hub scheduled backup
+Documentation=file:/opt/workgroup-ai/server/deploy/DEPLOYMENT.md
+# No `Requires=` on the Hub: a backup of a stopped Hub is legitimate and useful. The data
+# directory must exist, which is all this needs.
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=workgroup-hub
+Group=workgroup-hub
+WorkingDirectory=/opt/workgroup-ai/server
+EnvironmentFile=/etc/workgroup-ai/hub.env
+# `--label` makes each snapshot identifiable without opening it; the run's exit code is the
+# unit's, so `systemctl status` shows a failed backup as failed.
+ExecStart=/usr/bin/node src/cli/hub.js backup --label scheduled
+# The same hardening as the Hub: a scheduled job is not a reason to widen the sandbox.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# Both the data directory and the backup directory live here; HUB_DATA_DIR must match.
+ReadWritePaths=/var/lib/workgroup-ai
+TimeoutStartSec=900
+# Retain a real copy even when the backup command itself fails partway, so the failing run can
+# be inspected rather than only reported.
+StandardOutput=journal
+StandardError=journal
