@@ -9,7 +9,7 @@
     "schemaVersion": { "const": "wg.v1" },
     "eventId": { "type": "string", "minLength": 8, "maxLength": 128 },
     "type": { "type": "string", "enum": [
-      "message.created", "invitation.created", "task.approval_requested",
+      "message.created", "invitation.created", "presence.changed", "task.approval_requested",
       "task.approved", "task.cancelled", "task.progress", "task.shared",
       "group_memory.changed", "ack", "error", "hello"
     ] },

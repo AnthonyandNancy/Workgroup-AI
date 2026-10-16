@@ -1,6 +1,10 @@
 node_modules
 dist
 *.log
+# An operator's real environment file holds the bootstrap secret and the token signing key. Only
+# the `.local` variants used to be ignored, so the documented name (`.env`, which `.env.example`
+# tells an operator to copy to) was the one file most likely to be committed by accident.
+.env
 .env.local
 .env.*.local
 

@@ -276,10 +276,12 @@ docker run -d --name workgroup-hub \
 
 | 项 | 默认 | 说明 |
 |---|---|---|
-| `HUB_REGISTRATION` | `admin_secret`（生产） | 需要 `HUB_ADMIN_BOOTSTRAP_SECRET` 才能建号 |
-| `HUB_LOGIN_MAX_ATTEMPTS` | 10 | 同一 handle 或同一来源在窗口内的失败上限 |
+| `HUB_REGISTRATION` | `admin_secret`（生产） | 需要 `HUB_ADMIN_BOOTSTRAP_SECRET` 才能建号；`open` 允许任何人注册（仅开发/本机） |
+| `HUB_LOGIN_MAX_ATTEMPTS` | 10 | 同一 handle 或同一来源在窗口内的失败上限；**注册与登录各自计数** |
 | `HUB_LOGIN_WINDOW_SECONDS` | 300 | 计数窗口 |
 | `HUB_LOGIN_LOCKOUT_SECONDS` | 300 | 超限后的锁定时长 |
+| `HUB_TRUSTED_PROXIES` | 未设置 | 可信反代（地址/CIDR 或跳数）；未设置时按 socket 地址计数 |
+| `HUB_MAX_MEMORIES_PER_ROOM` | 0（不限） | 群记忆每房间上限；超出时最旧优先**软**淘汰 |
 | `HUB_MAX_CONNECTIONS` | 2000 | 整进程 WebSocket 上限；`0` 关闭 |
 | `HUB_MAX_CONNECTIONS_PER_USER` | 8 | 单账号上限；`0` 关闭 |
 | `HUB_TOKEN_SIGNING_KEY_PREVIOUS` | 未设置 | 轮换期间仍可验签的旧密钥 |
@@ -293,11 +295,13 @@ docker run -d --name workgroup-hub \
 - 超限返回 **429 + `Retry-After`**，且**正确的密码也会被拒**——否则限速只减速不阻止。
 - handle 计数**大小写无关**（`Alice` 与 `alice` 共用一个预算）。
 - 来源计数**不会**被某次成功登录清空：一个有效账号不该替攻击者刷新预算。
-- 计数有容量上限，来源众多时按最旧优先淘汰，因此限速器本身不会被撑爆内存。
-- ⚠️ **计数在进程内存中，Hub 重启即清零。** 这是本设计的真实属性（单进程单写者使进程内计数是完备的，
-  而非近似），但它意味着重启可重置锁定状态。要跨重启保持，需把计数放进 SQLite，或改由反向代理限速。
-- ⚠️ `request.ip` 只在 Hub **被直连**时可信（`trustProxy: false`，因为信任客户端可伪造的
-  `X-Forwarded-For` 比不做更糟）。放在反代后面时请在反代层限速，或让反代透传真实对端地址。
+- 计数有容量上限，来源众多时按最旧优先淘汰，因此限速器本身不会被撑爆数据库。
+- **计数保存在 SQLite（`rate_limits` 表），Hub 重启不清零**，并随数据库一起备份/恢复。
+  这堵住了"等一次重启就恢复预算"的路子。
+- **注册也按来源单独计数**（与登录分开）：注册是唯一会创建身份的端点，两条路径的预算互不干扰。
+- ⚠️ `request.ip` 只在 Hub **被直连**时可信。默认 `trustProxy: false`——信任客户端可伪造的
+  `X-Forwarded-For` 比不做更糟。放在反代后面时用 `HUB_TRUSTED_PROXIES` 显式列出代理，
+  否则按来源限速会退化成按代理地址限速（所有人共用一份预算）。
 
 ## 12. 日常运维
 
@@ -344,10 +348,11 @@ Node 24.19.0 每次 15 ms 完成；Node 26 下整个测试文件 200 秒仍未�
 1. **真实多机（两台不同电脑 + 独立 Hub）协作 E2E**：需要两台物理机，本机不具备。归 Q-01（预期 BLOCKED）
    与 Q-02。
 2. **macOS 打包**：本机为 Windows，无法实测。归 Q-04。
-3. **限速不跨重启**：见第 11 节。要长期生效需落库或改由反代限速。
-4. **反代后的真实对端地址**：`trustProxy: false` 是刻意的取舍，但因此反代部署的「按来源限速」会退化成
-   按反代 IP 限速。
-5. **速率限制未覆盖非登录端点**：心跳、消息、webhook 等尚无独立配额。
+3. **限速跨重启已落库**（`rate_limits`），但**尚未在真实多机/多进程拓扑下压测**：本机验证的是
+   单进程行为（重启后计数保留、注册与登录分别计数）。
+4. **反代后的真实对端地址**：已提供 `HUB_TRUSTED_PROXIES` 显式配置；未配置时仍按 socket 地址计数。
+   **未在真实反向代理（nginx/网关）后面实测**，因此"配置后来源识别正确"这一条属未验证。
+5. **速率限制未覆盖非登录/注册端点**：心跳、消息、webhook 等尚无独立配额。
 6. **容器镜像仅在 Docker Desktop 的 WSL2 Linux 内核上测过**，未在独立 Linux 主机与 k8s 上部署。
 7. **证书轮换与外部秘密管理（Vault/KMS）** 未接入；当前为环境文件 + 0600 权限。
 8. **Hub 自身终止 TLS** 有代码路径，但未在真机实测握手；默认路线是反代终止。
