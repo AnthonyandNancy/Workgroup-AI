@@ -18,6 +18,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { RoomError, requireMember, membershipOf } from '../rooms/store.js'
+import { createTask } from '../tasks/store.js'
 
 export class MessageError extends Error {
   constructor(message, code) {
@@ -39,6 +40,97 @@ export function assertMessageBody(body) {
   if (value.length === 0) throw new MessageError('A message body must not be empty', 'INVALID_MESSAGE_BODY')
   if (body.length > BODY_MAX) throw new MessageError(`A message body must be at most ${BODY_MAX} characters`, 'INVALID_MESSAGE_BODY')
   return value
+}
+
+/**
+ * Upper bounds on the two per-message lists.
+ *
+ * Both are checked before anything is written, so a message cannot be an unbounded way to make the
+ * Hub store work: a mention list is used to create tasks, and an attachment list is read on every
+ * page load.
+ */
+export const MENTIONS_MAX = 20
+export const ATTACHMENTS_MAX = 20
+
+/**
+ * Check and normalize the mentions a message carries.
+ *
+ * Each entry names a **user id**, and optionally that user's bot id. The id is what makes a mention
+ * stable: a name-based mention breaks on a rename and cannot be told apart from the literal text
+ * "@Writer" in ordinary prose, which would let a stray mention propose work.
+ *
+ * Everyone mentioned must be a member of the room. A mention naming an outsider would render as a
+ * summons to somebody who cannot read the message.
+ *
+ * @returns the normalized array, or `undefined` when there are none (so the column stays NULL rather
+ *   than holding `[]`, and a reader can tell "no mentions" from "not recorded").
+ */
+export function assertMentions(db, { roomId, mentions }) {
+  if (mentions === undefined || mentions === null) return undefined
+  if (!Array.isArray(mentions)) throw new MessageError('mentions must be a list', 'INVALID_MENTIONS')
+  if (mentions.length === 0) return undefined
+  if (mentions.length > MENTIONS_MAX) {
+    throw new MessageError(`A message may mention at most ${MENTIONS_MAX} people`, 'INVALID_MENTIONS')
+  }
+  const seen = new Set()
+  return mentions.map((entry) => {
+    if (entry === null || typeof entry !== 'object') throw new MessageError('Each mention must name a user', 'INVALID_MENTIONS')
+    const userId = entry.userId
+    if (typeof userId !== 'string' || userId.length === 0) {
+      throw new MessageError('Each mention must name a user id', 'INVALID_MENTIONS')
+    }
+    // Two mentions of the same person are one mention: a list that repeats an id would make the Hub
+    // propose the same work twice.
+    if (seen.has(userId)) throw new MessageError('A message cannot mention the same person twice', 'INVALID_MENTIONS')
+    seen.add(userId)
+    const membership = db.prepare('SELECT 1 AS present FROM room_members WHERE room_id = ? AND user_id = ? AND removed_at IS NULL').get(roomId, userId)
+    if (membership === undefined) {
+      throw new MessageError('Everyone mentioned must be a member of this workgroup.', 'MENTION_NOT_A_MEMBER')
+    }
+    const botId = entry.botId
+    if (botId === undefined || botId === null) return { userId }
+    if (typeof botId !== 'string' || botId.length === 0) {
+      throw new MessageError('A Bot mention must name a bot id', 'INVALID_MENTIONS')
+    }
+    return { userId, botId }
+  })
+}
+
+/**
+ * Check the attachments a message carries.
+ *
+ * Each names an artifact that already exists **in this room**. An artifact from another room is
+ * refused even when the sender uploaded it: the readers here cannot read it, so the message would
+ * publish its file name, its size, and a link that answers 403 to people who were not meant to know
+ * the file exists.
+ *
+ * @returns the normalized array with file names resolved, or `undefined` when there are none.
+ */
+export function assertAttachments(db, { roomId, attachments }) {
+  if (attachments === undefined || attachments === null) return undefined
+  if (!Array.isArray(attachments)) throw new MessageError('attachments must be a list', 'INVALID_ATTACHMENTS')
+  if (attachments.length === 0) return undefined
+  if (attachments.length > ATTACHMENTS_MAX) {
+    throw new MessageError(`A message may carry at most ${ATTACHMENTS_MAX} attachments`, 'INVALID_ATTACHMENTS')
+  }
+  const seen = new Set()
+  return attachments.map((entry) => {
+    if (entry === null || typeof entry !== 'object') throw new MessageError('Each attachment must name an artifact', 'INVALID_ATTACHMENTS')
+    const artifactId = entry.artifactId
+    if (typeof artifactId !== 'string' || artifactId.length === 0) {
+      throw new MessageError('Each attachment must name an artifact id', 'INVALID_ATTACHMENTS')
+    }
+    if (seen.has(artifactId)) throw new MessageError('The same file cannot be attached twice', 'INVALID_ATTACHMENTS')
+    seen.add(artifactId)
+    const artifact = db.prepare('SELECT id, room_id, file_name FROM artifacts WHERE id = ?').get(artifactId)
+    if (artifact === undefined || artifact.room_id !== roomId) {
+      throw new MessageError('That file is not in this workgroup, so it cannot be attached here.', 'NO_SUCH_ATTACHMENT')
+    }
+    // The name is copied into the message rather than resolved at read time on purpose: the reader
+    // gets the name the sender quoted from the message page, with no second request per file, and a
+    // later rename of the artifact cannot change what the message says it carried.
+    return { artifactId, fileName: artifact.file_name }
+  })
 }
 
 export function assertClientMessageId(id) {
@@ -78,6 +170,9 @@ export function sendMessage(db, options) {
   const body = assertMessageBody(options.body)
   const key = assertClientMessageId(clientMessageId)
   const replyToMessageId = assertReplyTarget(db, { roomId, replyToMessageId: options.replyToMessageId })
+  // Checked before the membership check, so a malformed list is a 400 whatever else is wrong.
+  const mentions = assertMentions(db, { roomId, mentions: options.mentions })
+  const attachments = assertAttachments(db, { roomId, attachments: options.attachments })
 
   // A dissolved workgroup refuses new messages. Checked here rather than in the route so every
   // writer — including a future one — meets the same rule, and so the refusal is a fact about the
@@ -106,9 +201,12 @@ export function sendMessage(db, options) {
     if (room === undefined) throw new MessageError('No such room', 'NO_SUCH_ROOM')
     const roomSeq = room.next_seq
     db.prepare('UPDATE rooms SET next_seq = ? WHERE id = ?').run(roomSeq + 1, roomId)
-    db.prepare(`INSERT INTO messages (id, room_id, room_seq, sender_user_id, client_message_id, body, reply_to_message_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, roomId, roomSeq, senderUserId, key, body, replyToMessageId ?? null, createdAt)
+    db.prepare(`INSERT INTO messages (id, room_id, room_seq, sender_user_id, client_message_id, body, reply_to_message_id, mentions_json, attachments_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, roomId, roomSeq, senderUserId, key, body, replyToMessageId ?? null,
+        mentions === undefined ? null : JSON.stringify(mentions),
+        attachments === undefined ? null : JSON.stringify(attachments),
+        createdAt)
     audit(db, { actorUserId: senderUserId, actorDeviceId: senderDeviceId, eventType: 'message.created', objectType: 'message', objectId: id, outcome: 'success', details: { roomId, roomSeq }, now })
     db.exec('COMMIT')
     row = db.prepare('SELECT * FROM messages WHERE id = ?').get(id)
@@ -203,8 +301,69 @@ export function publicMessage(message) {
     ...(message.reply_to_message_id === undefined || message.reply_to_message_id === null
       ? {}
       : { replyToMessageId: message.reply_to_message_id }),
+    // Omitted when absent, like every other optional field here, so a client testing for the field
+    // does not have to treat null and undefined as different.
+    ...(parseList(message.mentions_json) === undefined ? {} : { mentions: parseList(message.mentions_json) }),
+    ...(parseList(message.attachments_json) === undefined ? {} : { attachments: parseList(message.attachments_json) }),
     createdAt: message.created_at,
   }
 }
 
+/**
+ * Read one of the JSON list columns.
+ *
+ * A stored value that will not parse is treated as absent rather than thrown: this runs on every
+ * message of every page, and one malformed row must not make a room's history unreadable. The column
+ * is only ever written by `sendMessage`, so a parse failure means the file was edited by hand.
+ */
+function parseList(json) {
+  if (json === null || json === undefined) return undefined
+  try {
+    const value = JSON.parse(json)
+    return Array.isArray(value) && value.length > 0 ? value : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export const messageInternals = { BODY_MAX, CLIENT_MESSAGE_ID_MIN, CLIENT_MESSAGE_ID_MAX, RoomError, membershipOf }
+
+/**
+ * Turn the Bot mentions of one message into tasks awaiting their owners' approval.
+ *
+ * This is the whole of what a remote mention does. It creates a `PENDING_APPROVAL` task per mentioned
+ * Bot and returns it; it does not approve anything, mint a grant, notify the other machine, or reach
+ * the Bot. The requirement is explicit — a mention of a colleague's Bot must produce a candidate and
+ * leave their machine untouched — and this function is the place that could break it, so the limits
+ * are worth stating:
+ *
+ *   * the task starts in `PENDING_APPROVAL`, which no executor will run;
+ *   * `createTask` is reused rather than reimplemented, so the membership, self-task, and Bot
+ *     visibility rules are the same ones a task requested from the task route gets. Two paths to the
+ *     same act must not have two sets of rules;
+ *   * a Bot the mentioned person does not own is refused by `createTask`'s visibility check, so a
+ *     mention cannot name a Bot into existence;
+ *   * the description is the message body, so the approver sees what was actually asked.
+ *
+ * A refused proposal propagates. Storing the message and dropping the task silently would leave the
+ * sender believing they had asked, and the mention is the message's stated purpose.
+ *
+ * @returns the created task rows, in mention order.
+ */
+export function proposeTasksForMentions(db, { roomId, requesterUserId, requesterDeviceId, message, text, now = new Date() }) {
+  const mentions = parseList(message?.mentions_json) ?? []
+  const proposals = []
+  for (const mention of mentions) {
+    if (mention.botId === undefined) continue
+    proposals.push(createTask(db, {
+      roomId,
+      requesterUserId,
+      requesterDeviceId,
+      ownerUserId: mention.userId,
+      targetBotId: mention.botId,
+      description: text,
+      now,
+    }))
+  }
+  return proposals
+}

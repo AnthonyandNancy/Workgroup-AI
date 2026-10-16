@@ -300,6 +300,7 @@ export function install(rt) {
         // checks that the caller is the owner, which a route shared with `kick` could not express.
         case 'hub-dissolve':
         case 'hub-kick':
+        case 'hub-upload-artifact':
         case 'hub-send':
         case 'hub-messages':
         case 'hub-head':

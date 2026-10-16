@@ -55,6 +55,28 @@ export const WORKGROUP_CSS = `
 .bt-wg-input::placeholder{color:var(--bt-placeholder,var(--bt-ink-3))}
 .bt-wg-send{height:40px;flex:none;border-radius:999px;border:0;background:var(--bt-accent);color:var(--bt-accent-ink,#fff);font-size:14px;padding:0 20px;cursor:pointer;white-space:nowrap}
 .bt-wg-send:disabled{opacity:.35;cursor:default}
+/* The mention picker sits above the composer and takes no space until it opens, so the message the
+   employee is typing does not shift when the trigger is pressed. */
+/* What the next send will carry: a file the sender attached, or the reason attaching failed. */
+.bt-wg-pending{flex:none;display:flex;flex-wrap:wrap;gap:6px;padding:8px 16px 0}
+.bt-wg-pending-item{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:4px 10px;border-radius:999px;background:var(--bt-hover,rgba(0,0,0,.05));font-size:12px;color:var(--bt-ink-2)}
+.bt-wg-pending-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt-wg-pending-drop{border:0;background:transparent;color:var(--bt-ink-3);cursor:pointer;font-size:12px;padding:0}
+/* The failure text uses the shell's own danger class rather than a colour of its own: this layer is
+   built on top of the team's styles, and introducing a second red would make the same kind of message
+   look different depending on which surface showed it. */
+.bt-wg-pending-error{font-size:12px}
+.bt-wg-mentions{position:absolute;left:16px;right:16px;bottom:100%;margin-bottom:6px;max-height:220px;overflow-y:auto;background:var(--bt-panel,#fff);border:.5px solid var(--bt-line-weak);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.12);padding:4px}
+.bt-wg-mention{display:flex;align-items:baseline;gap:8px;width:100%;border:0;background:transparent;text-align:left;padding:7px 10px;border-radius:7px;cursor:pointer;font-size:13px;color:inherit}
+.bt-wg-mention:hover{background:var(--bt-hover,rgba(0,0,0,.05))}
+.bt-wg-mention-name{font-weight:500}
+.bt-wg-mention-kind{margin-left:auto;font-size:11px;color:var(--bt-ink-3)}
+.bt-wg-mention-empty{padding:8px 10px;font-size:12px;color:var(--bt-ink-3)}
+/* The attach control is a label over a hidden file input: the browser's own picker decides what may be
+   read, and the employee never types a path. */
+.bt-wg-attach{position:relative;flex:none;height:40px;display:inline-flex;align-items:center;padding:0 12px;border-radius:999px;border:.5px solid var(--bt-line-weak);font-size:13px;color:var(--bt-ink-2);cursor:pointer}
+.bt-wg-attach:hover{background:var(--bt-hover,rgba(0,0,0,.05))}
+.bt-wg-attach-input{position:absolute;inset:0;opacity:0;cursor:pointer}
 .bt-wg-offline .bt-wg-empty{color:var(--bt-ink-2)}
 .bt-wg-offline .bt-wg-name{color:var(--bt-ink-2)}
 .bt-wg-settings{flex:1;min-height:0;overflow-y:auto}

@@ -39,6 +39,9 @@ export function replyPreview(message) {
  * @returns the same value, plus `replyToMessageId` when there is a reply.
  */
 export function withReply(value, reply) {
+  // The mentions and attachments travel with the message whether or not it is a reply, so they are
+  // spread in rather than rebuilt here: a helper that only knew about replies would drop them, and a
+  // message sent as a reply would lose the person it summons and the file it carries.
   if (reply?.id === undefined || reply?.id === null) return value
   return { ...value, replyToMessageId: reply.id }
 }

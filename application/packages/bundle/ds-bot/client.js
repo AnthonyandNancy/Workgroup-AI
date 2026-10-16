@@ -87,6 +87,11 @@ var ZH = {
   "Create group chat": "新建群聊",
   "Delete group": "删除群聊",
   "Dissolve workgroup": "解散工作群",
+  "Mention someone": "提及某人",
+  "Nobody in this workgroup matches.": "本工作群中没有匹配的人。",
+  "Bot of {owner}": "{owner} 的 Bot",
+  "Attach a file": "添加附件",
+  "Attach": "附件",
   "Dissolve {name}?": "解散 {name}？",
   "Click again to dissolve. History and records are kept.": "再次点击即解散。历史与记录会保留。",
   "Ends the workgroup for everyone. Its history is kept and stays readable.": "对所有人结束该工作群。历史保留，仍可查看。",
@@ -13291,6 +13296,37 @@ function identityText(identity) {
   return identityRows(identity).map((row) => `${row.label}: ${row.value}`).join("\n");
 }
 
+// src/client/workgroup-mentions.js
+var MENTION_TRIGGER = "@";
+function mentionCandidates({ members = [], bots = [] } = {}) {
+  const people = members.filter((member) => typeof member?.userId === "string" && member.userId.length > 0).map((member) => ({
+    userId: member.userId,
+    label: member.displayName ?? member.userHandle ?? member.userId,
+    kind: "member",
+    ...member.userHandle === void 0 ? {} : { detail: member.userHandle }
+  }));
+  const byOwner = new Map(people.map((person) => [person.userId, person]));
+  const owned = bots.filter((bot) => typeof bot?.id === "string" && byOwner.has(bot.ownerUserId)).map((bot) => ({
+    userId: bot.ownerUserId,
+    botId: bot.id,
+    label: bot.displayName ?? bot.id,
+    kind: "bot",
+    detail: byOwner.get(bot.ownerUserId).label
+  }));
+  return [...people, ...owned];
+}
+function filterCandidates(candidates, query) {
+  const needle = String(query ?? "").trim().toLowerCase();
+  if (needle === "") return candidates;
+  return candidates.filter((candidate) => candidate.label.toLowerCase().includes(needle) || (candidate.detail ?? "").toLowerCase().includes(needle) || (candidate.botId ?? "").toLowerCase().includes(needle));
+}
+function composeMessage(text, picked = []) {
+  return {
+    text: String(text ?? ""),
+    mentions: picked.map((entry) => entry.botId === void 0 ? { userId: entry.userId } : { userId: entry.userId, botId: entry.botId })
+  };
+}
+
 // src/client/workgroup.js
 var import_react35 = require("react");
 var WORKGROUP_KIND = "workgroup";
@@ -13430,24 +13466,79 @@ function WorkgroupView({
   // The owner's dissolve action, passed in from the pane so this view keeps no Hub knowledge of its
   // own. Absent means the settings form's end-the-group button does nothing, which is the right
   // default for a viewer who is not the owner.
-  onDissolve
+  onDissolve,
+  // Uploads one file and answers with the artifact it created. Supplied by the pane, which holds the
+  // Hub client; absent means the attach control reports that attaching is unavailable rather than
+  // silently doing nothing.
+  onAttach
 }) {
   const [draft, setDraft] = (0, import_react35.useState)("");
   const [sending, setSending] = (0, import_react35.useState)(false);
   const [reply, setReply] = (0, import_react35.useState)(void 0);
+  const [picked, setPicked] = (0, import_react35.useState)([]);
+  const [mentionQuery, setMentionQuery] = (0, import_react35.useState)(void 0);
+  const [attachments, setAttachments] = (0, import_react35.useState)([]);
+  const [attachNote, setAttachNote] = (0, import_react35.useState)(void 0);
+  const mentioning = mentionQuery !== void 0;
+  const trackMention = (value) => {
+    const caret = value.length;
+    const trigger = value.lastIndexOf(MENTION_TRIGGER, caret - 1);
+    if (trigger === -1) {
+      setMentionQuery(void 0);
+      return;
+    }
+    const run2 = value.slice(trigger + 1, caret);
+    if (/\s/.test(run2)) {
+      setMentionQuery(void 0);
+      return;
+    }
+    setMentionQuery(run2);
+  };
+  const pickMention = (candidate) => {
+    setPicked((list) => list.some((entry) => entry.userId === candidate.userId && entry.botId === candidate.botId) ? list : [...list, candidate]);
+    const trigger = draft.lastIndexOf(MENTION_TRIGGER);
+    setDraft(trigger === -1 ? `${draft}${candidate.label} ` : `${draft.slice(0, trigger)}${candidate.label} `);
+    setMentionQuery(void 0);
+  };
+  const attachFile = async (file) => {
+    if (file === void 0 || file === null) return;
+    setAttachNote(void 0);
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const uploaded = await onAttach?.({
+        fileName: file.name,
+        bytes,
+        // The browser's own guess is what will be shown to the recipient; the Hub stores it with the ACL.
+        contentType: file.type === "" ? void 0 : file.type
+      });
+      if (uploaded === void 0 || uploaded === null) return;
+      setAttachments((list) => [...list, { artifactId: uploaded.artifactId, fileName: uploaded.fileName ?? file.name }]);
+    } catch (error) {
+      setAttachNote(error?.message ?? String(error));
+    }
+  };
   const send = async () => {
     if (sending || draft.trim() === "") return;
     setSending(true);
-    const ok = await onSend?.(draft.trim(), reply);
+    const ok = await onSend?.(draft.trim(), reply, {
+      mentions: composeMessage(draft, picked).mentions,
+      attachments: attachments.map((entry) => ({ artifactId: entry.artifactId }))
+    });
     setSending(false);
     if (ok !== false) {
       setDraft("");
       setReply(void 0);
+      setPicked([]);
+      setAttachments([]);
+      setMentionQuery(void 0);
     }
   };
   (0, import_react35.useEffect)(() => {
     setDraft("");
     setReply(void 0);
+    setPicked([]);
+    setAttachments([]);
+    setMentionQuery(void 0);
   }, [room2?.id]);
   (0, import_react35.useEffect)(() => {
     if (reply === void 0) return;
@@ -13539,9 +13630,49 @@ function WorkgroupView({
         onClick: () => setReply(void 0)
       }, t("Cancel"))
     ),
+    // What is about to be sent, shown above the composer: the file the sender attached, and any reason
+    // the attach failed. Without this the attach control would look like it did nothing.
+    attachments.length > 0 || attachNote !== void 0 ? (0, import_react35.createElement)(
+      "div",
+      { className: "bt-wg-pending", "data-wg-pending": "attachments" },
+      attachments.map((entry) => (0, import_react35.createElement)(
+        "span",
+        { className: "bt-wg-pending-item", key: entry.artifactId },
+        (0, import_react35.createElement)("span", { className: "bt-wg-pending-name" }, entry.fileName),
+        (0, import_react35.createElement)("button", {
+          type: "button",
+          className: "bt-wg-pending-drop",
+          "data-wg-pending-drop": entry.artifactId,
+          "aria-label": t("Remove {name}", { name: entry.fileName }),
+          onClick: () => setAttachments((list) => list.filter((item) => item.artifactId !== entry.artifactId))
+        }, t("Remove"))
+      )),
+      attachNote === void 0 ? null : (0, import_react35.createElement)("span", { className: "bt-wg-pending-error bt-danger", "data-wg-attach-error": "true" }, attachNote)
+    ) : null,
     (0, import_react35.createElement)(
       "div",
       { className: "bt-wg-compose" },
+      // The mention picker opens on the trigger and narrows as the sender keeps typing, the way the
+      // team's own @ menu does. The names shown are for reading; what the message sends is ids.
+      mentioning ? (0, import_react35.createElement)(
+        "div",
+        { className: "bt-wg-mentions", "data-wg-mentions": "open", role: "listbox", "aria-label": t("Mention someone") },
+        filterCandidates(mentionCandidates({ members, bots }), mentionQuery).slice(0, 8).map((candidate) => (0, import_react35.createElement)(
+          "button",
+          {
+            type: "button",
+            className: "bt-wg-mention",
+            "data-wg-mention": candidate.botId === void 0 ? candidate.userId : `${candidate.userId}:${candidate.botId}`,
+            key: candidate.botId === void 0 ? candidate.userId : `${candidate.userId}:${candidate.botId}`,
+            role: "option",
+            "aria-selected": "false",
+            onClick: () => pickMention(candidate)
+          },
+          (0, import_react35.createElement)("span", { className: "bt-wg-mention-name" }, candidate.label),
+          candidate.kind === "bot" ? (0, import_react35.createElement)("span", { className: "bt-wg-mention-kind" }, t("Bot of {owner}", { owner: candidate.detail ?? "" })) : null
+        )),
+        filterCandidates(mentionCandidates({ members, bots }), mentionQuery).length === 0 ? (0, import_react35.createElement)("div", { className: "bt-wg-mention-empty" }, t("Nobody in this workgroup matches.")) : null
+      ) : null,
       (0, import_react35.createElement)("textarea", {
         className: "bt-wg-input",
         "data-wg-input": "message",
@@ -13555,8 +13686,26 @@ function WorkgroupView({
             event.preventDefault();
             void send();
           }
-        }
+        },
+        onInput: (event) => trackMention(event.target.value)
       }),
+      // A file is chosen, read, and uploaded by the host, which is where the bytes and the Hub client
+      // both live. The picker is a file input rather than a path field so the employee never has to type
+      // a path, and so the browser's own file access rules decide what can be read.
+      (0, import_react35.createElement)(
+        "label",
+        { className: "bt-wg-attach", "data-wg-attach": "choose", title: t("Attach a file") },
+        (0, import_react35.createElement)("input", {
+          type: "file",
+          className: "bt-wg-attach-input",
+          "aria-label": t("Attach a file"),
+          onChange: (event) => {
+            void attachFile(event.target.files?.[0]);
+            event.target.value = "";
+          }
+        }),
+        t("Attach")
+      ),
       (0, import_react35.createElement)("button", {
         type: "button",
         className: "bt-wg-send",
@@ -13684,7 +13833,11 @@ function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
       const message = value?.send;
       if (message === void 0) return true;
       try {
-        await workgroups.sendMessage(roomId, message, value.replyToMessageId === void 0 ? {} : { replyToMessageId: value.replyToMessageId });
+        await workgroups.sendMessage(roomId, message, {
+          ...value.replyToMessageId === void 0 ? {} : { replyToMessageId: value.replyToMessageId },
+          ...Array.isArray(value.mentions) && value.mentions.length > 0 ? { mentions: value.mentions } : {},
+          ...Array.isArray(value.attachments) && value.attachments.length > 0 ? { attachments: value.attachments } : {}
+        });
         await load();
         return true;
       } catch (error) {
@@ -13699,7 +13852,11 @@ function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
     };
   }, [roomId, workgroups]);
   const run = (value) => view.current?.(value);
-  const onSend = (text, reply) => view.current?.(withReply({ send: text }, reply));
+  const onSend = (text, reply, extra = {}) => view.current?.(withReply({ send: text, ...extra }, reply));
+  const onAttach = async (file) => {
+    const uploaded = await workgroups.uploadArtifact(roomId, { ...file, recipients: [] });
+    return { artifactId: uploaded.artifact.id, fileName: uploaded.artifact.fileName };
+  };
   const onDecision = (taskId, decision) => {
     void workgroups?.answerTask?.(taskId, decision).then(() => run(null));
   };
@@ -13732,6 +13889,7 @@ function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
       actions,
       run,
       onSend,
+      onAttach,
       onDecision,
       settingsOpen,
       onCloseSettings: () => setSettingsOpen(false),
@@ -14047,6 +14205,28 @@ var WORKGROUP_CSS = `
 .bt-wg-input::placeholder{color:var(--bt-placeholder,var(--bt-ink-3))}
 .bt-wg-send{height:40px;flex:none;border-radius:999px;border:0;background:var(--bt-accent);color:var(--bt-accent-ink,#fff);font-size:14px;padding:0 20px;cursor:pointer;white-space:nowrap}
 .bt-wg-send:disabled{opacity:.35;cursor:default}
+/* The mention picker sits above the composer and takes no space until it opens, so the message the
+   employee is typing does not shift when the trigger is pressed. */
+/* What the next send will carry: a file the sender attached, or the reason attaching failed. */
+.bt-wg-pending{flex:none;display:flex;flex-wrap:wrap;gap:6px;padding:8px 16px 0}
+.bt-wg-pending-item{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:4px 10px;border-radius:999px;background:var(--bt-hover,rgba(0,0,0,.05));font-size:12px;color:var(--bt-ink-2)}
+.bt-wg-pending-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt-wg-pending-drop{border:0;background:transparent;color:var(--bt-ink-3);cursor:pointer;font-size:12px;padding:0}
+/* The failure text uses the shell's own danger class rather than a colour of its own: this layer is
+   built on top of the team's styles, and introducing a second red would make the same kind of message
+   look different depending on which surface showed it. */
+.bt-wg-pending-error{font-size:12px}
+.bt-wg-mentions{position:absolute;left:16px;right:16px;bottom:100%;margin-bottom:6px;max-height:220px;overflow-y:auto;background:var(--bt-panel,#fff);border:.5px solid var(--bt-line-weak);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.12);padding:4px}
+.bt-wg-mention{display:flex;align-items:baseline;gap:8px;width:100%;border:0;background:transparent;text-align:left;padding:7px 10px;border-radius:7px;cursor:pointer;font-size:13px;color:inherit}
+.bt-wg-mention:hover{background:var(--bt-hover,rgba(0,0,0,.05))}
+.bt-wg-mention-name{font-weight:500}
+.bt-wg-mention-kind{margin-left:auto;font-size:11px;color:var(--bt-ink-3)}
+.bt-wg-mention-empty{padding:8px 10px;font-size:12px;color:var(--bt-ink-3)}
+/* The attach control is a label over a hidden file input: the browser's own picker decides what may be
+   read, and the employee never types a path. */
+.bt-wg-attach{position:relative;flex:none;height:40px;display:inline-flex;align-items:center;padding:0 12px;border-radius:999px;border:.5px solid var(--bt-line-weak);font-size:13px;color:var(--bt-ink-2);cursor:pointer}
+.bt-wg-attach:hover{background:var(--bt-hover,rgba(0,0,0,.05))}
+.bt-wg-attach-input{position:absolute;inset:0;opacity:0;cursor:pointer}
 .bt-wg-offline .bt-wg-empty{color:var(--bt-ink-2)}
 .bt-wg-offline .bt-wg-name{color:var(--bt-ink-2)}
 .bt-wg-settings{flex:1;min-height:0;overflow-y:auto}

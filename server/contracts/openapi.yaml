@@ -32,6 +32,32 @@ components:
         senderUserId: {type: string, format: uuid}
         clientMessageId: {type: string, maxLength: 96}
         body: {type: string, maxLength: 50000}
+        replyToMessageId: {type: string}
+        mentions:
+          type: array
+          maxItems: 20
+          description: >-
+            被 @ 的成员或远程 Bot。按**稳定 ID** 指名（userId，可带 botId），不按显示名：
+            显示名会随改名失效，且无法把正文里字面出现的“@Writer”与真实的召唤区分开。
+            被 @ 的 Bot **只生成待审批任务候选**，对方本机不执行任何操作。
+          items:
+            type: object
+            required: [userId]
+            properties:
+              userId: {type: string, format: uuid}
+              botId: {type: string, maxLength: 64}
+        attachments:
+          type: array
+          maxItems: 20
+          description: >-
+            随消息携带的附件，按 artifactId 指名。附件必须属于本房间，且**附带不等于发布**：
+            能否下载仍由附件自身的 ACL 决定，非接收人一律不可读。
+          items:
+            type: object
+            required: [artifactId]
+            properties:
+              artifactId: {type: string, format: uuid}
+              fileName: {type: string, maxLength: 255}
         createdAt: {type: string, format: date-time}
     Task:
       type: object

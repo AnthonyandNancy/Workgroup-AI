@@ -63,13 +63,23 @@ export function createHubClient(options) {
    * call that has already been retried once after a refresh, so a Hub that keeps answering 401
    * produces one clear failure rather than a loop.
    */
-  const request = async (method, path, { body, auth = true, headers = {}, retry = false, raw = false } = {}) => {
+  const request = async (method, path, { body, auth = true, headers = {}, retry = false, raw = false, binary } = {}) => {
     const init = {
       method,
       headers: { accept: raw ? '*/*' : 'application/json', ...headers },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     }
-    if (body !== undefined) {
+    // An upload sends its bytes as the body. The alternative the Hub also accepts — base64 inside JSON
+    // — would inflate the payload by a third, so the operator's `maxUploadBytes` would mean three
+    // quarters of itself. `contentType` is required here because the Hub stores it with the ACL, and a
+    // guessed one would mislabel the file for whoever receives it.
+    if (binary !== undefined) {
+      if (!(binary.bytes instanceof Uint8Array)) {
+        throw new HubClientError('An upload needs its bytes', { code: HUB_ERROR_CODES.INVALID_REQUEST })
+      }
+      init.headers['content-type'] = binary.contentType ?? 'application/octet-stream'
+      init.body = binary.bytes
+    } else if (body !== undefined) {
       init.headers['content-type'] = 'application/json'
       init.body = JSON.stringify(body)
     }
@@ -93,7 +103,7 @@ export function createHubClient(options) {
       // The token was rejected even though the client believed it had time left — a clock
       // difference or a revoke-and-reissue on the Hub. Refresh once and repeat the request.
       await refresh()
-      return request(method, path, { body, auth, headers, retry: true, raw })
+      return request(method, path, { body, auth, headers, retry: true, raw, binary })
     }
 
     if (raw) {

@@ -65,6 +65,49 @@ export function createWorkgroupClient({ client, bridge, onBotsFromDirectory } = 
     openRoom,
 
     /**
+     * Upload one file into a room.
+     *
+     * The bytes go as the request body, so the Hub's upload limit bounds the file itself rather than a
+     * base64 expansion of it. `recipients` names the people who may download it: uploading does **not**
+     * publish to the room, and attaching the file to a message does not widen its ACL either — that is
+     * the requirement's "non-recipients cannot download", and `shareArtifact` is the explicit way to
+     * widen it.
+     *
+     * @param {string} roomId
+     * @param {{ fileName: string, bytes: Uint8Array, contentType?: string, recipients?: string[], taskId?: string }} file
+     * @returns {Promise<{ artifact: object }>}
+     * @throws {WorkgroupClientError} before any request when the name or the bytes are missing, so a
+     *   malformed upload is not answered by the network.
+     */
+    uploadArtifact: (roomId, { fileName, bytes, contentType, recipients = [], taskId } = {}) => {
+      const name = String(fileName ?? '').trim()
+      if (name === '') throw new WorkgroupClientError('An attachment needs a file name', 'INVALID_ATTACHMENT')
+      if (!(bytes instanceof Uint8Array)) throw new WorkgroupClientError('An attachment needs its bytes', 'INVALID_ATTACHMENT')
+      // Refused here rather than sent: the Hub answers this with an error, and a request whose answer is
+      // already known only costs a round trip and a rate-limit slot.
+      if (bytes.byteLength === 0) throw new WorkgroupClientError('An attachment must not be empty', 'INVALID_ATTACHMENT')
+      const query = new URLSearchParams({ fileName: name })
+      if (recipients.length > 0) query.set('recipients', recipients.join(','))
+      if (taskId !== undefined) query.set('taskId', taskId)
+      return client.request('POST', `/rooms/${roomId}/artifacts?${query.toString()}`, {
+        binary: { bytes, contentType },
+      })
+    },
+
+    /**
+     * Download one artifact's bytes.
+     *
+     * The Hub refuses a viewer its ACL excludes, and answers as if the artifact did not exist, so this
+     * throws rather than returning an empty result.
+     *
+     * @returns {Promise<{ bytes: Buffer, headers: object }>}
+     */
+    downloadArtifact: artifactId => client.request('GET', `/artifacts/${artifactId}/content`, { raw: true }),
+
+    /** The artifacts this caller may read in one room. */
+    listArtifacts: roomId => client.request('GET', `/rooms/${roomId}/artifacts`),
+
+    /**
      * End the workgroup. Owner only; the Hub enforces that, not this call.
      *
      * Distinct from `leave` and `removeMember` on purpose — the requirement separates them, and a
@@ -158,7 +201,7 @@ export function createWorkgroupClient({ client, bridge, onBotsFromDirectory } = 
      * handling idempotent: a retry after a timeout with the same id is the same message, not a
      * second one. Generating it per attempt would make a retried send appear twice in the room.
      */
-    sendMessage: (roomId, body, { clientMessageId = globalThis.crypto.randomUUID(), replyToMessageId } = {}) => {
+    sendMessage: (roomId, body, { clientMessageId = globalThis.crypto.randomUUID(), replyToMessageId, mentions, attachments } = {}) => {
       const text = String(body ?? '').trim()
       if (text === '') throw new WorkgroupClientError('A message needs some text', 'EMPTY_MESSAGE')
       return client.request('POST', `/rooms/${roomId}/messages`, {
@@ -166,6 +209,12 @@ export function createWorkgroupClient({ client, bridge, onBotsFromDirectory } = 
           clientMessageId,
           body: text,
           ...(replyToMessageId === undefined ? {} : { replyToMessageId }),
+          // Mentions travel as ids, and attachments as artifact ids. The Hub validates both against
+          // this room, so a client cannot mention an outsider or attach another room's file.
+          ...(Array.isArray(mentions) && mentions.length > 0 ? { mentions } : {}),
+          ...(Array.isArray(attachments) && attachments.length > 0
+            ? { attachments: attachments.map(entry => (typeof entry === 'string' ? { artifactId: entry } : entry)) }
+            : {}),
         },
       })
     },

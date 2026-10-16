@@ -25,6 +25,7 @@ import { replyParent, replyPreview } from './workgroup-reply.js'
 import { presenceOf } from './workgroup-presence.js'
 import { identityRows, identityText } from './workgroup-identity.js'
 import { t } from './i18n.js'
+import { composeMessage, filterCandidates, mentionCandidates, MENTION_TRIGGER } from './workgroup-mentions.js'
 
 /** The two kinds a room may be, as the Hub names them. */
 export const WORKGROUP_KIND = 'workgroup'
@@ -185,20 +186,90 @@ export function WorkgroupView({
   // own. Absent means the settings form's end-the-group button does nothing, which is the right
   // default for a viewer who is not the owner.
   onDissolve,
+  // Uploads one file and answers with the artifact it created. Supplied by the pane, which holds the
+  // Hub client; absent means the attach control reports that attaching is unavailable rather than
+  // silently doing nothing.
+  onAttach,
 }) {
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [reply, setReply] = useState(undefined)
+  // Who the message summons, and what has been typed after the trigger. Kept apart from `draft` because
+  // the mentions must be what the sender picked, not what the text happens to contain: deriving them
+  // from the text would make a rename break a mention and would read typed prose as a summons.
+  const [picked, setPicked] = useState([])
+  const [mentionQuery, setMentionQuery] = useState(undefined)
+  const [attachments, setAttachments] = useState([])
+  const [attachNote, setAttachNote] = useState(undefined)
+  const mentioning = mentionQuery !== undefined
+
+  /**
+   * Track whether the sender is currently typing a mention, and what they have typed.
+   *
+   * The query is the run of characters between the last trigger and the caret, so typing "@bo" offers
+   * Bob while ordinary prose containing "@" leaves the picker closed.
+   */
+  const trackMention = (value) => {
+    const caret = value.length
+    const trigger = value.lastIndexOf(MENTION_TRIGGER, caret - 1)
+    if (trigger === -1) { setMentionQuery(undefined); return }
+    const run = value.slice(trigger + 1, caret)
+    // A space ends the mention: "@alice could you" is a completed mention, not a query for "alice could".
+    if (/\s/.test(run)) { setMentionQuery(undefined); return }
+    setMentionQuery(run)
+  }
+
+  /** Add one picked person to the message and close the picker. */
+  const pickMention = (candidate) => {
+    setPicked(list => (list.some(entry => entry.userId === candidate.userId && entry.botId === candidate.botId)
+      ? list
+      : [...list, candidate]))
+    // The name is inserted so the reader sees whom the sender addressed. The mention itself was already
+    // recorded by construction, which is the point: the two cannot disagree.
+    const trigger = draft.lastIndexOf(MENTION_TRIGGER)
+    setDraft(trigger === -1 ? `${draft}${candidate.label} ` : `${draft.slice(0, trigger)}${candidate.label} `)
+    setMentionQuery(undefined)
+  }
+
+  /**
+   * Read the chosen file, upload it, and remember it for the next send.
+   *
+   * The upload happens on selection rather than on send so a failure is reported while the employee is
+   * still looking at the picker, and so a large file is not re-read on every keystroke.
+   */
+  const attachFile = async (file) => {
+    if (file === undefined || file === null) return
+    setAttachNote(undefined)
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      const uploaded = await onAttach?.({
+        fileName: file.name,
+        bytes,
+        // The browser's own guess is what will be shown to the recipient; the Hub stores it with the ACL.
+        contentType: file.type === '' ? undefined : file.type,
+      })
+      if (uploaded === undefined || uploaded === null) return
+      setAttachments(list => [...list, { artifactId: uploaded.artifactId, fileName: uploaded.fileName ?? file.name }])
+    } catch (error) {
+      setAttachNote(error?.message ?? String(error))
+    }
+  }
+
   // The composer clears only after the Hub accepted the message: clearing on submit and then
   // failing loses what the employee typed.
   const send = async () => {
     if (sending || draft.trim() === '') return
     setSending(true)
-    const ok = await onSend?.(draft.trim(), reply)
+    const ok = await onSend?.(draft.trim(), reply, {
+      mentions: composeMessage(draft, picked).mentions,
+      attachments: attachments.map(entry => ({ artifactId: entry.artifactId })),
+    })
     setSending(false)
-    if (ok !== false) { setDraft(''); setReply(undefined) }
+    if (ok !== false) { setDraft(''); setReply(undefined); setPicked([]); setAttachments([]); setMentionQuery(undefined) }
   }
-  useEffect(() => { setDraft(''); setReply(undefined) }, [room?.id])
+  useEffect(() => {
+    setDraft(''); setReply(undefined); setPicked([]); setAttachments([]); setMentionQuery(undefined)
+  }, [room?.id])
   // A reply is only as good as the message it names, so a target that the room list no longer
   // holds is dropped rather than sent as a link the reader cannot follow.
   useEffect(() => {
@@ -262,7 +333,41 @@ export function WorkgroupView({
         type: 'button', className: 'bt-wg-replying-drop', 'data-wg-reply-drop': 'clear',
         'aria-label': t('Stop replying'), onClick: () => setReply(undefined),
       }, t('Cancel'))),
+    // What is about to be sent, shown above the composer: the file the sender attached, and any reason
+    // the attach failed. Without this the attach control would look like it did nothing.
+    attachments.length > 0 || attachNote !== undefined
+      ? h('div', { className: 'bt-wg-pending', 'data-wg-pending': 'attachments' },
+        attachments.map(entry => h('span', { className: 'bt-wg-pending-item', key: entry.artifactId },
+          h('span', { className: 'bt-wg-pending-name' }, entry.fileName),
+          h('button', {
+            type: 'button', className: 'bt-wg-pending-drop', 'data-wg-pending-drop': entry.artifactId,
+            'aria-label': t('Remove {name}', { name: entry.fileName }),
+            onClick: () => setAttachments(list => list.filter(item => item.artifactId !== entry.artifactId)),
+          }, t('Remove')))),
+        attachNote === undefined ? null : h('span', { className: 'bt-wg-pending-error bt-danger', 'data-wg-attach-error': 'true' }, attachNote))
+      : null,
     h('div', { className: 'bt-wg-compose' },
+      // The mention picker opens on the trigger and narrows as the sender keeps typing, the way the
+      // team's own @ menu does. The names shown are for reading; what the message sends is ids.
+      mentioning ? h('div', { className: 'bt-wg-mentions', 'data-wg-mentions': 'open', role: 'listbox', 'aria-label': t('Mention someone') },
+        filterCandidates(mentionCandidates({ members, bots }), mentionQuery).slice(0, 8).map(candidate =>
+          h('button', {
+            type: 'button',
+            className: 'bt-wg-mention',
+            'data-wg-mention': candidate.botId === undefined ? candidate.userId : `${candidate.userId}:${candidate.botId}`,
+            key: candidate.botId === undefined ? candidate.userId : `${candidate.userId}:${candidate.botId}`,
+            role: 'option',
+            'aria-selected': 'false',
+            onClick: () => pickMention(candidate),
+          },
+          h('span', { className: 'bt-wg-mention-name' }, candidate.label),
+          candidate.kind === 'bot'
+            ? h('span', { className: 'bt-wg-mention-kind' }, t('Bot of {owner}', { owner: candidate.detail ?? '' }))
+            : null)),
+        filterCandidates(mentionCandidates({ members, bots }), mentionQuery).length === 0
+          ? h('div', { className: 'bt-wg-mention-empty' }, t('Nobody in this workgroup matches.'))
+          : null)
+        : null,
       h('textarea', {
         className: 'bt-wg-input',
         'data-wg-input': 'message',
@@ -274,7 +379,19 @@ export function WorkgroupView({
           if (event.nativeEvent.isComposing) return
           if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send() }
         },
+        onInput: (event) => trackMention(event.target.value),
       }),
+      // A file is chosen, read, and uploaded by the host, which is where the bytes and the Hub client
+      // both live. The picker is a file input rather than a path field so the employee never has to type
+      // a path, and so the browser's own file access rules decide what can be read.
+      h('label', { className: 'bt-wg-attach', 'data-wg-attach': 'choose', title: t('Attach a file') },
+        h('input', {
+          type: 'file',
+          className: 'bt-wg-attach-input',
+          'aria-label': t('Attach a file'),
+          onChange: event => { void attachFile(event.target.files?.[0]); event.target.value = '' },
+        }),
+        t('Attach')),
       h('button', {
         type: 'button', className: 'bt-wg-send', 'data-wg-send': 'submit',
         disabled: sending || draft.trim() === '', onClick: () => { void send() },

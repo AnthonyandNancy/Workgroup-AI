@@ -12,9 +12,11 @@
 //     the reconnect path and it must not skip or duplicate.
 
 import {
-  MessageError, sendMessage, readMessages, latestSeq, publicMessage,
+  MessageError, sendMessage, readMessages, latestSeq, publicMessage, proposeTasksForMentions,
 } from '../modules/messages/store.js'
 import { RoomError } from '../modules/rooms/store.js'
+import { TaskError, publicTask } from '../modules/tasks/store.js'
+import { taskFailure } from './tasks.js'
 import { messageKeys } from '../security/ratelimit-store.js'
 
 function messageFailure(reply, error) {
@@ -30,6 +32,10 @@ function messageFailure(reply, error) {
     const status = error.code === 'NO_SUCH_ROOM' ? 404 : 400
     return reply.code(status).send({ error: { code: error.code, message: error.message } })
   }
+  // A Bot mention creates a task, so a send can meet the task rules' refusals. They are answered with
+  // the task route's own statuses rather than by this route's default, which would turn a refused
+  // mention into a 500.
+  if (error instanceof TaskError) return taskFailure(reply, error)
   throw error
 }
 
@@ -60,6 +66,18 @@ export function makeMessageRoutes({ requireAuth }) {
           clientMessageId: body.clientMessageId,
           replyToMessageId: body.replyToMessageId,
           body: body.body,
+          mentions: body.mentions,
+          attachments: body.attachments,
+        })
+        // A Bot mention proposes work; it does not start any. The task is created in
+        // `PENDING_APPROVAL`, which only the other person can move — the Hub has no path from a
+        // mention to a running command, and a mention must not become one.
+        const proposals = result.duplicate ? [] : proposeTasksForMentions(db, {
+          roomId: request.params.roomId,
+          requesterUserId: request.auth.user.id,
+          requesterDeviceId: request.auth.deviceId,
+          message: result.message,
+          text: body.body,
         })
         const message = { ...result.message, sender_display_name: request.auth.user.display_name }
         // A duplicate is a retry, not new information: republishing it would make every
@@ -67,7 +85,7 @@ export function makeMessageRoutes({ requireAuth }) {
         if (!result.duplicate) {
           fastify.hub.realtime.publishMessage(request.params.roomId, result.message.room_seq, publicMessage(message))
         }
-        return reply.code(result.duplicate ? 200 : 201).send({ message: publicMessage(message), duplicate: result.duplicate })
+        return reply.code(result.duplicate ? 200 : 201).send({ message: publicMessage(message), duplicate: result.duplicate, ...(proposals.length === 0 ? {} : { proposedTasks: proposals.map(task => publicTask(task)) }) })
       } catch (error) {
         return messageFailure(reply, error)
       }

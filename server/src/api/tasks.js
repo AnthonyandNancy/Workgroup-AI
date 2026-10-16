@@ -24,7 +24,14 @@ import { RoomError, requireMember, listMembers } from '../modules/rooms/store.js
 import { revokeGrantsForTask } from '../modules/tasks/grants.js'
 import { makeEvent } from '../realtime/events.js'
 
-function taskFailure(reply, error) {
+/**
+ * Map a task or room refusal to a response.
+ *
+ * Exported because the message route creates tasks when a Bot is mentioned, so it meets the same
+ * refusals. Reusing this keeps one set of statuses for one set of rules; a second mapping would drift,
+ * and it already did: the mention path answered 500 for `BOT_NOT_AVAILABLE` and `SELF_TASK`.
+ */
+export function taskFailure(reply, error) {
   if (error instanceof RoomError) {
     if (error.code === 'NOT_A_MEMBER') {
       return reply.code(404).send({ error: { code: 'NO_SUCH_ROOM', message: error.message } })

@@ -20,6 +20,9 @@ export const HUB_ERROR_CODES = Object.freeze({
   NOT_CONFIGURED: 'NOT_CONFIGURED',
   UNAUTHENTICATED: 'UNAUTHENTICATED',
   REGISTRATION_REFUSED: 'REGISTRATION_REFUSED',
+  // A request this client refuses to send because it is malformed on the way out — an upload with no
+  // bytes, for instance. Distinct from `unreachable`, which means it was sent.
+  INVALID_REQUEST: 'INVALID_REQUEST',
 })
 
 export class HubProtocolError extends Error {

@@ -108,10 +108,13 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
       if (message === undefined) return true
       try {
         // The reply travels as the id of the message being answered, which is what the Hub stores;
-        // the quoted text the sender saw is never sent as if it were their own words.
-        await workgroups.sendMessage(roomId, message, value.replyToMessageId === undefined
-          ? {}
-          : { replyToMessageId: value.replyToMessageId })
+        // the quoted text the sender saw is never sent as if it were their own words. Mentions travel
+        // as ids for the same reason: a name in the text is for reading, the id is what the Hub acts on.
+        await workgroups.sendMessage(roomId, message, {
+          ...(value.replyToMessageId === undefined ? {} : { replyToMessageId: value.replyToMessageId }),
+          ...(Array.isArray(value.mentions) && value.mentions.length > 0 ? { mentions: value.mentions } : {}),
+          ...(Array.isArray(value.attachments) && value.attachments.length > 0 ? { attachments: value.attachments } : {}),
+        })
         await load()
         return true
       } catch (error) {
@@ -124,7 +127,14 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
   }, [roomId, workgroups])
 
   const run = value => view.current?.(value)
-  const onSend = (text, reply) => view.current?.(withReply({ send: text }, reply))
+  const onSend = (text, reply, extra = {}) => view.current?.(withReply({ send: text, ...extra }, reply))
+  // The file is uploaded before the message is sent, and only its id is attached: the message is then a
+  // record of a file that already exists, so a failed send leaves an unreferenced artifact rather than a
+  // message pointing at bytes that were never stored.
+  const onAttach = async (file) => {
+    const uploaded = await workgroups.uploadArtifact(roomId, { ...file, recipients: [] })
+    return { artifactId: uploaded.artifact.id, fileName: uploaded.artifact.fileName }
+  }
   const onDecision = (taskId, decision) => { void workgroups?.answerTask?.(taskId, decision).then(() => run(null)) }
   // `unknown` is not a fault to report: it is the state before the Host has answered, and the pane
   // shows the room it already has rather than a warning about a connection nobody has asked after.
@@ -159,6 +169,7 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
       actions,
       run,
       onSend,
+      onAttach,
       onDecision,
       settingsOpen,
       onCloseSettings: () => setSettingsOpen(false),
