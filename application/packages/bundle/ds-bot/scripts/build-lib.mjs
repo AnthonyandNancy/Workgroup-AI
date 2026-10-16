@@ -11,7 +11,7 @@
 // what keeps `import './src/host/x.js'` working from `lib/index.js`. The one
 // generated artifact is the declaration pair the workspace manifest policy
 // requires; `types/index.d.ts` is its authored source.
-import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, posix, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -46,6 +46,17 @@ function filesUnder(root, prefix = '') {
   return found
 }
 
+/** Render the metadata mirror read from `lib/`, rebasing its staged browser entry. */
+function stagedManifest() {
+  const manifest = JSON.parse(readFileSync(join(PLUGIN, 'package.json'), 'utf8'))
+  const client = manifest.exports?.['./client']
+  if (typeof client !== 'string' || !client.startsWith('./lib/')) {
+    throw new Error('lib staging: package.json must export ./client from ./lib/')
+  }
+  manifest.exports['./client'] = `./${client.slice('./lib/'.length)}`
+  return Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`)
+}
+
 /**
  * Render the complete `lib/` tree in memory, so `--check` compares bytes rather
  * than timestamps.
@@ -55,6 +66,10 @@ export function buildLib() {
   const files = new Map()
   for (const [source, target] of ENTRIES) {
     const absolute = join(PLUGIN, source)
+    if (source === 'package.json') {
+      files.set(target, stagedManifest())
+      continue
+    }
     if (source.endsWith('.json') || source.endsWith('.js')) {
       files.set(target, readFileSync(absolute))
       continue
@@ -118,22 +133,34 @@ function committedFiles() {
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+/**
+ * Render `lib/`, write only what differs, and report the outcome. The dev loop calls this on
+ * every browser-half rebuild, so an unchanged tree must leave the files — and their mtimes —
+ * exactly as they are: rewriting them moves the timestamps `client-hmr` polls and reloads the
+ * page for a build that changed nothing.
+ * @param options - `write: false` compares against the rendered tree without touching disk.
+ * @returns whether the tree differed, and how many files it holds.
+ */
+export function stageLib({ write = true } = {}) {
   const next = buildLib()
   // `--check` proves the same invariant a write does: a stale tree that omits a file a staged
   // module reads must fail here, not in a browser that only says "did not activate".
   assertManifestRelativeReads(next)
-  if (process.argv.includes('--check')) {
-    const committed = committedFiles().sort()
-    const expected = [...next.keys()].map(file => `lib/${file}`).sort()
-    const same = committed.length === expected.length
-      && committed.every((file, index) => file === expected[index])
-      && [...next].every(([target, contents]) => readFileSync(join(LIB, target)).equals(contents))
-    if (!same) {
-      console.error(`lib/ is stale: run \`npm run build\` in ${relative(process.cwd(), PLUGIN) || '.'} and commit the result`)
-      process.exit(1)
-    }
-  } else {
-    writeLib(next)
+  const committed = committedFiles().sort()
+  const expected = [...next.keys()].map(file => `lib/${file}`).sort()
+  const same = committed.length === expected.length
+    && committed.every((file, index) => file === expected[index])
+    && [...next].every(([target, contents]) => readFileSync(join(LIB, target)).equals(contents))
+  if (same) return { changed: false, files: next.size }
+  if (!write) return { changed: true, files: next.size }
+  writeLib(next)
+  return { changed: true, files: next.size }
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const result = stageLib({ write: !process.argv.includes('--check') })
+  if (process.argv.includes('--check') && result.changed) {
+    console.error(`lib/ is stale: run \`npm run build\` in ${relative(process.cwd(), PLUGIN) || '.'} and commit the result`)
+    process.exit(1)
   }
 }

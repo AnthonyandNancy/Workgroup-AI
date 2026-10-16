@@ -101,6 +101,7 @@
     "tests/settings-appearance.e2e.ts",
     "tests/menu-material.e2e.ts",
     "tests/desktop-locale.e2e.ts",
+    "tests/bot-entry.e2e.ts",
     "tests/settings-import.e2e.ts",
     "tests/desktop-updates.e2e.ts",
     "tests/developer-tools-settings.e2e.ts",

@@ -68,6 +68,43 @@ describe('the workgroup Hub provider', () => {
     expect(hub.identity.userHandle).toBe('alice')
   })
 
+  it('keeps workgroup creation unavailable until the configured Hub is signed in', async () => {
+    const { bridge } = bridgeOver({ 'hub-view': { configured: true, signedIn: false, state: 'signed-out' } })
+    const hub = createWorkgroupHub({ bridge })
+    await bridge.refresh()
+    expect(hub.configured).toBe(true)
+    expect(hub.signedIn).toBe(false)
+    expect(hub.available).toBe(false)
+  })
+
+  it('routes Hub configuration, registration, and room discovery through the Host', async () => {
+    const calls = []
+    const bridge = createHubBridge({
+      pollMs: 0,
+      callImpl: async (endpoint, payload) => {
+        calls.push({ endpoint, payload })
+        if (endpoint === 'hub-view') return { configured: true, signedIn: true, state: 'open', userId: 'u1' }
+        if (endpoint === 'hub-configure') return { configured: true, signedIn: false, state: 'signed-out' }
+        if (endpoint === 'hub-register') return { user: { userId: 'u2', userHandle: 'bob' } }
+        if (endpoint === 'hub-rooms') return { rooms: [{ id: 'room-1', kind: 'workgroup' }] }
+        throw new Error(`unexpected endpoint ${endpoint}`)
+      },
+    })
+    const hub = createWorkgroupHub({ bridge })
+
+    await hub.configure('https://hub.example')
+    const registered = await hub.register({ userHandle: 'bob', displayName: 'Bob', password: 'temporary', bootstrapSecret: 'temporary-secret' })
+    const rooms = await hub.rooms()
+
+    expect(registered.user.userHandle).toBe('bob')
+    expect(rooms).toEqual([{ id: 'room-1', kind: 'workgroup' }])
+    expect(calls.filter(({ endpoint }) => endpoint !== 'hub-view')).toEqual([
+      { endpoint: 'hub-configure', payload: { hubUrl: 'https://hub.example' } },
+      { endpoint: 'hub-register', payload: { userHandle: 'bob', displayName: 'Bob', password: 'temporary', bootstrapSecret: 'temporary-secret' } },
+      { endpoint: 'hub-rooms', payload: {} },
+    ])
+  })
+
   it('reports an unreachable Host as unknown rather than as "no Hub configured"', async () => {
     const { bridge } = bridgeOver({ 'hub-view': new Error('network error: failed to fetch') })
     const hub = createWorkgroupHub({ bridge })

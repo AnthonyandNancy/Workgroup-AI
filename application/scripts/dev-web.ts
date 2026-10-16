@@ -38,7 +38,7 @@
  * `watch` through API-level inline config (tsdown workspace mode fills inline
  * keys under each package's file config, and no package config defines it).
  */
-import { globSync, readFileSync } from 'node:fs'
+import { existsSync, globSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { execa } from 'execa'
@@ -166,6 +166,50 @@ export function discoverLibraryDirs(root = repoRoot): string[] {
     if (manifest.dsh?.client === undefined) dirs.push(dir)
   }
   return dirs
+}
+
+/**
+ * Workgroup AI fork: list the client packages whose browser artifact is produced by their own
+ * build script rather than by `tsc -b` plus tsdown. The predicate repeats the one
+ * `scripts/workspace-package-globs.ts` applies to the bundling pass: a workspace member
+ * shipping authored JavaScript has no `tsconfig.json`, so handing it to tsdown fails the whole
+ * pass with "Cannot find entry". Measured on DS Bot, handing it over anyway silently produced a
+ * second artifact (`lib/client.cjs`) that no loader reads, while the file the shell actually
+ * loads — `exports["./client"]` — kept the previous build.
+ * @param root - repository or fixture root passed to the discovery.
+ * @returns workspace-relative package directories that own their browser build.
+ */
+export function discoverSelfBuiltClientDirs(root = repoRoot): string[] {
+  return discoverPluginDirs(root).filter(dir => !existsSync(join(root, dir, 'tsconfig.json')))
+}
+
+/**
+ * Client plugin directories the tsdown workspace pass may bundle: every browser half except the
+ * self-built ones, whose own build script owns their watch stage.
+ * @param root - repository or fixture root passed to the discovery.
+ * @returns workspace-relative package directories for the tsdown workspace pass.
+ */
+export function discoverBundledPluginDirs(root = repoRoot): string[] {
+  const selfBuilt = new Set(discoverSelfBuiltClientDirs(root))
+  return discoverPluginDirs(root).filter(dir => !selfBuilt.has(dir))
+}
+
+/**
+ * Resolve the command that watches one self-built package's browser half.
+ * @param root - repository root.
+ * @param dir - workspace-relative package directory.
+ * @returns arguments for pnpm that start the package's own `build-watch` script.
+ * @throws Error when the package declares no `name`, or no `build-watch` script.
+ */
+export function selfBuiltWatchCommand(root: string, dir: string): readonly string[] {
+  const manifest = JSON.parse(readFileSync(join(root, dir, 'package.json'), 'utf8')) as {
+    name?: string
+    scripts?: Record<string, string>
+  }
+  if (manifest.name === undefined || manifest.name === '' || manifest.scripts?.['build-watch'] === undefined) {
+    throw new Error(`dev-web: ${dir} ships its own browser half but declares no "build-watch" script; its sources would never reach the browser`)
+  }
+  return ['--filter', manifest.name, 'run', 'build-watch']
 }
 
 /**
@@ -381,6 +425,8 @@ if (isMain) {
   }
 
   const pluginDirs = discoverPluginDirs()
+  const bundledPluginDirs = discoverBundledPluginDirs()
+  const selfBuiltDirs = discoverSelfBuiltClientDirs()
   const libraryDirs = discoverLibraryDirs()
   if (pluginDirs.length === 0) {
     console.error('dev-web: no dsh.client (platform "web") packages found under packages/')
@@ -407,7 +453,13 @@ if (isMain) {
   // first build reads current lib bundles rather than whatever the last full
   // build left. Its own watch then covers later lib rewrites — those files are
   // in its module graph.
-  const bundles = await watchClientPlugins(repoRoot, [...pluginDirs, ...libraryDirs], options.pollInterval)
+  const bundles = await watchClientPlugins(repoRoot, [...bundledPluginDirs, ...libraryDirs], options.pollInterval)
+  // A self-built browser half is watched by its own build script: the tsdown workspace pass
+  // cannot consume it (missing entry) and, when handed over anyway, re-emits an artifact no
+  // loader reads while the file `exports["./client"]` names stays at the previous build.
+  for (const dir of selfBuiltDirs) {
+    spawnStage(supervisor, `self-built client ${dir}`, 'pnpm', selfBuiltWatchCommand(repoRoot, dir), false)
+  }
   if (!shutdownRequested()) {
     // Through the shell's own `watch` script rather than vite's API: vite is not a
     // repository-root dependency, and more importantly the vite root is its
@@ -423,13 +475,14 @@ if (isMain) {
       ], false)
     }
     console.log(
-      `dev-web: watching ${String(pluginDirs.length)} dsh.client plugin packages`
+      `dev-web: watching ${String(bundledPluginDirs.length)} tsdown plugin packages,`
+      + ` ${String(selfBuiltDirs.length)} self-built browser halves,`
       + ` and ${String(libraryDirs.length)} statically linked library packages`
       + (options.pollInterval !== undefined ? ` (polling ${String(options.pollInterval)}ms)` : '')
       + `, plus tsc -b ${CLIENT_TYPE_PROGRAM} and the ${SHELL_PACKAGE} dist build`
       + (options.serve ? ', serving through dsh web' : '')
       + ':\n  '
-      + [...pluginDirs, ...libraryDirs].join('\n  '),
+      + [...bundledPluginDirs, ...selfBuiltDirs, ...libraryDirs].join('\n  '),
     )
   }
 

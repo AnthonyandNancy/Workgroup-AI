@@ -14339,6 +14339,7 @@ function apply(ctx) {
     return items.find((item) => item.sessionIds?.includes(sessionId))?.workspaceId;
   };
   let expected = null;
+  let botViewChosen = false;
   const setPlain = (plain) => surface.set((state) => state.plain === plain ? state : { ...state, plain });
   const dropPanels = () => ui2.set((state) => state.details || state.renaming ? { ...state, details: null, view: "details", renaming: false, tab: null } : state);
   const seenKey = (id) => roster.getSnapshot().byId?.[id]?.id ?? id;
@@ -14640,6 +14641,7 @@ function apply(ctx) {
       ui2.set((state) => state.newChat || state.exchange || state.menu || state.palette ? { ...state, newChat: null, exchange: null, menu: null, palette: null } : state);
       setPlain(false);
       const target = partFor(id);
+      botViewChosen = true;
       expected = target;
       ctx.uiWorkspace.openSession(target);
     },
@@ -14648,6 +14650,7 @@ function apply(ctx) {
     openAgentSession: (sessionId) => {
       ui2.set((state) => ({ ...state, newChat: null, exchange: null, menu: null, palette: null, details: null, view: "details", renaming: false, tab: null }));
       setPlain(true);
+      botViewChosen = true;
       expected = sessionId;
       ctx.uiWorkspace.openSession(sessionId);
     },
@@ -14707,6 +14710,7 @@ function apply(ctx) {
       const bot = last ? roster.getSnapshot().byId[last.botId] : void 0;
       setPlain(false);
       const target = bot && currentPart(bot) !== last.sessionId ? currentPart(bot) : partFor(id);
+      botViewChosen = true;
       expected = target;
       ctx.uiWorkspace.openSession(target);
     },
@@ -14780,7 +14784,11 @@ function apply(ctx) {
       }
       writeMode(mode);
       surface.set((state) => ({ ...state, mode }));
-      if (mode !== "bot") return;
+      if (mode !== "bot") {
+        ctx.layout.selectPanel(null);
+        return;
+      }
+      ctx.layout.selectPanel(BOT_PANEL_ID);
       const home = () => {
         const snapshot = roster.getSnapshot();
         if (!snapshot.ready || !snapshot.mainBotId) return;
@@ -15218,14 +15226,21 @@ function apply(ctx) {
   }, "ds-bot: agent surface");
   const layout = ctx.get("layout");
   registerBotPanel();
-  let botViewChosen = false;
   ctx.effect(() => {
     if (layout === void 0) return () => {
     };
     const original = layout.selectPanel.bind(layout);
     const wrapped = (panelId) => {
-      botViewChosen = panelId === BOT_PANEL_ID || panelId === null;
-      return original(panelId);
+      if (panelId === BOT_PANEL_ID) {
+        botViewChosen = true;
+        if (surface.getSnapshot().mode !== "bot") actions.setSurface("bot");
+      } else if (panelId !== null) {
+        botViewChosen = false;
+      } else if (surface.getSnapshot().mode === "agent") {
+        botViewChosen = false;
+      }
+      const target = panelId === null && botViewChosen ? BOT_PANEL_ID : panelId;
+      return original(target);
     };
     layout.selectPanel = wrapped;
     return () => {
@@ -15237,7 +15252,7 @@ function apply(ctx) {
     };
     const syncPanel = () => {
       const active = layout.panelInfo.getSnapshot().activePanelId;
-      const panelActive = botViewChosen && (active === BOT_PANEL_ID || active === null);
+      const panelActive = botViewChosen && active === BOT_PANEL_ID;
       surface.set((state) => state.panelActive === panelActive ? state : { ...state, panelActive });
       if (typeof document !== "undefined") {
         if (panelActive) document.documentElement.dataset.wgBotPanel = "on";

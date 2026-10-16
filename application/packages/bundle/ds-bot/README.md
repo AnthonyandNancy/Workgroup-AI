@@ -11,7 +11,7 @@ The DS Bot bundle for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek
 
 ## Summary
 
-`dsh-bot` mounts a team of long-lived Bots on ordinary dsh root Sessions: a Main Bot that routes work, member Bots with their own model, permissions, working folder and memory, direct messages between Bots, and group chats with turn order. It is a default bundle of the Web profile, so a fresh install already has a Bot in the sidebar and the user never installs a plugin. The bundle's `cordis.patch.yml` inserts the host row and the `auto` web-search provider; the browser half is discovered from `dsh.client` and the `./client` export. Its peers come from the profile that loads it.
+`dsh-bot` mounts a team of long-lived Bots on ordinary dsh root Sessions: a Main Bot that routes work, member Bots with their own model, permissions, working folder and memory, direct messages between Bots, and group chats with turn order. It is a default bundle of the Web profile, so a fresh install already has a Bot in the sidebar and the user never installs a plugin. Workgroup AI registers exactly one first-level Bot entry immediately after Plugins; it reuses the native Conversation and enables Bot replacements only while Bot is selected. The bundle's `cordis.patch.yml` inserts the host row and the `auto` web-search provider; the browser half is discovered from `dsh.client` and the `./client` export. Its peers come from the profile that loads it.
 
 ## Table of Contents
 

@@ -122,6 +122,25 @@ F-10 为 **S 级**（静态源码核对）。**尚无任何 N 级（双机）或
 | Q-03 | 两端 | 升级/断线/进程崩溃/DB 恢复 | Q-01 | 无重复执行和数据越界 | PASS（9/9 用例；真实 SIGKILL、真实 restore、真实附件字节恢复；L 级。缺双机断线，归 Q-01） |
 | Q-04 | 两端 | Windows/macOS 安装与 server-only Linux 发布 | Q-03 | 签名/构建/环境记录 | **部分 PASS**：Linux server-only 发布 L 级 PASS（H-13）；Windows 构建 7/7 PASS，安装包未产出（缺发布基础设施取值）；**macOS BLOCKED**（项目自身拒绝非 macOS 主机打包） |
 
+### 2026-10-16 桌面端热更新：交付新命令并修复三处静默失效
+
+需求：热更新桌面端必须有独立命令。交付 `pnpm run dev:desktop:hot`（Host 改动自动重启）与 `pnpm run dev:desktop:hmr`（Host 改动只提示、壳存活），两者共用同一监督脚本，浏览器侧改动均为零重启热替换。
+
+修复的静默失效（原状态下"改了源码看不到变化"）：
+
+| 缺陷 | 表现 | 修复 |
+|---|---|---|
+| 构建产物无读者 | tsdown 为 DS Bot 产出 `lib/client.cjs`，而 `exports["./client"]` 指向无人重建的 `lib/client.js` | tsdown 集合排除自建包（现 77 + 1 self-built + 5 library）；由包内 `build-client.mjs --watch` 重建 `client.js` 并同步 stage `lib/` |
+| Host 改动被误判 | DS Bot 无 `tsconfig.host.json`，其 `src/host/**` 被判为浏览器侧，既不热更也不重启 | `classifySourceChange` 增加 DS Bot 前置规则：`src/client/**` 与包根 `client.js` → client，其余 → restart |
+| 跨包依赖未监视 | `integrations/**` 不在监视范围 | 纳入 `integrations/workgroup`（不含 13M 的 vendored 兄弟目录） |
+| 重启未加载新 Host | `restart()` 只跑 `build:lib:host`，DS Bot 的 `lib/` staging 无人调用 | 重启序列补 `node packages/bundle/ds-bot/scripts/build-lib.mjs`，失败即停壳报错 |
+
+验收（2026-10-16，Windows 单机 L 级实测）：浏览器侧编辑零重启 + 产物同步 PASS；Host 编辑重启且 `lib/` 与源码 `cmp` IDENTICAL PASS；`integrations/workgroup` 编辑触发重启 PASS；`--hot-only` 不重启且提示 PASS；构建失败后继续轮询 PASS。测试 29/29（scripts 两条车道）+ ds-bot 624/625（唯一失败为既有 `dsh-update` 项）；`build:artifacts` 7/7；`typecheck` 5/5。**lint 基线即失败**（退出码 1、17 error，全部既有），本次改动净新增 0 个。
+
+**证据边界**：浏览器侧"页面内可见"仅有产物与日志证据（`build-client` 重写 `client.js` 且无重启），未截图；`client-hmr` 无异常时不打印日志，故未直接观测到 SSE 帧。
+
+**详见**：`docs/plans/2026-10-16-desktop-hot-reload-implementation-plan.md`（含 Plan Adjustment 与验证清单），环境要求见 `ENVIRONMENT_CHECKLIST.md` 第八节。
+
 ## 依赖规则（不可交换）
 
 `F-01..F-04` → `F-06..F-13` 的内置原生任务门槛；`H-01..H-06` → `A-01..A-05` 的双端通信；`H-08/H-09` + `F-11/F-13` → `A-06..A-09` 的真实审批执行。UI 可以并行制作，但**真实委派不能在 G3 未通过时标成已完成**。

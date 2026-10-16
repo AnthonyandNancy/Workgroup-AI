@@ -99,6 +99,8 @@ export function apply(ctx) {
   }
   // A navigation this plugin started: the surface effect trusts the id it lands on.
   let expected = null
+  // Bot-owned navigation keeps the first-level Bot entry selected when Workspace reveals Conversation.
+  let botViewChosen = false
   const setPlain = (plain) => surface.set(state => (state.plain === plain ? state : { ...state, plain }))
   // A DSH Agent Session shows the plain conversation: the Bot details and browser
   // panels would follow it and report it is not on the team, so they close.
@@ -373,6 +375,7 @@ export function apply(ctx) {
       ui.set(state => (state.newChat || state.exchange || state.menu || state.palette ? { ...state, newChat: null, exchange: null, menu: null, palette: null } : state))
       setPlain(false)
       const target = partFor(id)
+      botViewChosen = true
       expected = target
       ctx.uiWorkspace.openSession(target)
     },
@@ -381,6 +384,7 @@ export function apply(ctx) {
     openAgentSession: (sessionId) => {
       ui.set(state => ({ ...state, newChat: null, exchange: null, menu: null, palette: null, details: null, view: 'details', renaming: false, tab: null }))
       setPlain(true)
+      botViewChosen = true
       expected = sessionId
       ctx.uiWorkspace.openSession(sessionId)
     },
@@ -440,6 +444,7 @@ export function apply(ctx) {
       const bot = last ? roster.getSnapshot().byId[last.botId] : undefined
       setPlain(false)
       const target = bot && currentPart(bot) !== last.sessionId ? currentPart(bot) : partFor(id)
+      botViewChosen = true
       expected = target
       ctx.uiWorkspace.openSession(target)
     },
@@ -485,7 +490,11 @@ export function apply(ctx) {
       }
       writeMode(mode)
       surface.set(state => ({ ...state, mode }))
-      if (mode !== 'bot') return
+      if (mode !== 'bot') {
+        ctx.layout.selectPanel(null)
+        return
+      }
+      ctx.layout.selectPanel(BOT_PANEL_ID)
       // Back in Bot mode the view must hold a team conversation; an outside
       // Session left over from Agent mode would wear the Bot skin without one.
       const home = () => {
@@ -1018,27 +1027,26 @@ export function apply(ctx) {
   registerBotPanel()
 
   /**
-   * Whether the user has chosen the Bot view, as opposed to the shell's default view.
+   * Whether DS Bot owns the current Conversation selection.
    *
-   * `layout.panelInfo.activePanelId` cannot answer this on its own. The Bot entry's id is the
-   * shell's reserved `conversation` key, and the shell clears a selection whose key it does not
-   * find in its own `main` registry — the reserved key is not there, because `ui-conversation`
-   * registers the Conversation under it as a root occupant rather than as a selectable panel.
-   * So choosing the Bot view and never having chosen anything both read as `null`, and the only
-   * way to tell them apart is to watch the choice itself.
-   *
-   * The wrapper records which entry the sidebar asked for. It calls through unchanged, so the
-   * shell keeps full control of the layout; this only observes.
+   * `ui-conversation` registers the `conversation` main key, while ordinary Workspace Session
+   * navigation reveals the default Conversation with `null`. Bot actions mark their reveal before
+   * it reaches this adapter, which normalizes only that reveal back to the Bot panel key.
    */
-  let botViewChosen = false
   ctx.effect(() => {
     if (layout === undefined) return () => {}
     const original = layout.selectPanel.bind(layout)
     const wrapped = (panelId) => {
-      // `conversation` is this entry's id, and `null` is the shell restoring its default view,
-      // which is the same Conversation. Anything else is a different panel.
-      botViewChosen = panelId === BOT_PANEL_ID || panelId === null
-      return original(panelId)
+      if (panelId === BOT_PANEL_ID) {
+        botViewChosen = true
+        if (surface.getSnapshot().mode !== 'bot') actions.setSurface('bot')
+      } else if (panelId !== null) {
+        botViewChosen = false
+      } else if (surface.getSnapshot().mode === 'agent') {
+        botViewChosen = false
+      }
+      const target = panelId === null && botViewChosen ? BOT_PANEL_ID : panelId
+      return original(target)
     }
     layout.selectPanel = wrapped
     return () => { layout.selectPanel = original }
@@ -1052,9 +1060,8 @@ export function apply(ctx) {
     if (layout === undefined || !panelRegistered) return () => {}
     const syncPanel = () => {
       const active = layout.panelInfo.getSnapshot().activePanelId
-      // The choice decides, not the resolved id: see `botViewChosen` for why the id alone
-      // cannot tell the Bot view apart from the shell's untouched default.
-      const panelActive = botViewChosen && (active === BOT_PANEL_ID || active === null)
+      // Bot-owned default reveals are normalized above, so `null` remains the shell's view.
+      const panelActive = botViewChosen && active === BOT_PANEL_ID
       surface.set(state => (state.panelActive === panelActive ? state : { ...state, panelActive }))
       // The shell-chrome styles are scoped to this attribute, so the attribute is what turns
       // the team's sidebar reshaping on and off with the panel. Setting it here rather than in

@@ -1,0 +1,4 @@
+- navigation "Global panels":
+  - button "Plugins"
+  - button "Bot"
+  - button "Automation tasks"

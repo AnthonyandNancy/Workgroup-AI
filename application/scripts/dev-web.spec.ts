@@ -6,9 +6,12 @@ import type { TsdownBundle } from 'tsdown'
 import { writeClientBuildRecord } from './client-build-environment.ts'
 import {
   devWebBuildEnvironment,
+  discoverBundledPluginDirs,
   discoverLibraryDirs,
   discoverPluginDirs,
+  discoverSelfBuiltClientDirs,
   parseDevWebArguments,
+  selfBuiltWatchCommand,
   StageSupervisor,
   watchClientPlugins,
 } from './dev-web.ts'
@@ -179,6 +182,49 @@ it('discovers client-preset packages the shell links, excluding loader-delivered
     await write('packages/host/server', {}, "import { defineConfig } from 'tsdown'\nexport default defineConfig({})\n")
 
     expect(discoverLibraryDirs(root)).toEqual(['packages/client/linked'])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('separates self-built browser halves from the tsdown workspace pass', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-dev-web-self-built-'))
+  try {
+    const write = async (dir: string, manifest: unknown, files: readonly string[] = []): Promise<void> => {
+      await mkdir(join(root, dir), { recursive: true })
+      await writeFile(join(root, dir, 'package.json'), JSON.stringify(manifest))
+      for (const file of files) await writeFile(join(root, dir, file), '')
+    }
+
+    // Compiled by the workspace pass: `tsc -b` emits its declarations, then tsdown bundles them.
+    await write('packages/client/compiled', { name: '@dsh-test/compiled', dsh: { client: { platform: 'web' } } }, ['tsconfig.json'])
+    // Authored JavaScript that stages its own browser artifact: no tsconfig.json, and the pass
+    // fails the whole build on a missing entry when handed one.
+    await write('packages/bundle/authored', {
+      name: '@dsh-test/authored',
+      dsh: { client: { platform: 'web' } },
+      scripts: { 'build-watch': 'node build.mjs --watch' },
+    })
+
+    expect(discoverPluginDirs(root)).toEqual(['packages/bundle/authored', 'packages/client/compiled'])
+    expect(discoverSelfBuiltClientDirs(root)).toEqual(['packages/bundle/authored'])
+    expect(discoverBundledPluginDirs(root)).toEqual(['packages/client/compiled'])
+    expect(selfBuiltWatchCommand(root, 'packages/bundle/authored')).toEqual(['--filter', '@dsh-test/authored', 'run', 'build-watch'])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('refuses a self-built browser half that declares no watch script', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-dev-web-no-watch-'))
+  try {
+    await mkdir(join(root, 'packages', 'bundle', 'authored'), { recursive: true })
+    await writeFile(join(root, 'packages', 'bundle', 'authored', 'package.json'), JSON.stringify({
+      name: '@dsh-test/authored',
+      dsh: { client: { platform: 'web' } },
+    }))
+
+    expect(() => selfBuiltWatchCommand(root, 'packages/bundle/authored')).toThrow(/build-watch/u)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

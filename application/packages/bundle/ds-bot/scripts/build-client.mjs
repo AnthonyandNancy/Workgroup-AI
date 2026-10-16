@@ -7,7 +7,7 @@
 // a classic script; the wrapper mirrors packages/client/tsdown.client.ts in
 // deepseek-harness: `require` resolves the shell-seeded platform modules (react,
 // react-dom, ui-primitives, ...), which therefore stay external.
-import { readFileSync, writeFileSync } from 'node:fs'
+import { globSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
@@ -56,7 +56,61 @@ export async function bundleClient() {
   ].join('\n')
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+/**
+ * Build once — writing only what differs — then poll `src/client` and `src/shared` for edits and
+ * repeat. The initial pass is what makes the dev loop self-bootstrapping: the shell loads
+ * `lib/client.js`, which only this package's build stages.
+ * @param options - polling interval, and the line sink for progress.
+ * @returns a disposer that stops polling.
+ */
+export async function watchClient({ intervalMs = 500, log = console.log } = {}) {
+  const { stageLib } = await import('./build-lib.mjs')
+  const WATCHED = ['src/client', 'src/shared']
+
+  const buildOnce = async (reason) => {
+    const next = await bundleClient()
+    if (readFileSync(OUTPUT, 'utf8') !== next) {
+      writeFileSync(OUTPUT, next)
+      log(`build-client: client.js rebuilt (${reason})`)
+    }
+    if (stageLib({ write: true }).changed) log(`build-client: lib/ staged (${reason})`)
+  }
+
+  const sourceStats = () => {
+    const stats = new Map()
+    for (const root of WATCHED) {
+      for (const rel of globSync('**/*.js', { cwd: join(PLUGIN, root) })) {
+        const absolute = join(PLUGIN, root, rel)
+        stats.set(absolute, statSync(absolute).mtimeMs)
+      }
+    }
+    return stats
+  }
+
+  await buildOnce('initial build')
+
+  let seen = sourceStats()
+  let building = false
+  const timer = setInterval(() => {
+    // A slow build must not queue behind itself and multiply its own cost.
+    if (building) return
+    const current = sourceStats()
+    let changed = 0
+    for (const [absolute, mtime] of current) if (seen.get(absolute) !== mtime) changed += 1
+    seen = current
+    if (changed === 0) return
+    building = true
+    void buildOnce(`${String(changed)} changed file(s)`)
+      .catch(error => { log(`build-client: ${error instanceof Error ? error.message : String(error)}; still watching`) })
+      .finally(() => { building = false })
+  }, intervalMs)
+  log(`build-client: watching ${WATCHED.join(', ')} every ${String(intervalMs)}ms`)
+  return () => { clearInterval(timer) }
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv.includes('--watch')) {
+  await watchClient()
+} else if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const next = await bundleClient()
   if (process.argv.includes('--check')) {
     let current = null

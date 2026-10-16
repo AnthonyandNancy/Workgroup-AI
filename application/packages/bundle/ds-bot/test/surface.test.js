@@ -14,6 +14,13 @@ test('a plain Bot-mode view keeps the shell but drops the conversation', () => {
   assert.deepEqual(groupsFor({ mode: 'bot', plain: true }), { shell: true, conversation: false })
 })
 
+test('an inactive Bot panel mounts neither group', () => {
+  assert.deepEqual(groupsFor({ mode: 'bot', panelActive: false }), {
+    shell: false,
+    conversation: false,
+  })
+})
+
 test('the saved surface mode survives reloads and defaults to bot', () => {
   const store = new Map()
   const storage = {

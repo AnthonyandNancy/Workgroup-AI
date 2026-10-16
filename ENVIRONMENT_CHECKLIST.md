@@ -110,7 +110,40 @@
 
 ---
 
-## 八、给最省事路径的建议
+## 八、桌面端热更新（`dev:desktop:hot` / `dev:desktop:hmr`）
+
+两条命令共用同一个监督脚本，差异只在 Host 侧改动的处置：
+
+| 命令 | 首次构建 | 浏览器侧改动 | Host 侧改动 | 适用 |
+|---|---|---|---|---|
+| `pnpm run dev:desktop:hot` | 是（`--skip-build` 可跳过） | 零重启热替换 | 自动停壳重启 | 需要 Host 改动即时生效 |
+| `pnpm run dev:desktop:hmr` | 同上 | 零重启热替换 | **只提示不重启**（壳保持存活） | 不打断在用会话 |
+
+**启动成功的判据（缺任一条即视为未就绪）**
+
+- `dev-desktop-hot: mode=hot-only (dev:desktop:hmr)` 或 `mode=restart (dev:desktop:hot)`
+- `dev-web: watching 77 tsdown plugin packages, 1 self-built browser halves, and 5 statically linked library packages …`
+- `build-client: watching src/client, src/shared every 500ms`
+- 全日志中 `client.cjs` 出现次数为 **0**（该产物已废弃：没有任何加载器读取它）
+- `launching the Desktop shell` 出现 1 次
+
+**L 级实测结果（2026-10-16，Windows，单机）**
+
+| 场景 | 期望 | 实测 |
+|---|---|---|
+| 改 `packages/bundle/ds-bot/src/client/i18n.js`（默认命令） | `client.js rebuilt` + `lib/ staged`，无重启 | PASS：两行均出现，`launching the Desktop shell` 计数保持 1，中文文案进入 `client.js` 与 `lib/client.js` |
+| 改 `packages/bundle/ds-bot/src/host/workgroup-hub.js`（默认命令） | 重启，且 `lib/` staged 与源码一致 | PASS：`host-side change … restarting` → 计数 2；`cmp` 两文件 IDENTICAL |
+| 改 `integrations/workgroup/policy/egress.mjs` | 触发重启 | PASS：`host-side change … (outside the client build); restarting` → 计数 3 |
+| 改 `src/host/tools.js`（`hmr` 命令） | 只提示、不重启 | PASS：`not restarting (--hot-only)` + 指引两行，计数保持 1 |
+| 注入语法错误 | 打印错误并继续轮询 | PASS：`build-client: Build failed with 1 error: … Unexpected "*"; still watching`，循环未退出，修复后自动重建 |
+
+**注意**：`--hot-only` 下 Host 改动**不会**生效，必须切 `dev:desktop:hot` 重启。这是有意的取舍，日志会明确提示。
+
+**并行禁区**：`dev:web` / `dev:desktop:hot` 与任何 `build`/`build:artifacts` 不得同时运行——它们写同一棵 `lib/` 与 `apps/web/dist/`。
+
+---
+
+## 九、给最省事路径的建议
 
 如果只想用最少的准备推进最多的事，按此顺序：
 
