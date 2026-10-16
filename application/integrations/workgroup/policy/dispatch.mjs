@@ -43,6 +43,13 @@ export const DISPATCH_REFUSALS = Object.freeze({
    * different: one asks the owner to approve a directory, the other asks them to fix the path.
    */
   NO_DIRECTORY_APPROVED: 'NO_DIRECTORY_APPROVED',
+  /**
+   * A grant whose signature this machine could not verify. Separate from `MALFORMED_GRANT` because
+   * the fix is different: a malformed frame was truncated or mis-sent, while this one is
+   * well-formed and claims to be a grant — that is either a forgery or a key this machine does not
+   * know, and both require the owner to look at where the frame came from.
+   */
+  UNVERIFIED_GRANT: 'UNVERIFIED_GRANT',
 })
 
 export class DispatchRefused extends Error {
@@ -160,7 +167,7 @@ export function resolveTaskDirectory(candidate, { root } = {}) {
  * @throws {DispatchRefused}
  */
 export async function acceptDispatch(input) {
-  const { grant, deviceId, mintedForDeviceId, task, approvedRevocationVersion, scope, root, consume } = input
+  const { grant, deviceId, mintedForDeviceId, task, approvedRevocationVersion, scope, root, consume, verifyGrant } = input
 
   if (grant === null || typeof grant !== 'object') {
     throw new DispatchRefused('A dispatch needs a grant', DISPATCH_REFUSALS.MALFORMED_GRANT)
@@ -212,6 +219,33 @@ export async function acceptDispatch(input) {
   // The directory is validated **before** consuming, so a dispatch that cannot run does not burn
   // the credential: the owner can fix the directory and the same grant is still usable.
   const { workDir, realPath } = resolveTaskDirectory(scope?.workDir, { root })
+
+  // The signature is checked here: after every check this machine can make on its own, and before the
+  // nonce is presented. The order is deliberate in both directions.
+  //
+  // After the local checks, so a frame that is already known to be wrong — for another device, for a
+  // task whose approval was withdrawn — keeps its specific refusal. Those are facts this machine holds
+  // without any key, and answering "bad signature" instead would hide the reason the owner needs.
+  //
+  // Before the nonce, because presenting it is what spends the credential. A forged frame that got as
+  // far as the Hub would either burn the grant or (with the Hub's own check) be refused there after a
+  // round trip; either way the owner's machine has done work on a request it could have refused itself.
+  //
+  // A caller that cannot verify is refused rather than trusted: an executor that accepted unsigned
+  // frames would make the signature optional at exactly the point where it matters.
+  if (typeof verifyGrant !== 'function') {
+    throw new DispatchRefused(
+      'This machine cannot verify dispatch signatures, so it cannot accept a dispatch.',
+      DISPATCH_REFUSALS.UNVERIFIED_GRANT,
+    )
+  }
+  const signatureVerdict = verifyGrant({ grant })
+  if (signatureVerdict !== true) {
+    throw new DispatchRefused(
+      `This dispatch is not signed by the Hub that issued it (${typeof signatureVerdict === 'string' ? signatureVerdict : 'no reason given'}).`,
+      DISPATCH_REFUSALS.UNVERIFIED_GRANT,
+    )
+  }
 
   const consumed = await consume(grant.nonce, grant.taskId)
   if (consumed === null || typeof consumed !== 'object') {

@@ -19,6 +19,8 @@
 // prefix with the root (`work-other` beside `work`) — the case a naive `startsWith` check passes.
 
 import assert from 'node:assert/strict'
+import { createPublicKey, generateKeyPairSync } from 'node:crypto'
+import { verifyGrantSignature } from '../policy/grant-signature.mjs'
 import { spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -47,6 +49,10 @@ async function startRealHub() {
       NODE_ENV: 'production', HUB_HOST: '127.0.0.1', HUB_PORT: String(port),
       HUB_DATA_DIR: join(root, 'data'), HUB_TOKEN_SIGNING_KEY: SIGNING_KEY,
       HUB_REGISTRATION: 'admin_secret', HUB_ADMIN_BOOTSTRAP_SECRET: BOOTSTRAP,
+      // E1: the Hub signs its grants with an Ed25519 key, so a Hub under test needs one for the same
+      // reason a real one does. Generated for this run and passed the way an operator would; the
+      // signature is checked by the executor below, so this is not a placeholder.
+      HUB_GRANT_SIGNING_KEY: GRANT_PRIVATE_PEM, HUB_GRANT_SIGNING_KEY_ID: 'g1',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -75,8 +81,42 @@ async function startRealHub() {
 
 let hub
 let counter = 0
+
+// One key pair per run. The Hub signs grants with the private half; the executor checks them against
+// the public half fetched from the Hub, which is what a real deployment does.
+const GRANT_KEYS = generateKeyPairSync('ed25519')
+const GRANT_PRIVATE_PEM = GRANT_KEYS.privateKey.export({ type: 'pkcs8', format: 'pem' })
 /** Every directory this file creates, cleaned up at the end. */
 const scratch = []
+
+/**
+ * The verifier an executor uses on the owner's machine.
+ *
+ * A stand-in for the real one: it answers "this frame is one the Hub issued" for the frames these
+ * cases build, so each case can still reach the refusal it is actually about. The signature cases
+ * have their own file (`m4-*` and the Hub's `e1-*` suite), which drive real Ed25519 keys; here the
+ * point is that `acceptDispatch` demands a verifier at all — a caller without one is refused, which
+ * the dedicated case below asserts directly.
+ */
+const acceptAnythingTheHubCouldHaveSigned = () => true
+
+/**
+ * The verifier a real executor uses: the Hub's published Ed25519 public key.
+ *
+ * Fetched from `GET /dispatch/keys`, which is how a machine that has never talked to this Hub learns
+ * the key. Cached per run because the key set only changes on a rotation.
+ */
+let publishedKeys
+async function hubVerifier(person) {
+  if (publishedKeys === undefined) {
+    const answer = await person.client.request('GET', '/dispatch/keys')
+    publishedKeys = Object.fromEntries(Object.entries(answer.keys).map(([id, pem]) => [id, createPublicKey(pem)]))
+  }
+  return ({ grant }) => {
+    const verdict = verifyGrantSignature({ grant }, { keys: publishedKeys })
+    return verdict.valid ? true : verdict.reason
+  }
+}
 
 function scratchRoot(name) {
   const path = mkdtempSync(join(tmpdir(), `workgroup-a07-${name}-`))
@@ -239,6 +279,7 @@ describe('a forged dispatch does not execute', () => {
       approvedRevocationVersion: 0,
       scope: { workDir: scratchRoot('other-device') },
       consume: async () => { consumed = true; return {} },
+      verifyGrant: acceptAnythingTheHubCouldHaveSigned,
     })).rejects.toThrow(expect.objectContaining({ code: DISPATCH_REFUSALS.NOT_FOR_THIS_DEVICE }))
     // The important part: the forged frame did not burn the credential the real device still needs.
     assert.equal(consumed, false, 'a frame for another device must not consume this device\u2019s grant')
@@ -254,6 +295,7 @@ describe('a forged dispatch does not execute', () => {
       approvedRevocationVersion: 0,
       scope: { workDir: root },
       consume: async () => ({ scope: {}, botId: 'someone-else' }),
+      verifyGrant: acceptAnythingTheHubCouldHaveSigned,
     })).rejects.toThrow(expect.objectContaining({ code: DISPATCH_REFUSALS.BOT_MISMATCH }))
   })
 
@@ -268,6 +310,7 @@ describe('a forged dispatch does not execute', () => {
         approvedRevocationVersion: 0,
         scope: { workDir: root },
         consume: async () => ({}),
+        verifyGrant: acceptAnythingTheHubCouldHaveSigned,
       })).rejects.toThrow(expect.objectContaining({ code: DISPATCH_REFUSALS.MALFORMED_GRANT }))
     }
   })
@@ -282,6 +325,7 @@ describe('a forged dispatch does not execute', () => {
       approvedRevocationVersion: 0,
       scope: { workDir: root },
       consume: async () => ({}),
+      verifyGrant: acceptAnythingTheHubCouldHaveSigned,
     })).rejects.toThrow(expect.objectContaining({ code: DISPATCH_REFUSALS.MALFORMED_GRANT }))
   })
 
@@ -295,6 +339,7 @@ describe('a forged dispatch does not execute', () => {
       approvedRevocationVersion: 0,
       scope: { workDir: 'relative/nope' },
       consume: async () => { consumed = true; return {} },
+      verifyGrant: acceptAnythingTheHubCouldHaveSigned,
     })).rejects.toThrow(expect.objectContaining({ code: DISPATCH_REFUSALS.UNUSABLE_DIRECTORY }))
     // Validating first is what lets the owner fix the path and reuse the same grant.
     assert.equal(consumed, false)
@@ -317,6 +362,7 @@ describe('a revoked dispatch does not execute', () => {
       approvedRevocationVersion: 0,
       scope: { workDir: root },
       consume: async () => { asked = true; return {} },
+      verifyGrant: acceptAnythingTheHubCouldHaveSigned,
     })).rejects.toThrow(expect.objectContaining({ code: DISPATCH_REFUSALS.REVOKED }))
     // A cancellation already known locally must not reach the network at all.
     assert.equal(asked, false)
@@ -333,6 +379,7 @@ describe('a revoked dispatch does not execute', () => {
         approvedRevocationVersion: 0,
         scope: { workDir: root },
         consume: async () => ({}),
+        verifyGrant: acceptAnythingTheHubCouldHaveSigned,
       })).rejects.toThrow(expect.objectContaining({ code: DISPATCH_REFUSALS.REVOKED }))
     }
   })
@@ -349,6 +396,7 @@ describe('a revoked dispatch does not execute', () => {
       approvedRevocationVersion: 0,
       scope: { workDir: root },
       consume: async () => { throw new Error('This dispatch grant was revoked by a cancellation') },
+      verifyGrant: acceptAnythingTheHubCouldHaveSigned,
     })).rejects.toThrow(/revoked/i)
   })
 })
@@ -371,7 +419,8 @@ describe('a genuine dispatch is accepted, once', () => {
       task,
       approvedRevocationVersion: task.revocationVersion,
       scope: { workDir, tools: ['read'] },
-      consume: (nonce, taskId) => bob.approvals.consumeGrant(nonce, taskId),
+      consume: (nonce, taskId) => bob.approvals.consumeGrant(nonce, taskId, { signature: grant.signature, keyId: grant.keyId }),
+      verifyGrant: await hubVerifier(bob),
     })
     assert.equal(accepted.taskId, task.id)
     assert.equal(accepted.botId, 'writer')
@@ -391,7 +440,8 @@ describe('a genuine dispatch is accepted, once', () => {
       task,
       approvedRevocationVersion: task.revocationVersion,
       scope: { workDir },
-      consume: (nonce, taskId) => bob.approvals.consumeGrant(nonce, taskId),
+      consume: (nonce, taskId) => bob.approvals.consumeGrant(nonce, taskId, { signature: grant.signature, keyId: grant.keyId }),
+      verifyGrant: await hubVerifier(bob),
     }
 
     await acceptDispatch(input)
@@ -415,7 +465,8 @@ describe('a genuine dispatch is accepted, once', () => {
       task,
       approvedRevocationVersion: task.revocationVersion,
       scope: { workDir },
-      consume: (nonce, taskId) => bob.approvals.consumeGrant(nonce, taskId),
+      consume: (nonce, taskId) => bob.approvals.consumeGrant(nonce, taskId, { signature: grant.signature, keyId: grant.keyId }),
+      verifyGrant: await hubVerifier(bob),
     })).rejects.toThrow()
   })
 
@@ -441,8 +492,45 @@ describe('a genuine dispatch is accepted, once', () => {
       task,
       approvedRevocationVersion: task.revocationVersion,
       scope: { workDir },
-      consume: (nonce, taskId) => bob.approvals.consumeGrant(nonce, taskId),
+      consume: (nonce, taskId) => bob.approvals.consumeGrant(nonce, taskId, { signature: grant.signature, keyId: grant.keyId }),
+      verifyGrant: await hubVerifier(bob),
     })
     assert.equal(accepted.taskId, task.id)
+  })
+})
+
+
+// E1 on the executor side: a machine that cannot verify a signature must refuse the dispatch rather
+// than accept it. Without this, the signature would be advisory — an executor that simply omitted the
+// check would run any frame that named a real nonce, and the Hub's signature would protect nothing.
+describe('E1 the executor refuses what it cannot verify', () => {
+  it('refuses a dispatch when the caller provides no verifier at all', async () => {
+    await expect(acceptDispatch({
+      grant: { nonce: 'wggrant_x', taskId: 't-1', botId: 'writer' },
+      deviceId: 'd',
+      mintedForDeviceId: 'd',
+      task: { id: 't-1', state: 'APPROVED', revocationVersion: 0, assignedBotId: 'writer' },
+      approvedRevocationVersion: 0,
+      scope: { workDir: scratchRoot('no-verifier') },
+      consume: async () => ({ scope: {}, botId: 'writer' }),
+    })).rejects.toThrow(expect.objectContaining({ code: DISPATCH_REFUSALS.UNVERIFIED_GRANT }))
+  })
+
+  it('refuses a dispatch whose signature does not verify, and does not consume the grant', async () => {
+    let consumed = false
+    await expect(acceptDispatch({
+      grant: { nonce: 'wggrant_x', taskId: 't-1', botId: 'writer' },
+      deviceId: 'd',
+      mintedForDeviceId: 'd',
+      task: { id: 't-1', state: 'APPROVED', revocationVersion: 0, assignedBotId: 'writer' },
+      approvedRevocationVersion: 0,
+      scope: { workDir: scratchRoot('bad-signature') },
+      consume: async () => { consumed = true; return { scope: {}, botId: 'writer' } },
+      // A verifier that says no is what a real one says for a forged frame.
+      verifyGrant: () => 'the signature does not match the grant it covers',
+    })).rejects.toThrow(expect.objectContaining({ code: DISPATCH_REFUSALS.UNVERIFIED_GRANT }))
+    // The refusal happens before the nonce is presented, so a forged frame cannot burn the grant the
+    // legitimate dispatch still needs.
+    expect(consumed).toBe(false)
   })
 })

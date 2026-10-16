@@ -20,6 +20,7 @@
 // vocabulary would produce requests the Hub rejects with a message nobody can act on.
 
 import assert from 'node:assert/strict'
+import { generateKeyPairSync } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -44,6 +45,10 @@ const HERE = resolve(fileURLToPath(import.meta.url), '..')
 const APP_ROOT = resolve(HERE, '..', '..', '..')
 const SERVER_ROOT = resolve(APP_ROOT, '..', 'server')
 const SIGNING_KEY = 'a06-test-signing-key-long-enough-for-hs256'
+
+// One Ed25519 key pair for this file: the Hub signs dispatch grants with it (E1).
+const GRANT_KEYS = generateKeyPairSync('ed25519')
+const GRANT_PRIVATE_PEM = GRANT_KEYS.privateKey.export({ type: 'pkcs8', format: 'pem' })
 const PASSWORD = 'correct-horse-battery-staple'
 const BOOTSTRAP = 'a06-bootstrap-secret'
 
@@ -64,6 +69,9 @@ async function startRealHub() {
       ...process.env,
       NODE_ENV: 'production', HUB_HOST: '127.0.0.1', HUB_PORT: String(port),
       HUB_DATA_DIR: join(root, 'data'), HUB_TOKEN_SIGNING_KEY: SIGNING_KEY,
+      // E1: grants are asymmetrically signed, so the Hub needs a key. Generated per run and handed
+      // over as an environment variable, exactly as an operator would; nothing is written to disk.
+      HUB_GRANT_SIGNING_KEY: GRANT_PRIVATE_PEM, HUB_GRANT_SIGNING_KEY_ID: 'g1',
       HUB_REGISTRATION: 'admin_secret', HUB_ADMIN_BOOTSTRAP_SECRET: BOOTSTRAP,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -433,12 +441,12 @@ describe('grants and revocation', () => {
     const mintedRow = afterMint.grants[0]
     // Presenting it starts work, and the nonce is then spent: a second presentation is refused.
     // The Hub looks the grant up by the nonce, not by id, because the nonce is the secret.
-    const started = await bob.approvals.consumeGrant(minted.grant.nonce, task.id)
+    const started = await bob.approvals.consumeGrant(minted.grant.nonce, task.id, { signature: minted.grant.signature, keyId: minted.grant.keyId })
     assert.equal(started.taskId, task.id)
     assert.equal(started.botId, 'writer')
     // The answer names the scope, which is what the local executor must enforce.
     assert.equal(started.scope.assignmentMode, 'existing_bot')
-    await expect(bob.approvals.consumeGrant(minted.grant.nonce, task.id)).rejects.toThrow(/already used/i)
+    await expect(bob.approvals.consumeGrant(minted.grant.nonce, task.id, { signature: minted.grant.signature, keyId: minted.grant.keyId })).rejects.toThrow(/already used/i)
     assert.equal('nonce' in mintedRow, false, 'the grant list must not publish the nonce')
     // A grant must be bound to this task, this Bot, and this owner: that binding is what A-07
     // verifies, and it must not be reconstructible from anything else.
@@ -467,9 +475,9 @@ describe('grants and revocation', () => {
 
     // A revoked grant can no longer be presented, and the refusal names revocation rather than the
     // replay it would otherwise look like.
-    await expect(bob.approvals.consumeGrant(second.grant.nonce, task.id)).rejects.toThrow(/revoked/i)
+    await expect(bob.approvals.consumeGrant(second.grant.nonce, task.id, { signature: second.grant.signature, keyId: second.grant.keyId })).rejects.toThrow(/revoked/i)
     // A consumed one is refused as used, which is a different fact.
-    await expect(bob.approvals.consumeGrant(minted.grant.nonce, task.id)).rejects.toThrow(/already used/i)
+    await expect(bob.approvals.consumeGrant(minted.grant.nonce, task.id, { signature: minted.grant.signature, keyId: minted.grant.keyId })).rejects.toThrow(/already used/i)
   })
 
   it('only the owner or a room admin may revoke, and a plain member is refused', async () => {

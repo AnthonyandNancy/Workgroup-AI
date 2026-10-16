@@ -13,6 +13,7 @@
 // are shut", which is the only useful form for a release gate.
 
 import assert from 'node:assert/strict'
+import { generateKeyPairSync } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -24,6 +25,10 @@ import { checkHubProtocol } from '../protocol/index.mjs'
 import { createWorkgroupClient } from '../client/index.mjs'
 import { createApprovalClient } from '../client/approvals.mjs'
 import { createMemoryClient } from '../client/memory.mjs'
+
+// One Ed25519 key pair for this file: the Hub signs dispatch grants with it (E1).
+const GRANT_KEYS = generateKeyPairSync('ed25519')
+const GRANT_PRIVATE_PEM = GRANT_KEYS.privateKey.export({ type: 'pkcs8', format: 'pem' })
 import { acceptDispatch, resolveTaskDirectory, DISPATCH_REFUSALS } from '../policy/dispatch.mjs'
 import { publicProgress, assertPublishable, NEVER_PUBLISHED } from '../client/review.mjs'
 import { issueAccessToken, verifyAccessToken, TokenError, keyringFromConfig, parsePreviousKeys } from '../../../../server/src/auth/tokens.js'
@@ -45,6 +50,9 @@ async function startRealHub() {
       ...process.env,
       NODE_ENV: 'production', HUB_HOST: '127.0.0.1', HUB_PORT: String(port),
       HUB_DATA_DIR: join(root, 'data'), HUB_TOKEN_SIGNING_KEY: SIGNING_KEY,
+      // E1: grants are asymmetrically signed, so the Hub under test needs a key for the same reason a
+      // real one does. Generated per run, passed through the environment, never written to disk.
+      HUB_GRANT_SIGNING_KEY: GRANT_PRIVATE_PEM, HUB_GRANT_SIGNING_KEY_ID: 'g1',
       HUB_REGISTRATION: 'admin_secret', HUB_ADMIN_BOOTSTRAP_SECRET: BOOTSTRAP,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -258,7 +266,12 @@ describe('over-privilege', () => {
 describe('directories and tools', () => {
   const task = { id: 't-1', state: 'APPROVED', revocationVersion: 0 }
   const grant = { nonce: 'wggrant_x', taskId: 't-1' }
-  const base = { grant, deviceId: 'd', mintedForDeviceId: 'd', task, approvedRevocationVersion: 0, consume: async () => ({}) }
+  const base = {
+    grant, deviceId: 'd', mintedForDeviceId: 'd', task, approvedRevocationVersion: 0, consume: async () => ({}),
+    // E1 made a verifier mandatory. These cases are about the directory and tool rules, so the
+    // verifier answers "yes" — the signature rules have their own cases in `a07` and `e1-signature-parity`.
+    verifyGrant: () => true,
+  }
 
   it('a directory outside the approved root is refused, including a symlink that points out', () => {
     const parent = scratchRoot('dirs')
@@ -365,7 +378,7 @@ describe('cancellation', () => {
     await bob.approvals.revokeGrants(task.id)
 
     // The two refusals mean different things to an operator, so they stay distinct.
-    await expect(bob.approvals.consumeGrant(minted.grant.nonce, task.id)).rejects.toThrow(/revoked/i)
+    await expect(bob.approvals.consumeGrant(minted.grant.nonce, task.id, { signature: minted.grant.signature, keyId: minted.grant.keyId })).rejects.toThrow(/revoked/i)
   })
 })
 

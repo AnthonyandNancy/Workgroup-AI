@@ -27,6 +27,30 @@ function readString(env, name) {
   return trimmed === '' ? undefined : trimmed
 }
 
+/**
+ * Parse `keyId:PEM` entries into a map of key id to public PEM.
+ *
+ * Only public keys are accepted here, which is the point: a key listed for verification cannot sign.
+ * A malformed entry is a configuration problem the operator must see, because a silently dropped key
+ * means every dispatch signed by it starts failing with no diagnostic saying why.
+ *
+ * Entries are separated by a blank line, so a PEM can be embedded with its own line breaks written
+ * as the two characters `\n`.
+ */
+function parseGrantPreviousKeys(raw, problems) {
+  const keys = {}
+  if (typeof raw !== 'string' || raw.trim() === '') return keys
+  for (const entry of raw.split('\n\n')) {
+    const separator = entry.indexOf(':')
+    if (separator <= 0) {
+      problems.push('HUB_GRANT_SIGNING_KEY_PUBLIC_PREVIOUS must be `keyId:PEM` entries separated by a blank line')
+      continue
+    }
+    keys[entry.slice(0, separator).trim()] = entry.slice(separator + 1).replace(/\\n/g, '\n').trim()
+  }
+  return keys
+}
+
 function readInteger(env, name, problems, { min, max }) {
   const raw = readString(env, name)
   if (raw === undefined) return undefined
@@ -256,6 +280,15 @@ export function loadConfig(env = process.env, options = {}) {
   const heartbeatMaxAttempts = readInteger(env, 'HUB_HEARTBEAT_MAX_ATTEMPTS', problems, { min: 1, max: 100000 })
   const messageMaxAttempts = readInteger(env, 'HUB_MESSAGE_MAX_ATTEMPTS', problems, { min: 1, max: 100000 })
 
+  // The Ed25519 key pair that signs dispatch grants. Asymmetric rather than shared, because the
+  // machine that verifies a grant is not the machine that issues it: a shared secret would mean every
+  // participating desktop holds a key able to mint a grant for any task. A PKCS#8 PEM comes from the
+  // environment, never from a file in the repository, and is never logged. Rotation follows the token
+  // keyring: a new id signs, older public keys may still verify.
+  const grantSigningKey = readString(env, 'HUB_GRANT_SIGNING_KEY')
+  const grantSigningKeyId = readString(env, 'HUB_GRANT_SIGNING_KEY_ID') ?? 'g1'
+  const grantSigningKeyPrevious = parseGrantPreviousKeys(readString(env, 'HUB_GRANT_SIGNING_KEY_PUBLIC_PREVIOUS'), problems)
+
   // Trusted reverse proxies. A Hub behind one sees the proxy's address as every request's source,
   // which collapses "per source" throttling into one shared budget and makes the source an
   // attacker-chosen value if the forwarding header is trusted blindly. So the default is the safe
@@ -366,6 +399,15 @@ export function loadConfig(env = process.env, options = {}) {
     tokens: Object.freeze({ accessTokenTtlSeconds, refreshTokenTtlSeconds, deviceKeyTtlSeconds }),
     retention: Object.freeze({ auditRetentionDays, backupRetentionCount }),
     limits: Object.freeze({ maxMessageBytes, maxUploadBytes, maxMemoriesPerRoom }),
+    signing: Object.freeze({
+      // `privateKey: undefined` is a real state, not a zero: the Hub reads it as "no signing key
+      // configured" and then refuses every dispatch, rather than accepting unsigned ones.
+      grant: Object.freeze({
+        privateKey: grantSigningKey,
+        keyId: grantSigningKeyId,
+        previous: grantSigningKeyPrevious,
+      }),
+    }),
     security: Object.freeze({
       loginMaxAttempts,
       loginWindowSeconds,

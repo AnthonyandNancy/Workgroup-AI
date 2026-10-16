@@ -15,6 +15,7 @@ import {
 import { findTask } from '../modules/tasks/store.js'
 import { RoomError, requireMember } from '../modules/rooms/store.js'
 import { makeEvent } from '../realtime/events.js'
+import { verifyGrantSignature } from '../modules/tasks/signing.js'
 
 function grantFailure(reply, error) {
   if (error instanceof GrantError) {
@@ -33,6 +34,12 @@ function grantFailure(reply, error) {
       case 'GRANT_REVOKED':
       case 'GRANT_ALREADY_USED':
         return reply.code(409).send({ error: { code: error.code, message: error.message } })
+      // A bad or missing signature is a 403: the caller is authenticated, but the grant it
+      // presented is not one this Hub issued. Distinct from the 409s, which mean the grant was
+      // genuine and is no longer usable.
+      case 'BAD_SIGNATURE':
+      case 'SIGNING_UNAVAILABLE':
+        return reply.code(403).send({ error: { code: error.code, message: error.message } })
       case 'UNKNOWN_GRANT':
         return reply.code(404).send({ error: { code: error.code, message: error.message } })
       default:
@@ -56,15 +63,34 @@ export function makeGrantRoutes({ requireAuth }) {
           ownerDeviceId: request.auth.deviceId,
           botId: body.botId,
           ...(body.ttlSeconds === undefined ? {} : { ttlSeconds: Number(body.ttlSeconds) }),
+          // The signer comes from the process, never from the request: a caller that could supply
+          // its own signer could mint a grant the Hub never issued.
+          signer: fastify.hub.signing?.signer,
         })
-        // The nonce is returned exactly once and never stored in readable form.
+        // The nonce is returned exactly once and never stored in readable form. The signature is
+        // returned with it: the executor presents both, and neither alone is enough.
         return reply.code(201).send({
-          grant: { id: minted.grantId, taskId: minted.taskId, botId: minted.botId, expiresAt: minted.expiresAt, nonce: minted.nonce },
+          grant: {
+            id: minted.grantId, taskId: minted.taskId, botId: minted.botId, expiresAt: minted.expiresAt,
+            nonce: minted.nonce, signature: minted.signature, keyId: minted.keyId,
+          },
         })
       } catch (error) {
         return grantFailure(reply, error)
       }
     })
+
+    /**
+     * The public keys a dispatch signature may be verified against.
+     *
+     * Reachable to any authenticated user, and deliberately publishing only public halves: the
+     * verifying machine is not the Hub and may never have talked to it before, so it needs a way to
+     * learn the key without holding anything secret. The private key is never returned by any route.
+     */
+    fastify.get('/api/v1/dispatch/keys', { preHandler: requireAuth }, async () => ({
+      keys: Object.fromEntries(fastify.hub.signing?.publicKeys ?? new Map()),
+      currentKeyId: fastify.hub.signing?.keyId ?? null,
+    }))
 
     /**
      * Present a grant to start work.
@@ -81,6 +107,14 @@ export function makeGrantRoutes({ requireAuth }) {
           nonce: body.nonce,
           taskId: body.taskId,
           deviceId: request.auth.deviceId,
+          signature: body.signature,
+          keyId: body.keyId,
+          // Built from the process's key set, so the verification uses keys the Hub itself
+          // published rather than anything the request carried.
+          verifier: ({ payload, signature, keyId }) => verifyGrantSignature(
+            { payload, signature, keyId },
+            { keys: fastify.hub.signing?.publicKeys ?? new Map() },
+          ),
         })
         const task = findTask(db, result.grant.task_id)
         fastify.hub.realtime.publishToRoom(task.room_id, makeEvent('task.progress', {

@@ -13,7 +13,8 @@
     "./policy": "./policy/dispatch.mjs",
     "./bot-adapter/flows": "./bot-adapter/flows.mjs",
     "./bot-adapter/cancellation": "./bot-adapter/cancellation.mjs",
-    "./policy/egress": "./policy/egress.mjs"
+    "./policy/egress": "./policy/egress.mjs",
+    "./policy/grant-signature": "./policy/grant-signature.mjs"
   },
   "files": [
     "protocol",

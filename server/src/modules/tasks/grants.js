@@ -73,7 +73,7 @@ export function listGrantsForTask(db, taskId) {
  *   The nonce is returned exactly once; the Hub keeps only its hash.
  */
 export function mintGrant(db, {
-  taskId, ownerUserId, ownerDeviceId, botId, ttlSeconds = GRANT_TTL_SECONDS_DEFAULT, now = new Date(),
+  taskId, ownerUserId, ownerDeviceId, botId, ttlSeconds = GRANT_TTL_SECONDS_DEFAULT, signer, now = new Date(),
 }) {
   const task = findTask(db, taskId)
   if (task === undefined) throw new GrantError('No such task', 'NO_SUCH_TASK')
@@ -109,6 +109,12 @@ export function mintGrant(db, {
     ? approval.expires_at
     : ownExpiry.toISOString()
 
+  // The signature covers exactly the fields the executor will present back. It is computed here,
+  // outside the transaction, because signing touches no state and must not lengthen the write lock.
+  const signed = signer?.sign({ grantId: id, taskId, botId: effectiveBotId, expiresAt })
+  const signature = signed?.signature
+  const keyId = signed?.keyId
+
   db.exec('BEGIN IMMEDIATE')
   try {
     // Re-read under the write lock: a cancellation between the checks above and here must not
@@ -133,7 +139,7 @@ export function mintGrant(db, {
     }
     throw error
   }
-  return { grantId: id, nonce, expiresAt, taskId, botId: effectiveBotId }
+  return { grantId: id, nonce, expiresAt, taskId, botId: effectiveBotId, signature, keyId }
 }
 
 /**
@@ -146,8 +152,36 @@ export function mintGrant(db, {
  * @returns {{ ok: true, grant: object, scope: object }} on success
  * @throws {GrantError} on any failed check
  */
-export function consumeGrant(db, { nonce, taskId, deviceId, now = new Date() }) {
+export function consumeGrant(db, { nonce, taskId, deviceId, signature, keyId, verifier, now = new Date() }) {
   const stamp = nowIso(now)
+  // The signature is checked **before** the transaction that consumes the nonce. The order is the
+  // requirement, not an optimization: a presentation that must be refused has to leave the grant
+  // spendable, or an attacker holding a guessed nonce could burn it with one forged request and deny
+  // the legitimate dispatch. Verifying first also keeps the crypto outside the write lock.
+  //
+  // The grant row is read without a lock to recover the fields the signature covers. Those fields —
+  // id, task, Bot, expiry — never change after insert, so a stale read cannot make a forged grant
+  // verify; and the transaction below re-reads the row, so a revocation landing in between is still
+  // caught by the checks that own revocation.
+  //
+  // A verifier is required. A Hub that cannot check a signature must refuse every dispatch rather
+  // than accept unsigned ones: a deployment that forgot the key has to fail loudly, not silently
+  // lose the property the requirement is about.
+  if (verifier === undefined) throw new GrantError('This Hub cannot verify dispatch signatures, so no dispatch is accepted', 'SIGNING_UNAVAILABLE')
+  const presented = db.prepare('SELECT id, task_id, bot_id, expires_at FROM dispatch_grants WHERE nonce_hash = ?').get(nonceHashOf(nonce))
+  // An unknown nonce is refused before the signature is even considered, and with the same code for
+  // "no such grant" and "wrong task", so a forged attempt learns nothing about what exists.
+  if (presented === undefined) throw new GrantError('This dispatch grant is not valid', 'UNKNOWN_GRANT')
+  const verdict = verifier({
+    payload: { grantId: presented.id, taskId: presented.task_id, botId: presented.bot_id, expiresAt: presented.expires_at },
+    signature,
+    keyId,
+  })
+  if (!verdict.valid) {
+    audit(db, { actorUserId: null, actorDeviceId: deviceId, eventType: 'grant.signature_refused', objectId: presented.id, outcome: 'refused', details: { taskId }, now })
+    throw new GrantError(`This dispatch grant is not valid: ${verdict.reason}`, 'BAD_SIGNATURE')
+  }
+
   db.exec('BEGIN IMMEDIATE')
   let result
   try {

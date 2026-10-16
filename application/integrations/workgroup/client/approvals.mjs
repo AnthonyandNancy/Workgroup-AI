@@ -255,7 +255,12 @@ export function createApprovalClient({ client, bridge, selfUserId } = {}) {
      * The answer names the approved scope, which is what the local executor must enforce; the Hub's
      * consumption is a record, not an enforcement of the scope.
      */
-    consumeGrant: (nonce, taskId) => client.request('POST', '/dispatch/consume', { body: { nonce, taskId } }),
+    consumeGrant: (nonce, taskId, proof = {}) => client.request('POST', '/dispatch/consume', {
+      // The signature travels with the nonce: the Hub refuses a presentation that carries only a
+      // nonce (E1), because a valid nonce proves the caller saw a grant but not that the Hub issued
+      // it. `proof` is where an executor that already read the signature off its frame passes it.
+      body: { nonce, taskId, ...(proof.signature === undefined ? {} : { signature: proof.signature }), ...(proof.keyId === undefined ? {} : { keyId: proof.keyId }) },
+    }),
 
     /**
      * The grants this task has handed out, so the owner can see what is currently authorized.

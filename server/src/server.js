@@ -11,6 +11,7 @@ import { probeWritable, readMeta, writeMeta } from './db/index.js'
 import { buildRoutePlugins } from './api/index.js'
 import { makeAuthenticator, makeRequireAuth } from './auth/request.js'
 import { PersistentLimiter } from './security/ratelimit-store.js'
+import { createSigningKeySet } from './modules/tasks/signing.js'
 import { RealtimeHub } from './realtime/hub.js'
 import { registerRealtimeRoute } from './realtime/route.js'
 import { hubVersion, protocolVersion } from './version.js'
@@ -67,6 +68,14 @@ export async function createServer({ config, db, logger }) {
     windowSeconds: config.security.loginWindowSeconds,
     lockoutSeconds: config.security.loginLockoutSeconds,
   })
+  // The dispatch signing key set. Built once at startup so a malformed key stops the Hub here
+  // rather than at the first dispatch, and so the public half can be published without touching the
+  // private one again. Absent means "refuse every dispatch", which `consumeGrant` enforces.
+  const signing = createSigningKeySet({
+    privateKey: config.signing?.grant?.privateKey,
+    keyId: config.signing?.grant?.keyId,
+    previous: config.signing?.grant?.previous,
+  })
   const messageLimiter = new PersistentLimiter({
     db,
     maxAttempts: config.security.messageMaxAttempts ?? config.security.loginMaxAttempts * 5,
@@ -81,7 +90,7 @@ export async function createServer({ config, db, logger }) {
     authenticate: makeAuthenticator({ config, db }),
     log: server.log,
   })
-  server.decorate('hub', { config, db, version: hubVersion(), requireAuth, realtime, loginLimiter, registerLimiter, heartbeatLimiter, messageLimiter })
+  server.decorate('hub', { config, db, version: hubVersion(), requireAuth, realtime, loginLimiter, registerLimiter, heartbeatLimiter, messageLimiter, signing })
 
   server.setErrorHandler((error, request, reply) => {
     const status = error.statusCode ?? 500

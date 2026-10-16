@@ -13,6 +13,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { generateKeyPairSync } from 'node:crypto'
 import { loadConfig } from '../src/config/index.js'
 import { openDatabase } from '../src/db/index.js'
 import { migrate } from '../src/db/migrate.js'
@@ -24,9 +25,23 @@ import { findTask } from '../src/modules/tasks/store.js'
 
 const SIGNING_KEY = 'h09-test-signing-key-long-enough-for-hs256'
 
+// One key pair for the whole file: the Hub signs grants with it, and the tests present the signature
+// the mint route handed back, which is what a real executor does.
+const GRANT_KEYS = generateKeyPairSync('ed25519')
+const GRANT_PRIVATE_PEM = GRANT_KEYS.privateKey.export({ type: 'pkcs8', format: 'pem' })
+
 async function withHub(run) {
   const root = mkdtempSync(join(tmpdir(), 'workgroup-hub-h09-'))
-  const config = loadConfig({ NODE_ENV: 'test', HUB_DATA_DIR: join(root, 'data'), HUB_TOKEN_SIGNING_KEY: SIGNING_KEY })
+  const config = loadConfig({
+    NODE_ENV: 'test',
+    HUB_DATA_DIR: join(root, 'data'),
+    HUB_TOKEN_SIGNING_KEY: SIGNING_KEY,
+    // Dispatch grants are asymmetrically signed (E1), so a Hub under test needs a signing key for
+    // exactly the same reason a real one does. Generated per run and passed as the environment
+    // variable an operator would use; never written to disk and never printed.
+    HUB_GRANT_SIGNING_KEY: GRANT_PRIVATE_PEM,
+    HUB_GRANT_SIGNING_KEY_ID: 'g1',
+  })
   const db = openDatabase(config)
   migrate(db)
   const server = await createServer({ config, db, logger: false })
@@ -191,12 +206,12 @@ test('a grant is consumed exactly once, and the second attempt is a refused repl
     const minted = await call('POST', `/tasks/${taskId}/grant`, {}, bob.token)
     const nonce = minted.body.grant.nonce
 
-    const first = await call('POST', '/dispatch/consume', { nonce, taskId }, bob.token)
+    const first = await call('POST', '/dispatch/consume', { nonce, taskId, signature: minted.body.grant.signature, keyId: minted.body.grant.keyId }, bob.token)
     assert.equal(first.status, 200, first.raw)
     assert.equal(first.body.scope.workDir, 'reports')
     assert.equal(first.body.botId, 'chief')
 
-    const replay = await call('POST', '/dispatch/consume', { nonce, taskId }, bob.token)
+    const replay = await call('POST', '/dispatch/consume', { nonce, taskId, signature: minted.body.grant.signature, keyId: minted.body.grant.keyId }, bob.token)
     assert.equal(replay.status, 409)
     assert.equal(replay.body.error.code, 'GRANT_ALREADY_USED')
   })
@@ -209,7 +224,7 @@ test('consuming moves the task to QUEUED, so "dispatched" is one fact', async ()
     const minted = await call('POST', `/tasks/${taskId}/grant`, {}, bob.token)
     assert.equal(findTask(db, taskId).state, 'APPROVED', 'minting alone must not start anything')
 
-    await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId }, bob.token)
+    await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId, signature: minted.body.grant.signature, keyId: minted.body.grant.keyId }, bob.token)
     const after = findTask(db, taskId)
     assert.equal(after.state, 'QUEUED')
     // The dispatch is visible in the room's event stream.
@@ -224,14 +239,14 @@ test('an unknown nonce and a grant for another task are refused identically', as
     const other = await pendingTask('另一个请求')
     const minted = await call('POST', `/tasks/${taskId}/grant`, {}, bob.token)
 
-    const unknown = await call('POST', '/dispatch/consume', { nonce: 'wggrant_not-a-real-nonce', taskId }, bob.token)
-    const wrongTask = await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId: other.taskId }, bob.token)
+    const unknown = await call('POST', '/dispatch/consume', { nonce: 'wggrant_not-a-real-nonce', taskId, signature: minted.body.grant.signature, keyId: minted.body.grant.keyId }, bob.token)
+    const wrongTask = await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId: other.taskId, signature: minted.body.grant.signature, keyId: minted.body.grant.keyId }, bob.token)
     assert.equal(unknown.status, 404)
     assert.equal(wrongTask.status, 404)
     // Identical responses: a captured nonce cannot be confirmed as real by probing task ids.
     assert.deepEqual(unknown.body, wrongTask.body)
     // And the original grant is still usable for its own task.
-    assert.equal((await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId }, bob.token)).status, 200)
+    assert.equal((await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId, signature: minted.body.grant.signature, keyId: minted.body.grant.keyId }, bob.token)).status, 200)
   })
 })
 
@@ -246,20 +261,23 @@ test('a grant is bound to the device it was minted for', async () => {
       fingerprint: 'sha256:finance.b-second-machine', publicKey: 'ed25519:second',
     })
     assert.equal(elsewhere.status, 200, elsewhere.raw)
-    const fromOtherDevice = await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId }, elsewhere.body.accessToken)
+    const fromOtherDevice = await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId, signature: minted.body.grant.signature, keyId: minted.body.grant.keyId }, elsewhere.body.accessToken)
     assert.equal(fromOtherDevice.status, 404)
     // The rightful device still can.
-    assert.equal((await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId }, bob.token)).status, 200)
+    assert.equal((await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId, signature: minted.body.grant.signature, keyId: minted.body.grant.keyId }, bob.token)).status, 200)
   })
 })
 
 test('an expired grant is refused', async () => {
   await withHub(async ({ approvedTask, call, db }) => {
     const { bob, taskId } = await approvedTask()
-    const minted = await call('POST', `/tasks/${taskId}/grant`, {}, bob.token)
-    // Age the grant past its window.
-    db.prepare('UPDATE dispatch_grants SET expires_at = ? WHERE task_id = ?').run('2000-01-01T00:00:00.000Z', taskId)
-    const stale = await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId }, bob.token)
+    // A grant is aged by *time*, not by rewriting its row: `expiresAt` is part of what the signature
+    // covers (E1), so an expired grant is produced by minting a short-lived one and waiting. Editing
+    // the column instead would be a different scenario — a tampered row — and is refused as a bad
+    // signature rather than as an expiry, which is the correct outcome for that scenario.
+    const minted = await call('POST', `/tasks/${taskId}/grant`, { ttlSeconds: 1 }, bob.token)
+    await new Promise(resolve => setTimeout(resolve, 1200))
+    const stale = await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId, signature: minted.body.grant.signature, keyId: minted.body.grant.keyId }, bob.token)
     assert.equal(stale.status, 410)
     assert.equal(stale.body.error.code, 'GRANT_EXPIRED')
   })
@@ -276,7 +294,7 @@ test('cancelling a task makes an already-minted grant fail with a revocation cod
     assert.equal(cancelled.status, 200, cancelled.raw)
     // The version bump reached the grant: this is how a cancellation stops a machine the Hub
     // cannot address.
-    const consumed = await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId }, bob.token)
+    const consumed = await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId, signature: minted.body.grant.signature, keyId: minted.body.grant.keyId }, bob.token)
     assert.equal(consumed.status, 409)
     assert.equal(consumed.body.error.code, 'GRANT_REVOKED')
   })
@@ -304,7 +322,7 @@ test('the owner can revoke grants without cancelling the task', async () => {
     const revoked = await call('POST', `/tasks/${taskId}/grants/revoke`, {}, bob.token)
     assert.equal(revoked.status, 200, revoked.raw)
     assert.equal(revoked.body.revoked, 1)
-    const consumed = await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId }, bob.token)
+    const consumed = await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId, signature: minted.body.grant.signature, keyId: minted.body.grant.keyId }, bob.token)
     assert.equal(consumed.status, 409)
     assert.equal(consumed.body.error.code, 'GRANT_REVOKED')
   })
@@ -369,7 +387,7 @@ test('two concurrent consumptions of one grant produce exactly one dispatch', as
     const { bob, taskId } = await approvedTask()
     const minted = await call('POST', `/tasks/${taskId}/grant`, {}, bob.token)
     const results = await Promise.all(Array.from({ length: 8 }, () =>
-      call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId }, bob.token)))
+      call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId, signature: minted.body.grant.signature, keyId: minted.body.grant.keyId }, bob.token)))
     assert.equal(results.filter(r => r.status === 200).length, 1, results.map(r => r.status).join(','))
     assert.equal(results.filter(r => r.status === 409).length, 7)
     const row = db.prepare('SELECT consumed_at FROM dispatch_grants WHERE task_id = ?').get(taskId)
@@ -381,14 +399,14 @@ test('a consumed grant cannot be renewed, so a finished dispatch cannot be exten
   await withHub(async ({ approvedTask, call, db }) => {
     const { bob, taskId } = await approvedTask()
     const minted = await call('POST', `/tasks/${taskId}/grant`, {}, bob.token)
-    await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId }, bob.token)
+    await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId, signature: minted.body.grant.signature, keyId: minted.body.grant.keyId }, bob.token)
     // The task is now QUEUED, and a second mint for the same task must not silently be
     // refused by the state check alone: the contract is that one approval backs the dispatch.
     const second = await call('POST', `/tasks/${taskId}/grant`, {}, bob.token)
     // Minting from QUEUED is allowed (a retry after a crashed executor needs it), but the
     // consumed grant stays consumed.
     assert.equal(second.status, 201, second.raw)
-    assert.equal((await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId }, bob.token)).status, 409)
+    assert.equal((await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId, signature: minted.body.grant.signature, keyId: minted.body.grant.keyId }, bob.token)).status, 409)
     assert.equal(findGrantByNonce(db, minted.body.grant.nonce).consumed_at !== null, true)
   })
 })
@@ -397,8 +415,8 @@ test('grant refusals are audited, including a refused replay', async () => {
   await withHub(async ({ approvedTask, call, db }) => {
     const { alice, bob, taskId } = await approvedTask()
     const minted = await call('POST', `/tasks/${taskId}/grant`, {}, bob.token)
-    await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId }, bob.token)
-    await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId }, bob.token)
+    await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId, signature: minted.body.grant.signature, keyId: minted.body.grant.keyId }, bob.token)
+    await call('POST', '/dispatch/consume', { nonce: minted.body.grant.nonce, taskId, signature: minted.body.grant.signature, keyId: minted.body.grant.keyId }, bob.token)
 
     const rows = db.prepare("SELECT event_type, outcome FROM audit_events WHERE object_type = 'dispatch_grant' ORDER BY occurred_at, rowid").all()
     const types = rows.map(r => r.event_type)
