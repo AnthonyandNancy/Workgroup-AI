@@ -714,6 +714,34 @@ var ZH = {
   What: "内容",
   Approve: "批准",
   "A workgroup lives on the Hub and its members are real people. Messages are shared with them.": "工作群保存在 Hub 上，成员是真实的同事，消息会共享给他们。",
+  // A workgroup without a Hub is a room this client cannot read or post to at all, so the copy
+  // names what is missing and what would fix it instead of showing an empty room that reads like
+  // a workgroup nobody has written in yet.
+  "Workgroups need the Workgroup Hub": "工作群需要连接 Workgroup Hub",
+  "This machine is not connected to a Hub, so this workgroup cannot be shown or posted to. Ask your administrator to configure one.": "本机未连接 Hub，因此无法显示或在此工作群中发言。请联系管理员完成配置。",
+  // Each blocked state names its own fix, so the copy must not be collapsed into one sentence:
+  // "reconnecting" and "never configured" send the reader to different people.
+  "Workgroup Hub is not connected": "未连接到 Workgroup Hub",
+  "This machine cannot reach the Hub right now, so this workgroup cannot be shown or posted to. It reconnects on its own; local chats and groups keep working.": "本机当前无法访问 Hub，因此无法显示或在此工作群中发言。连接会自动恢复；本地聊天与普通群聊不受影响。",
+  "Workgroup Hub refused this device": "Workgroup Hub 拒绝了此设备",
+  "The Hub no longer accepts this device’s sign-in, so this workgroup cannot be shown. Sign in again to reconnect it.": "Hub 已不再接受此设备的登录状态，因此无法显示该工作群。请重新登录以恢复连接。",
+  "Not signed in to the Workgroup Hub": "尚未登录 Workgroup Hub",
+  "This machine is not signed in, so this workgroup cannot be shown or posted to. Sign in to your account to continue.": "本机尚未登录，因此无法显示或在此工作群中发言。请登录账号后继续。",
+  // Quoting one message answers "which message", so the copy names the act rather than the UI.
+  Quote: "引用",
+  "Quote this message": "引用这条消息",
+  "Replying to {name}": "回复 {name}",
+  "Stop replying": "取消回复",
+  // The parent of a reply can be gone — the Hub keeps no foreign key from a reply to its parent —
+  // so the quote names what it can rather than rendering an empty header.
+  "An earlier message": "更早的消息",
+  // An invitation travels by exact id and the Hub has no user search, so these two values are how
+  // a colleague becomes reachable at all.
+  "Your user ID": "你的用户 ID",
+  "Your username": "你的用户名",
+  "Copy my ID": "复制我的 ID",
+  "Tell this to the colleague who will invite you.": "把它告诉要邀请你的同事。",
+  "Signed in as {name}": "已登录为 {name}",
   "Own chat": "单聊",
   Conversations: "对话",
   "Compaction and handoff": "压缩与交接",
@@ -1223,8 +1251,8 @@ function bodyOf(def, paint, flat = false) {
     return "";
   }
 }
-var eyeMarkup = ([cx, cy, w, h37, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><rect class="bt-eye" x="${-w / 2}" y="${-h37 / 2}" width="${w}" height="${h37}" rx="${w / 2}"/></g>`;
-var happyEyeMarkup = ([cx, cy, w, h37, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><path class="bt-eye-happy" opacity="0" d="M${-w * 0.62} ${h37 * 0.14}Q0 ${-h37 * 0.42} ${w * 0.62} ${h37 * 0.14}" fill="none" stroke="#000" stroke-width="${w * 0.5}" stroke-linecap="round"/></g>`;
+var eyeMarkup = ([cx, cy, w, h38, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><rect class="bt-eye" x="${-w / 2}" y="${-h38 / 2}" width="${w}" height="${h38}" rx="${w / 2}"/></g>`;
+var happyEyeMarkup = ([cx, cy, w, h38, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><path class="bt-eye-happy" opacity="0" d="M${-w * 0.62} ${h38 * 0.14}Q0 ${-h38 * 0.42} ${w * 0.62} ${h38 * 0.14}" fill="none" stroke="#000" stroke-width="${w * 0.5}" stroke-linecap="round"/></g>`;
 var maskBox = (size) => `maskUnits="userSpaceOnUse" x="${-size}" y="${-size}" width="${size * 3}" height="${size * 3}"`;
 var holes = (def, eyes) => `<rect x="${-def.size}" y="${-def.size}" width="${def.size * 3}" height="${def.size * 3}" fill="#fff"/>${eyes}`;
 var MASK_ID = "%MASK%";
@@ -1676,12 +1704,12 @@ function liveSprings(apply2) {
     const dt = Math.min(0.5, Math.max(1e-3, (now - last) / 1e3));
     last = now;
     const steps = Math.ceil(dt * 240);
-    const h37 = dt / steps;
+    const h38 = dt / steps;
     let moving = false;
     for (const value of values.values()) {
       for (let index = 0; index < steps; index += 1) {
-        value.v += (-value.k * (value.x - value.to) - value.c * value.v) * h37;
-        value.x += value.v * h37;
+        value.v += (-value.k * (value.x - value.to) - value.c * value.v) * h38;
+        value.x += value.v * h38;
       }
       if (Math.abs(value.x - value.to) < 0.05 && Math.abs(value.v) < 1) {
         value.x = value.to;
@@ -4781,6 +4809,28 @@ function showsDshRow(dsh, app) {
   return dsh.kind === "app" && APP_OFFER.has(app?.phase) && sameVersion(app.version, dsh.verified);
 }
 
+// src/shared/workgroup-session.js
+function workgroupSessionId(roomId) {
+  return `wg:${roomId}`;
+}
+function roomIdOfSession(sessionId) {
+  return typeof sessionId === "string" && sessionId.startsWith("wg:") ? sessionId.slice(3) : void 0;
+}
+function isWorkgroupSession(sessionId) {
+  return roomIdOfSession(sessionId) !== void 0;
+}
+function mainSessionId(sessions) {
+  return Object.values(sessions?.byId ?? {}).find((session) => (session?.retainedBy?.mainView ?? 0) > 0)?.id;
+}
+function mainWorkgroupSession(sessions) {
+  const main = mainSessionId(sessions);
+  return isWorkgroupSession(main) ? main : void 0;
+}
+function needsHomeFallback(roster, sessionId) {
+  if (sessionId === void 0 || isWorkgroupSession(sessionId)) return false;
+  return roster.byId[sessionId] === void 0 && roster.roomsById[sessionId] === void 0;
+}
+
 // src/client/sidebar.js
 var import_react8 = require("react");
 var import_react_dom3 = require("react-dom");
@@ -5441,6 +5491,10 @@ function useLandOnMainBot(roster, useSessions, actions) {
       return void 0;
     }
     if (id !== "" && (roster.roomsById[id] || (actions.isAgentSession?.(id) ?? roster.agentOf[id] !== void 0) || blank3 !== "1")) {
+      lastBot.current = null;
+      return void 0;
+    }
+    if (isWorkgroupSession(id)) {
       lastBot.current = null;
       return void 0;
     }
@@ -12340,10 +12394,11 @@ var import_react34 = require("react");
 var import_react_dom9 = require("react-dom");
 var DIALOG_EXIT_MS = 160;
 var MENU_EXIT_MS3 = 120;
-function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity, useWork, useRegistry, useBrowserPages, useBrowserTabs, useUpdate, actions, workgroups }) {
+function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity, useWork, useRegistry, useBrowserPages, useBrowserTabs, useUpdate, useWorkgroups, actions }) {
   const roster = useRoster((value) => value);
   const ui2 = useUi((value) => value);
   useRegistry((value) => value);
+  const workgroups = useWorkgroups((value) => value);
   const current = useSessions((list) => Object.values(list.byId).find((session) => (session?.retainedBy?.mainView ?? 0) > 0)?.id ?? null);
   const previous = (0, import_react34.useRef)(current);
   (0, import_react34.useEffect)(() => {
@@ -13170,6 +13225,55 @@ function serveBrowserReads({ browsers, post, clientId = globalThis.crypto.random
   };
 }
 
+// src/client/workgroup-reply.js
+var PREVIEW_MAX = 140;
+function replyPreview(message) {
+  const body = String(message?.body ?? "");
+  return {
+    id: message?.id,
+    // The name the Hub sent for the roster it answered against; a message from a member this copy
+    // of the room has not named yet still quotes as a person rather than as nobody.
+    who: message?.senderDisplayName || message?.senderUserId || "Unknown",
+    body: body.length > PREVIEW_MAX ? `${body.slice(0, PREVIEW_MAX)}…` : body
+  };
+}
+function withReply(value, reply) {
+  if (reply?.id === void 0 || reply?.id === null) return value;
+  return { ...value, replyToMessageId: reply.id };
+}
+function replyParent(message, messages) {
+  const id = message?.replyToMessageId;
+  if (id === void 0 || id === null) return void 0;
+  const parent = (messages ?? []).find((candidate) => candidate.id === id);
+  return parent === void 0 ? { id, who: void 0, body: void 0 } : replyPreview(parent);
+}
+
+// src/client/workgroup-presence.js
+var PRESENCE_STATES = ["online", "offline"];
+function presenceOf(member) {
+  return member?.online === true ? "online" : "offline";
+}
+function applyPresence(members, event) {
+  const list = members ?? [];
+  const index = list.findIndex((member) => member.userId === event?.userId);
+  if (index < 0) return list;
+  const next = [...list];
+  next[index] = { ...list[index], online: event.online === true };
+  return next;
+}
+
+// src/client/workgroup-identity.js
+function identityRows(identity) {
+  const fields = [
+    ["userId", "Your user ID"],
+    ["userHandle", "Your username"]
+  ];
+  return fields.filter(([key]) => typeof identity?.[key] === "string" && identity[key] !== "").map(([key, label]) => ({ key, label, value: identity[key] }));
+}
+function identityText(identity) {
+  return identityRows(identity).map((row) => `${row.label}: ${row.value}`).join("\n");
+}
+
 // src/client/workgroup.js
 var import_react35 = require("react");
 var WORKGROUP_KIND = "workgroup";
@@ -13185,7 +13289,7 @@ function unreadCount(messages, watermark) {
   if (!Array.isArray(messages)) return 0;
   return messages.filter((message) => typeof message.roomSeq === "number" && message.roomSeq > (watermark ?? 0)).length;
 }
-function WorkgroupThread({ messages, selfUserId, empty }) {
+function WorkgroupThread({ messages, selfUserId, empty, onReply }) {
   const ordered = (0, import_react35.useMemo)(
     () => [...messages ?? []].sort((left, right) => (left.roomSeq ?? 0) - (right.roomSeq ?? 0)),
     [messages]
@@ -13196,27 +13300,56 @@ function WorkgroupThread({ messages, selfUserId, empty }) {
   return (0, import_react35.createElement)(
     "div",
     { className: "bt-wg-thread", "data-wg-thread": "list" },
-    ordered.map((message) => (0, import_react35.createElement)(
-      "div",
-      {
-        key: message.id ?? `${message.roomSeq}`,
-        className: `bt-wg-message${message.senderUserId === selfUserId ? " bt-wg-message-own" : ""}`,
-        "data-wg-seq": String(message.roomSeq ?? "")
-        // The sequence is exposed for the same reason it exists: a test (or a support engineer) can
-        // see exactly which messages a client holds, without parsing prose.
-      },
-      (0, import_react35.createElement)("div", { className: "bt-wg-message-who" }, message.senderDisplayName ?? message.senderUserId ?? ""),
-      (0, import_react35.createElement)("div", { className: "bt-wg-message-body" }, message.body ?? ""),
-      // A failed delivery is shown, not hidden: a client that quietly drops mentions leaves the
-      // employee believing a colleague was told.
-      message.failed ? (0, import_react35.createElement)("div", { className: "bt-wg-message-failed" }, t("Not delivered")) : null
-    ))
+    ordered.map((message) => {
+      const quoted = replyParent(message, ordered);
+      return (0, import_react35.createElement)(
+        "div",
+        {
+          key: message.id ?? `${message.roomSeq}`,
+          className: `bt-wg-message${message.senderUserId === selfUserId ? " bt-wg-message-own" : ""}`,
+          "data-wg-seq": String(message.roomSeq ?? "")
+          // The sequence is exposed for the same reason it exists: a test (or a support engineer) can
+          // see exactly which messages a client holds, without parsing prose.
+        },
+        // The quoted parent is resolved from this reader's own copy of the room, so a reply whose
+        // parent was deleted still shows as a reply rather than as an unrelated message.
+        quoted === void 0 ? null : (0, import_react35.createElement)(
+          "div",
+          { className: "bt-wg-quote", "data-wg-quote": quoted.id },
+          (0, import_react35.createElement)("span", { className: "bt-wg-quote-who" }, quoted.who === void 0 ? t("An earlier message") : quoted.who),
+          quoted.body === void 0 ? null : (0, import_react35.createElement)("span", { className: "bt-wg-quote-body" }, quoted.body)
+        ),
+        (0, import_react35.createElement)("div", { className: "bt-wg-message-who" }, message.senderDisplayName ?? message.senderUserId ?? ""),
+        (0, import_react35.createElement)("div", { className: "bt-wg-message-body" }, message.body ?? ""),
+        // A failed delivery is shown, not hidden: a client that quietly drops mentions leaves the
+        // employee believing a colleague was told.
+        message.failed ? (0, import_react35.createElement)("div", { className: "bt-wg-message-failed" }, t("Not delivered")) : null,
+        // Quoting is offered per message rather than as a composer mode, so the person points at what
+        // they are answering. Only a message the Hub gave an id to can be linked, and the button is
+        // therefore absent for the rest rather than present and ineffective.
+        onReply !== void 0 && message.id !== void 0 ? (0, import_react35.createElement)("button", {
+          type: "button",
+          className: "bt-wg-reply",
+          "data-wg-reply": message.id,
+          "aria-label": t("Quote this message"),
+          onClick: () => onReply(message)
+        }, t("Quote")) : null
+      );
+    })
   );
 }
 function WorkgroupMembers({ members, bots, onOpenBot }) {
   const humans = (members ?? []).map((member) => (0, import_react35.createElement)(
     "div",
-    { key: member.userId, className: "bt-wg-member", "data-wg-member": member.userId },
+    {
+      key: member.userId,
+      className: `bt-wg-member bt-wg-member-${presenceOf(member)}`,
+      "data-wg-member": member.userId,
+      // The state is exposed for the same reason the id is: a reader (or a test) can tell a
+      // connected colleague from an absent one without measuring a dot.
+      "data-wg-presence": presenceOf(member)
+    },
+    (0, import_react35.createElement)("span", { className: "bt-wg-member-dot", "aria-hidden": "true" }),
     (0, import_react35.createElement)("span", { className: "bt-wg-member-name" }, memberSummary(member))
   ));
   const machines = (bots ?? []).map((bot) => (0, import_react35.createElement)(
@@ -13264,7 +13397,11 @@ function WorkgroupView({
   messages,
   tasks,
   selfUserId,
+  // The signed-in user as the Hub describes them. Needed for the settings view, which is where a
+  // colleague looks up the id an invitation has to name.
+  identity,
   watermark,
+  empty,
   actions,
   run,
   onOpenBot,
@@ -13276,20 +13413,52 @@ function WorkgroupView({
 }) {
   const [draft, setDraft] = (0, import_react35.useState)("");
   const [sending, setSending] = (0, import_react35.useState)(false);
+  const [reply, setReply] = (0, import_react35.useState)(void 0);
   const send = async () => {
     if (sending || draft.trim() === "") return;
     setSending(true);
-    const ok = await onSend?.(draft.trim());
+    const ok = await onSend?.(draft.trim(), reply);
     setSending(false);
-    if (ok !== false) setDraft("");
+    if (ok !== false) {
+      setDraft("");
+      setReply(void 0);
+    }
   };
   (0, import_react35.useEffect)(() => {
     setDraft("");
+    setReply(void 0);
   }, [room2?.id]);
+  (0, import_react35.useEffect)(() => {
+    if (reply === void 0) return;
+    if (!(messages ?? []).some((message) => message.id === reply.id)) setReply(void 0);
+  }, [messages, reply]);
   if (settingsOpen) {
+    const rows = identityRows(identity);
     return (0, import_react35.createElement)(
       "div",
       { className: "bt-wg bt-wg-settings", "data-wg": room2?.id },
+      // An invitation is sent by exact id and the Hub has no user search, so this is where a new
+      // colleague finds out what to tell the person who will invite them. Shown only when the Hub
+      // has answered for an identifier: a blank block would read as "you have no id".
+      rows.length === 0 ? null : (0, import_react35.createElement)(
+        "div",
+        { className: "bt-wg-identity", "data-wg-identity": "self" },
+        (0, import_react35.createElement)("div", { className: "bt-wg-identity-note" }, t("Tell this to the colleague who will invite you.")),
+        rows.map((row) => (0, import_react35.createElement)(
+          "div",
+          { key: row.key, className: "bt-wg-identity-row", "data-wg-identity-field": row.key },
+          (0, import_react35.createElement)("span", { className: "bt-wg-identity-label" }, t(row.label)),
+          (0, import_react35.createElement)("code", { className: "bt-wg-identity-value" }, row.value)
+        )),
+        (0, import_react35.createElement)("button", {
+          type: "button",
+          className: "bt-wg-identity-copy",
+          "data-wg-identity-copy": "self",
+          onClick: () => {
+            void navigator.clipboard?.writeText(identityText(identity));
+          }
+        }, t("Copy my ID"))
+      ),
       (0, import_react35.createElement)(GroupSettingsForm, {
         room: { ...room2, members: (members ?? []).map((member) => member.userId) },
         roster: { byId: {}, bots: bots ?? [] },
@@ -13313,11 +13482,35 @@ function WorkgroupView({
       room2 ? (0, import_react35.createElement)(RoomAvatar, { room: room2, roster: { byId: {}, bots: bots ?? [] }, size: 24 }) : null,
       (0, import_react35.createElement)("span", { className: "bt-wg-name" }, room2?.name ?? ""),
       unread > 0 ? (0, import_react35.createElement)("span", { className: "bt-wg-unread", "data-wg-unread": String(unread) }, String(unread)) : null,
-      (0, import_react35.createElement)("button", { type: "button", className: "bt-wg-settings", "data-wg-settings": "open", onClick: () => run?.(null) }, t("Group settings"))
+      (0, import_react35.createElement)("button", { type: "button", className: "bt-wg-gear", "data-wg-settings": "open", onClick: () => run?.(null) }, t("Group settings"))
     ),
-    (0, import_react35.createElement)(WorkgroupThread, { messages, selfUserId, empty: t("No messages yet") }),
+    (0, import_react35.createElement)(WorkgroupThread, {
+      messages,
+      selfUserId,
+      empty: empty ?? t("No messages yet"),
+      onReply: (message) => setReply(replyPreview(message))
+    }),
     (0, import_react35.createElement)(WorkgroupTasks, { tasks, onDecision }),
     (0, import_react35.createElement)(WorkgroupMembers, { members, bots, onOpenBot }),
+    // What is being answered stays visible while typing, and can be dropped: a reply the sender
+    // forgot they had selected would attach to the wrong message.
+    reply === void 0 ? null : (0, import_react35.createElement)(
+      "div",
+      { className: "bt-wg-replying", "data-wg-replying": reply.id },
+      (0, import_react35.createElement)(
+        "div",
+        { className: "bt-wg-replying-text" },
+        (0, import_react35.createElement)("div", { className: "bt-wg-replying-who" }, t("Replying to {name}", { name: reply.who })),
+        (0, import_react35.createElement)("div", { className: "bt-wg-replying-body" }, reply.body)
+      ),
+      (0, import_react35.createElement)("button", {
+        type: "button",
+        className: "bt-wg-replying-drop",
+        "data-wg-reply-drop": "clear",
+        "aria-label": t("Stop replying"),
+        onClick: () => setReply(void 0)
+      }, t("Cancel"))
+    ),
     (0, import_react35.createElement)(
       "div",
       { className: "bt-wg-compose" },
@@ -13356,14 +13549,249 @@ function newWorkgroupName(now = /* @__PURE__ */ new Date()) {
   const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   return `Workgroup ${stamp}`;
 }
-function workgroupSessionId(roomId) {
-  return `wg:${roomId}`;
+
+// src/client/workgroup-entry.js
+async function enterWorkgroup({ roomId, sessions, openSession, closeOverlay, watch, report }) {
+  const sessionId = workgroupSessionId(roomId);
+  const known = sessions.list?.getSnapshot?.()?.byId?.[sessionId] !== void 0;
+  if (!known) {
+    try {
+      await sessions.create({ sessionId });
+    } catch (error) {
+      report?.(error);
+      return void 0;
+    }
+  }
+  openSession(sessionId);
+  closeOverlay?.();
+  await watch?.(roomId).catch?.(() => {
+  });
+  return sessionId;
 }
-function roomIdOfSession(sessionId) {
-  return typeof sessionId === "string" && sessionId.startsWith("wg:") ? sessionId.slice(3) : void 0;
+
+// src/client/workgroup-status.js
+var HUB_STATUSES = ["live", "offline", "refused", "signed-out", "absent", "unknown"];
+var OFFLINE = {
+  offline: {
+    title: "Workgroup Hub is not connected",
+    body: "This machine cannot reach the Hub right now, so this workgroup cannot be shown or posted to. It reconnects on its own; local chats and groups keep working."
+  },
+  refused: {
+    title: "Workgroup Hub refused this device",
+    body: "The Hub no longer accepts this device’s sign-in, so this workgroup cannot be shown. Sign in again to reconnect it."
+  },
+  "signed-out": {
+    title: "Not signed in to the Workgroup Hub",
+    body: "This machine is not signed in, so this workgroup cannot be shown or posted to. Sign in to your account to continue."
+  },
+  absent: {
+    title: "Workgroups need the Workgroup Hub",
+    body: "This machine is not connected to a Hub, so this workgroup cannot be shown or posted to. Ask your administrator to configure one."
+  }
+};
+function hubStatusCopy(status) {
+  return OFFLINE[status];
 }
-function isWorkgroupSession(sessionId) {
-  return roomIdOfSession(sessionId) !== void 0;
+function hubStatusOf(view) {
+  if (view === void 0 || view.phase === "unknown" || view.phase === "unreachable") return "unknown";
+  if (view.configured !== true) return "absent";
+  if (view.signedIn !== true) return "signed-out";
+  if (view.state === "open") return "live";
+  if (view.state === "fatal") return "refused";
+  return "offline";
+}
+
+// src/client/workgroup-pane.js
+var import_react36 = require("react");
+var POLL_MS3 = 4e3;
+function WorkgroupPane({ useSessions, useWorkgroups, useHub, actions }) {
+  const sessionId = useSessions(mainWorkgroupSession);
+  if (sessionId === void 0) return null;
+  return (0, import_react36.createElement)(WorkgroupSurface, {
+    sessionId,
+    workgroups: useWorkgroups((value) => value),
+    hub: useHub?.((value) => value),
+    actions
+  });
+}
+function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
+  const roomId = roomIdOfSession(sessionId);
+  const paneLeft = usePaneLeft();
+  const [state, setState] = (0, import_react36.useState)({ phase: "loading" });
+  const [settingsOpen, setSettingsOpen] = (0, import_react36.useState)(false);
+  const view = (0, import_react36.useRef)(null);
+  (0, import_react36.useEffect)(() => {
+    setSettingsOpen(false);
+    setState({ phase: "loading" });
+    if (workgroups === void 0 || roomId === void 0) return () => {
+    };
+    let stopped = false;
+    let timer;
+    const load = async () => {
+      try {
+        const answer = await workgroups.openRoom(roomId);
+        if (stopped) return;
+        setState({ phase: "ready", ...answer });
+      } catch (error) {
+        if (stopped) return;
+        setState({ phase: "failed", message: error?.message ?? String(error) });
+      }
+      if (!stopped) timer = setTimeout(load, POLL_MS3);
+    };
+    view.current = async (value) => {
+      if (value === null) {
+        setSettingsOpen(true);
+        return true;
+      }
+      const message = value?.send;
+      if (message === void 0) return true;
+      try {
+        await workgroups.sendMessage(roomId, message, value.replyToMessageId === void 0 ? {} : { replyToMessageId: value.replyToMessageId });
+        await load();
+        return true;
+      } catch (error) {
+        setState((previous) => ({ ...previous, message: error?.message ?? String(error) }));
+        return false;
+      }
+    };
+    void load();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [roomId, workgroups]);
+  const run = (value) => view.current?.(value);
+  const onSend = (text, reply) => view.current?.(withReply({ send: text }, reply));
+  const onDecision = (taskId, decision) => {
+    void workgroups?.answerTask?.(taskId, decision).then(() => run(null));
+  };
+  const status = hubStatusOf(hub);
+  const copy2 = hubStatusCopy(status);
+  return (0, import_react36.createElement)(
+    "div",
+    {
+      className: "bt-pane bt-wg-pane",
+      style: { left: paneLeft },
+      "data-wg-room": roomId ?? "",
+      "data-wg-hub": status,
+      // The pane replaces the conversation, so it carries the region marker the shell uses for the
+      // conversation area; a screenshot check and a reader both need to know what is on screen.
+      "data-conversation-region": "workgroup"
+    },
+    copy2 !== void 0 ? (0, import_react36.createElement)(
+      "div",
+      { className: "bt-wg bt-wg-offline", "data-wg-hub-state": status },
+      (0, import_react36.createElement)("div", { className: "bt-wg-head" }, (0, import_react36.createElement)("span", { className: "bt-wg-name" }, t(copy2.title))),
+      (0, import_react36.createElement)("div", { className: "bt-wg-empty" }, t(copy2.body))
+    ) : (0, import_react36.createElement)(WorkgroupView, {
+      room: state.room,
+      members: state.members,
+      bots: state.bots,
+      messages: state.messages,
+      tasks: state.tasks,
+      selfUserId: workgroups.identity?.userId,
+      identity: workgroups.identity,
+      actions,
+      run,
+      onSend,
+      onDecision,
+      settingsOpen,
+      onCloseSettings: () => setSettingsOpen(false),
+      empty: state.phase === "failed" ? state.message : void 0
+    })
+  );
+}
+
+// src/client/workgroup-hub.js
+function createHubBridge({ pollMs = 4e3, callImpl = call } = {}) {
+  const view = createSource({ phase: "unknown", configured: false, signedIn: false, state: "unknown" });
+  let timer;
+  let inFlight;
+  let stopped = true;
+  const refresh = async () => {
+    if (inFlight !== void 0) return inFlight;
+    inFlight = callImpl("hub-view").then((answer) => {
+      view.set({ phase: "ready", ...answer });
+      return answer;
+    }).catch((error) => {
+      view.set({ phase: "unreachable", configured: false, signedIn: false, state: "unreachable", message: error?.message ?? "Could not reach DSH" });
+      return void 0;
+    }).finally(() => {
+      inFlight = void 0;
+    });
+    return inFlight;
+  };
+  const schedule = () => {
+    if (stopped || pollMs <= 0) return;
+    timer = setTimeout(() => {
+      void refresh().finally(() => {
+        schedule();
+      });
+    }, pollMs);
+  };
+  return {
+    view,
+    refresh,
+    /** Mutations go through the same Host endpoints, so the token never reaches the browser. */
+    send: (endpoint, payload) => callImpl(endpoint, payload).then(async (value) => {
+      await refresh();
+      return value;
+    }),
+    start() {
+      stopped = false;
+      void refresh().finally(() => {
+        schedule();
+      });
+      return this;
+    },
+    stop() {
+      stopped = true;
+      if (timer !== void 0) clearTimeout(timer);
+      timer = void 0;
+    }
+  };
+}
+function createWorkgroupHub({ bridge }) {
+  const invoke = (endpoint, payload) => bridge.send(endpoint, payload);
+  return {
+    get available() {
+      return bridge.view.getSnapshot().configured === true;
+    },
+    get signedIn() {
+      return bridge.view.getSnapshot().signedIn === true;
+    },
+    get state() {
+      return bridge.view.getSnapshot().state;
+    },
+    get identity() {
+      const snapshot = bridge.view.getSnapshot();
+      return snapshot.userId === void 0 ? void 0 : { userId: snapshot.userId, userHandle: snapshot.userHandle, displayName: snapshot.displayName, deviceId: snapshot.deviceId };
+    },
+    view: bridge.view,
+    signIn: (credentials) => invoke("hub-sign-in", credentials),
+    signOut: () => invoke("hub-sign-out", {}),
+    resume: () => invoke("hub-resume", {}),
+    createRoom: (name, options = {}) => invoke("hub-create-room", { name, ...options }),
+    openRoom: (roomId) => invoke("hub-open-room", { roomId }),
+    watch: (roomId) => invoke("hub-open-room", { roomId }),
+    invite: (roomId, options) => invoke("hub-invite", { roomId, ...options }),
+    invitations: () => invoke("hub-invitations", {}),
+    respondToInvitation: (invitationId, decision) => invoke("hub-respond-invitation", { invitationId, decision }),
+    revokeInvitation: (invitationId) => invoke("hub-revoke-invitation", { invitationId }),
+    members: (roomId) => invoke("hub-members", { roomId }),
+    setRole: (roomId, userId, role) => invoke("hub-set-role", { roomId, userId, role }),
+    leaveRoom: (roomId) => invoke("hub-leave-room", { roomId }),
+    removeMember: (roomId, userId) => invoke("hub-kick", { roomId, userId }),
+    sendMessage: (roomId, text, options = {}) => invoke("hub-send", { roomId, text, ...options }),
+    messages: (roomId, options = {}) => invoke("hub-messages", { roomId, ...options }),
+    head: (roomId) => invoke("hub-head", { roomId }),
+    directory: (options) => invoke("hub-directory", options ?? {}),
+    tasks: (roomId) => invoke("hub-tasks", { roomId }),
+    answerTask: (taskId, decision) => invoke("hub-approve-task", { taskId, decision }),
+    memory: (roomId) => invoke("hub-memory", { roomId }),
+    me: () => invoke("hub-me", {}),
+    devices: () => invoke("hub-devices", {})
+  };
 }
 
 // src/client/surface.js
@@ -13420,7 +13848,7 @@ function writeMode(mode, storage = globalThis.localStorage) {
 }
 
 // src/client/user-message.js
-var import_react36 = require("react");
+var import_react37 = require("react");
 var ui = __toESM(require("@deepseek-ai/dsh-client-ui-primitives"), 1);
 var canDrawUserMessages = () => typeof ui.projectUserText === "function";
 function contentParts(content) {
@@ -13452,38 +13880,38 @@ function userTextParts(text, bots, referenceLabels = []) {
   return parts;
 }
 function UserText({ text, bots, referenceLabels, skillNames, references, actions }) {
-  return userTextParts(text, bots, referenceLabels).map((part, index) => part.bot ? (0, import_react36.createElement)(
+  return userTextParts(text, bots, referenceLabels).map((part, index) => part.bot ? (0, import_react37.createElement)(
     "button",
     { key: index, type: "button", className: "bt-umention", title: `@${part.bot.name}`, onClick: () => actions.openSession(part.bot.id) },
-    (0, import_react36.createElement)(BotMark, { bot: part.bot, size: 16 }),
+    (0, import_react37.createElement)(BotMark, { bot: part.bot, size: 16 }),
     part.label
-  ) : (0, import_react36.createElement)(import_react36.Fragment, { key: index }, ui.projectUserText(part.text, referenceLabels, skillNames, "skill", references)));
+  ) : (0, import_react37.createElement)(import_react37.Fragment, { key: index }, ui.projectUserText(part.text, referenceLabels, skillNames, "skill", references)));
 }
 function Attachments({ attachments, renderMessageImages }) {
   const compact2 = attachments.length > 1;
-  return (0, import_react36.createElement)("div", { className: "bt-uattach" }, attachments.map((block, index) => {
+  return (0, import_react37.createElement)("div", { className: "bt-uattach" }, attachments.map((block, index) => {
     if (block.type === "image") {
-      return renderMessageImages ? (0, import_react36.createElement)(import_react36.Fragment, { key: index }, renderMessageImages({ images: [{ attachment: block.attachment }], align: "end", compact: compact2 })) : null;
+      return renderMessageImages ? (0, import_react37.createElement)(import_react37.Fragment, { key: index }, renderMessageImages({ images: [{ attachment: block.attachment }], align: "end", compact: compact2 })) : null;
     }
     const file = block.attachment;
     const meta = [ui.fileExtension?.(file.name)?.toUpperCase().slice(0, 8), ui.fileSizeText?.(file.bytes)].filter(Boolean).join(" · ");
-    return (0, import_react36.createElement)(
+    return (0, import_react37.createElement)(
       "span",
       { key: index, className: "bt-ufile", title: file.name },
-      ui.FileTypeIcon ? (0, import_react36.createElement)(ui.FileTypeIcon, { path: file.name, className: "bt-ufile-icon" }) : null,
-      (0, import_react36.createElement)("span", { className: "bt-ufile-text" }, (0, import_react36.createElement)("span", { className: "bt-ufile-name" }, file.name), meta ? (0, import_react36.createElement)("span", { className: "bt-ufile-meta" }, meta) : null)
+      ui.FileTypeIcon ? (0, import_react37.createElement)(ui.FileTypeIcon, { path: file.name, className: "bt-ufile-icon" }) : null,
+      (0, import_react37.createElement)("span", { className: "bt-ufile-text" }, (0, import_react37.createElement)("span", { className: "bt-ufile-name" }, file.name), meta ? (0, import_react37.createElement)("span", { className: "bt-ufile-meta" }, meta) : null)
     );
   }));
 }
 function CopyButton({ text }) {
-  const [copied, setCopied] = (0, import_react36.useState)(false);
+  const [copied, setCopied] = (0, import_react37.useState)(false);
   const copy2 = () => {
     void navigator.clipboard?.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1e3);
     });
   };
-  return (0, import_react36.createElement)("button", { type: "button", className: "bt-tool", "aria-label": copied ? t("Copied") : t("Copy"), title: copied ? t("Copied") : t("Copy"), onClick: copy2 }, copied ? (0, import_react36.createElement)(CheckIcon) : (0, import_react36.createElement)(CopyIcon));
+  return (0, import_react37.createElement)("button", { type: "button", className: "bt-tool", "aria-label": copied ? t("Copied") : t("Copy"), title: copied ? t("Copied") : t("Copy"), onClick: copy2 }, copied ? (0, import_react37.createElement)(CheckIcon) : (0, import_react37.createElement)(CopyIcon));
 }
 var clock3 = (time) => typeof time === "number" ? new Date(time).toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" }) : void 0;
 function UserMessageCell({ node, sessionId, useRoster, actions, renderMessageImages, openFile, openSkill }) {
@@ -13493,22 +13921,22 @@ function UserMessageCell({ node, sessionId, useRoster, actions, renderMessageIma
   const referenceLabels = data.referenceLabels ?? [];
   const references = openFile && openSkill ? { openFile, openSkill } : void 0;
   const steering = node.kind === "steering";
-  return (0, import_react36.createElement)(
+  return (0, import_react37.createElement)(
     "div",
     { className: "bt-umsg", "data-steering": steering || void 0 },
-    (0, import_react36.createElement)(
+    (0, import_react37.createElement)(
       "div",
       { className: "bt-ustack" },
-      attachments.length > 0 ? (0, import_react36.createElement)(Attachments, { attachments, renderMessageImages }) : null,
-      text !== "" || rest.length > 0 ? (0, import_react36.createElement)(
+      attachments.length > 0 ? (0, import_react37.createElement)(Attachments, { attachments, renderMessageImages }) : null,
+      text !== "" || rest.length > 0 ? (0, import_react37.createElement)(
         "div",
         { className: "bt-ubody", title: clock3(data.time) },
-        (0, import_react36.createElement)(UserText, { text, bots: mentionableBots(roster, sessionId), referenceLabels, skillNames: data.skillNames ?? [], references, actions }),
-        rest.map((block, index) => ui.JsonBlock ? (0, import_react36.createElement)(ui.JsonBlock, { key: index, label: t("Content"), payload: block }) : null)
+        (0, import_react37.createElement)(UserText, { text, bots: mentionableBots(roster, sessionId), referenceLabels, skillNames: data.skillNames ?? [], references, actions }),
+        rest.map((block, index) => ui.JsonBlock ? (0, import_react37.createElement)(ui.JsonBlock, { key: index, label: t("Content"), payload: block }) : null)
       ) : null,
-      referenceLabels.length > 0 ? (0, import_react36.createElement)("div", { className: "bt-urefs" }, t("Referenced {labels}", { labels: referenceLabels.join(t(", ")) })) : null
+      referenceLabels.length > 0 ? (0, import_react37.createElement)("div", { className: "bt-urefs" }, t("Referenced {labels}", { labels: referenceLabels.join(t(", ")) })) : null
     ),
-    text === "" ? null : (0, import_react36.createElement)("div", { className: "bt-utools" }, (0, import_react36.createElement)(CopyButton, { text }))
+    text === "" ? null : (0, import_react37.createElement)("div", { className: "bt-utools" }, (0, import_react37.createElement)(CopyButton, { text }))
   );
 }
 var USER_MESSAGE_CSS = `
@@ -13528,6 +13956,65 @@ var USER_MESSAGE_CSS = `
 .bt-urefs{font-size:13px;line-height:18px;color:var(--bt-ink-3)}
 .bt-utools{display:flex;flex:none;gap:2px;opacity:0;visibility:hidden;transition:opacity .12s ease,visibility .12s}
 .bt-umsg:hover .bt-utools,.bt-umsg:focus-within .bt-utools{opacity:1;visibility:visible}
+`;
+
+// src/client/workgroup-style.js
+var WORKGROUP_CSS = `
+.bt-wg-pane{box-sizing:border-box}
+.bt-wg{flex:1;min-height:0;display:flex;flex-direction:column;font-size:14px;color:var(--bt-ink)}
+.bt-wg-head{height:62px;flex:none;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:.5px solid var(--bt-line)}
+.bt-wg-name{font-weight:600;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt-wg-unread{flex:none;min-width:18px;height:18px;border-radius:999px;background:var(--bt-accent);color:var(--bt-accent-ink,#fff);font-size:11px;line-height:18px;text-align:center;padding:0 5px;box-sizing:border-box}
+.bt-wg-gear{margin-left:auto;flex:none;height:32px;border-radius:999px;border:0;background:var(--bt-hover);color:var(--bt-ink);font-size:13px;padding:0 12px;cursor:pointer}
+.bt-wg-gear:hover{background:var(--bt-active)}
+.bt-wg-thread{flex:1;min-height:0;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px}
+.bt-wg-empty{flex:1;display:flex;align-items:center;justify-content:center;padding:24px 32px;text-align:center;color:var(--bt-ink-2);font-size:13px;line-height:20px}
+.bt-wg-message{display:flex;flex-direction:column;gap:4px;align-items:flex-start;max-width:100%}
+.bt-wg-message-who{font-size:12px;color:var(--bt-ink-2)}
+.bt-wg-message-body{max-width:min(80%,560px);background:var(--bt-bubble);border-radius:18px;padding:7px 12px;line-height:22px;overflow-wrap:anywhere}
+.bt-wg-message-own{align-items:flex-end}
+.bt-wg-message-own .bt-wg-message-body{background:var(--bt-user);color:var(--bt-user-ink)}
+.bt-wg-message-failed{font-size:12px;color:#e02135}
+.bt-wg-reply{align-self:flex-start;border:0;background:none;color:var(--bt-ink-3);font-size:12px;padding:0;cursor:pointer}
+.bt-wg-message:hover .bt-wg-reply{color:var(--bt-ink-2);text-decoration:underline}
+.bt-wg-quote{display:flex;flex-direction:column;gap:1px;max-width:min(80%,560px);padding:4px 8px;border-left:2px solid var(--bt-line-2);color:var(--bt-ink-2);font-size:12px;line-height:16px;box-sizing:border-box}
+.bt-wg-quote-who{color:var(--bt-ink-3)}
+.bt-wg-quote-body{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt-wg-replying{flex:none;display:flex;align-items:flex-start;gap:8px;margin:0 16px 8px;padding:8px 10px;border-left:2px solid var(--bt-accent);background:var(--bt-tag-bg);border-radius:6px}
+.bt-wg-replying-text{flex:1;min-width:0}
+.bt-wg-replying-who{font-size:12px;color:var(--bt-ink-2)}
+.bt-wg-replying-body{font-size:13px;color:var(--bt-ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt-wg-replying-drop{flex:none;border:0;background:none;color:var(--bt-ink-2);font-size:12px;padding:0;cursor:pointer}
+.bt-wg-members{flex:none;display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 8px;max-height:88px;overflow-y:auto}
+.bt-wg-member{display:inline-flex;align-items:center;gap:6px;height:24px;border-radius:999px;background:var(--bt-tag-bg);color:var(--bt-tag-ink);font-size:12px;padding:0 10px}
+.bt-wg-member-name{border:0;background:none;color:inherit;font:inherit;padding:0;cursor:inherit}
+.bt-wg-member-bot{cursor:pointer}
+.bt-wg-member-dot{flex:none;width:6px;height:6px;border-radius:999px;background:var(--bt-ink-3)}
+.bt-wg-member-online .bt-wg-member-dot{background:var(--bt-green)}
+.bt-wg-member-offline .bt-wg-member-dot{background:var(--bt-line-2)}
+.bt-wg-member-owner{color:var(--bt-ink-3)}
+.bt-wg-tasks{flex:none;display:flex;flex-direction:column;gap:8px;padding:0 16px}
+.bt-wg-task-actions{display:flex;gap:8px;margin-top:6px}
+.bt-wg-approve,.bt-wg-reject{height:28px;border-radius:999px;border:0;font-size:12px;padding:0 12px;cursor:pointer}
+.bt-wg-approve{background:var(--bt-accent);color:var(--bt-accent-ink,#fff)}
+.bt-wg-reject{background:var(--bt-hover);color:var(--bt-ink)}
+.bt-wg-approve:hover{opacity:.88}
+.bt-wg-reject:hover{background:var(--bt-active)}
+.bt-wg-compose{flex:none;display:flex;align-items:flex-end;gap:8px;padding:10px 16px 16px;border-top:.5px solid var(--bt-line-weak)}
+.bt-wg-input{flex:1;min-height:40px;max-height:160px;resize:none;box-sizing:border-box;border-radius:12px;border:.5px solid var(--bt-line-2);background:var(--bt-card);color:var(--bt-ink);font:inherit;line-height:20px;padding:10px 12px}
+.bt-wg-input::placeholder{color:var(--bt-placeholder,var(--bt-ink-3))}
+.bt-wg-send{height:40px;flex:none;border-radius:999px;border:0;background:var(--bt-accent);color:var(--bt-accent-ink,#fff);font-size:14px;padding:0 20px;cursor:pointer;white-space:nowrap}
+.bt-wg-send:disabled{opacity:.35;cursor:default}
+.bt-wg-offline .bt-wg-empty{color:var(--bt-ink-2)}
+.bt-wg-offline .bt-wg-name{color:var(--bt-ink-2)}
+.bt-wg-settings{flex:1;min-height:0;overflow-y:auto}
+.bt-wg-identity{flex:none;margin:12px 16px 0;padding:12px;border:.5px solid var(--bt-line-2);border-radius:10px;background:var(--bt-card)}
+.bt-wg-identity-note{font-size:12px;color:var(--bt-ink-2);margin-bottom:8px}
+.bt-wg-identity-row{display:flex;align-items:center;gap:8px;padding:3px 0}
+.bt-wg-identity-label{flex:none;width:110px;font-size:12px;color:var(--bt-ink-3)}
+.bt-wg-identity-value{flex:1;min-width:0;font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;user-select:all}
+.bt-wg-identity-copy{margin-top:8px;height:28px;border-radius:999px;border:0;background:var(--bt-hover);color:var(--bt-ink);font-size:12px;padding:0 12px;cursor:pointer}
+.bt-wg-identity-copy:hover{background:var(--bt-active)}
 `;
 
 // src/client/approval-notices.js
@@ -13563,10 +14050,10 @@ function noticeApprovals({ work, roster, shownSession, openSession, since: since
 }
 
 // src/client/bot-panel.js
-var import_react37 = require("react");
+var import_react38 = require("react");
 function BotPanelIcon(props) {
   const size = props?.size ?? 18;
-  return (0, import_react37.createElement)(
+  return (0, import_react38.createElement)(
     "svg",
     {
       width: size,
@@ -13579,9 +14066,9 @@ function BotPanelIcon(props) {
       strokeLinejoin: "round",
       "aria-hidden": true
     },
-    (0, import_react37.createElement)("path", { d: "M3 14c0-4.4 3.6-8 8-8h3.5a2.5 2.5 0 0 1 0 5H9" }),
-    (0, import_react37.createElement)("path", { d: "M3 14c1.8 3.6 5.2 6 9 6 4.4 0 8-3.6 8-8" }),
-    (0, import_react37.createElement)("circle", { cx: 10.5, cy: 10, r: 0.9, fill: "currentColor", stroke: "none" })
+    (0, import_react38.createElement)("path", { d: "M3 14c0-4.4 3.6-8 8-8h3.5a2.5 2.5 0 0 1 0 5H9" }),
+    (0, import_react38.createElement)("path", { d: "M3 14c1.8 3.6 5.2 6 9 6 4.4 0 8-3.6 8-8" }),
+    (0, import_react38.createElement)("circle", { cx: 10.5, cy: 10, r: 0.9, fill: "currentColor", stroke: "none" })
   );
 }
 
@@ -14077,9 +14564,7 @@ function apply(ctx) {
         if (!snapshot.ready || !snapshot.mainBotId) return;
         const list = ctx.sessions.list.getSnapshot();
         const main = Object.values(list.byId ?? {}).find((session) => (session?.retainedBy?.mainView ?? 0) > 0)?.id;
-        if (main !== void 0 && snapshot.byId[main] === void 0 && snapshot.roomsById[main] === void 0) {
-          actions.openSession(snapshot.mainBotId);
-        }
+        if (needsHomeFallback(snapshot, main)) actions.openSession(snapshot.mainBotId);
       };
       if (roster.getSnapshot().ready) home();
       else {
@@ -14301,19 +14786,39 @@ function apply(ctx) {
     delete next[sessionId];
     return next;
   });
-  const hub = ctx.get("workgroupHub");
+  const hubBridge = createHubBridge();
+  const workgroupHub = ctx.get("workgroupHub") ?? createWorkgroupHub({ bridge: hubBridge });
+  if (ctx.get("workgroupHub") === void 0) ctx.reflect.provide("workgroupHub", workgroupHub);
+  ctx.effect(() => {
+    hubBridge.start();
+    return () => hubBridge.stop();
+  }, "ds-bot: workgroup hub");
   const browserPages = browsers?.pages ?? createSource({});
   const browserTabs = browsers?.tabs ?? createSource({});
   let panelRegistered = false;
   const face = () => ({ actions, hooks: { roster, ui: ui2, activity, work, memoryNews, registry, turnClock, live, cards, browserPages, browserTabs, surface, update } });
-  const workgroups = hub === void 0 ? void 0 : {
+  const workgroupsNow = () => workgroupHub.available ? {
     create: async () => {
-      const created = await hub.createRoom(newWorkgroupName(), { kind: "workgroup" });
-      actions.openSession(workgroupSessionId(created.id));
-      actions.closeOverlay();
-      await hub.watch?.(created.id);
+      const created = await workgroupHub.createRoom(newWorkgroupName(), { kind: "workgroup" });
+      await enterWorkgroup({
+        roomId: created.id,
+        sessions: ctx.sessions,
+        openSession: actions.openSession,
+        closeOverlay: actions.closeOverlay,
+        watch: (roomId) => workgroupHub.watch(roomId),
+        report: (error) => actions.reportError(error, "workgroup")
+      });
     }
-  };
+  } : void 0;
+  const workgroups = createSource(workgroupsNow());
+  ctx.effect(() => hubBridge.view.subscribe(() => {
+    workgroups.set(workgroupsNow());
+  }), "ds-bot: workgroup availability");
+  const hub = createSource(hubBridge.view.getSnapshot());
+  ctx.effect(() => hubBridge.view.subscribe(() => {
+    hub.set(hubBridge.view.getSnapshot());
+  }), "ds-bot: hub status");
+  const overlayFace = () => ({ ...face(), hooks: { ...face().hooks, workgroups, hub } });
   const registerBotPanel = () => {
     panelRegistered = true;
     ctx.slots.inject("sidebar.panellist", () => ctx.slots.register({
@@ -14385,6 +14890,7 @@ function apply(ctx) {
     installCompiledStyles(ABOUT_CSS, "about"),
     installCompiledStyles(MEMBER_CSS, "members"),
     installCompiledStyles(USER_MESSAGE_CSS, "user-messages"),
+    installCompiledStyles(WORKGROUP_CSS, "workgroups"),
     browsers ? installCompiledStyles(BROWSER_CSS, "browser") : null,
     installTheme(),
     shadow("sidebar.workspaces", { priority: -10, inject: face }, TeamSidebar),
@@ -14396,7 +14902,10 @@ function apply(ctx) {
     // At priority -10 the whale wins the seat over a shell account plugin's own
     // launcher (the Desktop's "··· More"), which comes back in Agent mode.
     shadow("settings.launcher", { priority: -10, inject: face }, AccountLauncher),
-    shadow("shell.overlay", { id: "bot", order: 50, inject: () => ({ ...face(), workgroups }) }, Overlays),
+    shadow("shell.overlay", { id: "bot", order: 50, inject: overlayFace }, Overlays),
+    // The workgroup view sits strictly under `bot` so the team's own dialogs still cover it, and
+    // above nothing else: the pane renders only for a `wg:` Session and is `null` otherwise.
+    shadow("shell.overlay", { id: "bot-workgroup", order: 45, inject: overlayFace }, WorkgroupPane),
     shadow("shell.overlay", { id: "bot-signin", order: 55, inject: face }, DeepSeekSignIn),
     shadow("shell.overlay", { id: "bot-toast", order: 60, inject: face }, ErrorToast)
   ];

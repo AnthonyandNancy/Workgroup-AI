@@ -28,9 +28,13 @@ export function loadClientPlugin(bundlePath) {
     '@deepseek-ai/dsh-client-ui-primitives': new Proxy({}, { get: () => () => null }),
   }
   const doc = {
-    createElement: stubEl, head: { append: noop, appendChild: noop }, body: { append: noop, appendChild: noop },
+    createElement: stubEl, head: { append: noop, appendChild: noop }, body: { append: noop, appendChild: noop, dataset: {} },
     documentElement: { dataset: {} }, hidden: false, visibilityState: 'visible', addEventListener: noop, removeEventListener: noop,
     querySelector: () => null, querySelectorAll: () => [],
+    // The style installer reads the loaded stylesheets to rewrite the shell's hashed class
+    // fragments into exact names. No shell sheet exists here, so the empty list is the truthful
+    // answer: every fragment selector stays in its substring form.
+    styleSheets: [],
   }
   const win = {
     __ModuleLoader__: { load: def => { module_ = def.factory(s => platform[s] ?? (() => null)) } },
@@ -52,6 +56,9 @@ export function loadClientPlugin(bundlePath) {
   globalThis.addEventListener = noop
   globalThis.removeEventListener = noop
   globalThis.ResizeObserver = class { observe() {} disconnect() {} }
+  // The style installer watches the head for lazily loaded shell sheets. Nothing is appended in
+  // this harness, so an observer that just records its subscription is the whole behavior.
+  globalThis.MutationObserver = class { observe() {} disconnect() {} }
   // The plugin polls its Host on a timer, and there is no Host here. Returning a rejected
   // promise is the honest answer, but the plugin's own `catch` handles it, so the harness must
   // not leave an unhandled rejection behind: a test run that reports one fails even when every
@@ -97,9 +104,19 @@ export function loadClientPlugin(bundlePath) {
 export function fakeShell() {
   const registrations = []
   const effects = []
+  // The Bot surface is installed only while the product's own panel is the active view, so a stub
+  // whose subscribe never fires could never reach `installShell`: the gate would read its initial
+  // `null` and stay closed. Subscribe/notify is what lets a spec make the same choice a user makes.
+  const listeners = new Set()
   const layout = {
-    panelInfo: { getSnapshot: () => ({ activePanelId: layout.active }), subscribe: () => noop },
-    selectPanel: id => { layout.active = id },
+    panelInfo: {
+      getSnapshot: () => ({ activePanelId: layout.active }),
+      subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener) } },
+    },
+    selectPanel: (id) => {
+      layout.active = id
+      for (const listener of [...listeners]) listener()
+    },
     active: null,
   }
   const slots = {
@@ -119,7 +136,9 @@ export function fakeShell() {
     sessions: { list: { getSnapshot: () => ({ byId: {}, ids: [] }), subscribe: () => noop }, binding: () => undefined },
     uiWorkspace: { openSession: noop, startSession: noop },
     uiConversation: { binding: () => ({ target: () => ({ getSnapshot: () => undefined }) }) },
-    theme: { subscribe: () => noop },
+    // The theme is installed by overriding the shell's tokens; the release function is what the
+    // plugin calls on withdrawal, so it has to be a function and is otherwise unused here.
+    theme: { subscribe: () => noop, overrideTokens: () => noop },
     locale: { register: () => noop, bind: () => (s => s), subscribe: () => noop },
     workspaceRegistry: { get: () => undefined, create: async () => ({ id: 'w' }) },
     sessionTitle: { rename: async () => {} },

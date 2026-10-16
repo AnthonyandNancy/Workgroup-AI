@@ -13,6 +13,13 @@ packages:
   # Deploy root of the single-exe build: a pure dependency manifest whose
   # closure is what the exe bundles and what the Python runtime distributes.
   - python/sdk-runtime
+  # The Workgroup Hub client, bridge, policy, and Bot adapter. A workspace package
+  # rather than loose sources because DS Bot's Host half imports it across a package
+  # boundary: `lib/` staging copies files without rewriting imports, so a relative
+  # path that leaves the plugin's directory resolves to a different depth in the
+  # source tree (`src/host`, 5 levels) than in the published tree (`lib/src/host`, 6).
+  # A package name is the same string in both.
+  - integrations/workgroup
 
 overrides:
   'extract-zip>yauzl': '3.4.0'

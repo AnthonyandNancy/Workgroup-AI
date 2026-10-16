@@ -148,9 +148,13 @@ it('A-04: the workgroup entry appears only when a Hub is configured', () => {
   // The entry is gated on a prop rather than on a global, so a plain-plugin install — where no
   // Hub exists — keeps upstream's menu exactly as it was.
   expect(source).toMatch(/if \(workgroups !== undefined\) \{/)
-  // The adapter itself is chosen in `index.js`, where the Hub connection is known.
+  // The adapter is chosen in `index.js` from the Hub adapter's own availability, not a constant.
+  // The runtime behaviour — that availability turns true only after the Host confirms a Hub, and
+  // that it can change while a window is open — is covered by a11-hub-provider.spec.ts. What is
+  // checked here is only that this module reads that reactive flag rather than freezing a value.
   const indexSource = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'index.js'), 'utf8')
-  expect(indexSource).toMatch(/const workgroups = hub === undefined \? undefined : \{/)
+  expect(indexSource).toMatch(/const workgroupsNow = \(\) => \(workgroupHub\.available \? \{/)
+  expect(indexSource).toMatch(/hubBridge\.view\.subscribe\(\(\) => \{ workgroups\.set\(workgroupsNow\(\)\) \}\)/)
   // And the original group entry is not behind any Hub gate.
   const groupLine = source.split(String.fromCharCode(10)).find(line => line.includes("t('Create group chat')"))
   expect(groupLine).toBeDefined()
@@ -195,8 +199,13 @@ it('A-03/A-04: the workgroup surface keeps the Hub boundary visible in the modul
   // The one sentence a reader must not miss: this module renders, and the only module that acts on
   // a task is `bot-adapter`, behind the local policy check.
   expect(source).toMatch(/no code path from an inbound frame/)
-  // Session ids are namespaced, so a Hub room and a local room can never collide on one id.
-  expect(source).toMatch(/return `wg:\$\{roomId\}`/)
+  // Session ids are namespaced, so a Hub room and a local room can never collide on one id. The
+  // rule itself lives in `src/shared/`: both halves of the plugin have to agree on the string, so
+  // the module that owns it is the one both halves import. This module re-exports it, and the
+  // assertion follows it there rather than pinning a copy that could drift from the Host's.
+  const identity = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'shared', 'workgroup-session.js'), 'utf8')
+  expect(identity).toMatch(/return `wg:\$\{roomId\}`/)
+  expect(source).toMatch(/from '\.\.\/shared\/workgroup-session\.js'/)
 })
 
 it('the activation gate is armed before it is read', () => {

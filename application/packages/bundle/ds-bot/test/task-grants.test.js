@@ -48,13 +48,13 @@ function bench({ team = TEAM } = {}) {
 }
 
 /** A task Session with a grant naming exactly what the approval allowed. */
-async function taskWithGrant(b, { allowedTools = ['read_file', 'write_file'], workDir, expiresAt, revocationVersion = 0 } = {}) {
+async function taskWithGrant(b, { allowedTools = ['read_file', 'write_file'], allowedHosts, workDir, expiresAt, revocationVersion = 0 } = {}) {
   await b.rt.load()
   const binding = await b.rt.openTaskSession({ taskId: 'task-1', botId: 'b2' })
   await b.rt.rememberTaskSession(binding)
   const grant = await b.rt.mintGrant({
     taskId: 'task-1', sessionId: binding.sessionId, botId: 'b2',
-    allowedTools, workDir, expiresAt, revocationVersion,
+    allowedTools, allowedHosts, workDir, expiresAt, revocationVersion,
   })
   return { binding, grant }
 }
@@ -310,4 +310,44 @@ test('a team file from before grants existed gains the record without losing its
   await rt.rememberTaskSession(binding)
   await rt.mintGrant({ taskId: 'task-1', sessionId: binding.sessionId, botId: 'b2', allowedTools: ['read_file'] })
   assert.match(String(rt.checkTaskToolCallForProbe(call(binding.sessionId, 'write_file', {}))), /does not include write_file/)
+})
+
+test('a network tool reaches only an approved host, and refusal is the default', async (t) => {
+  const b = bench()
+  t.after(() => b.cleanup())
+  // E3: the approval names hosts, not "the network". A task approved for one host must not be able
+  // to reach a second one, and a task approved for no host must not reach any.
+  const { binding } = await taskWithGrant(b, { allowedTools: ['web_fetch'], allowedHosts: ['internal.corp'] })
+
+  assert.equal(b.rt.checkTaskToolCallForProbe(call(binding.sessionId, 'web_fetch', { url: 'https://internal.corp/doc' })), undefined)
+
+  // A different host is refused, and the refusal is written for the model to report, not retry.
+  const refusal = b.rt.checkTaskToolCallForProbe(call(binding.sessionId, 'web_fetch', { url: 'https://example.com/doc' }))
+  assert.match(refusal, /does not cover example\.com/)
+})
+
+test('a lookalike domain does not satisfy an approved host', async (t) => {
+  const b = bench()
+  t.after(() => b.cleanup())
+  const { binding } = await taskWithGrant(b, { allowedTools: ['web_fetch'], allowedHosts: ['internal.corp'] })
+  // The bypass this case exists for: an `endsWith` comparison would approve the attacker's host.
+  const refusal = b.rt.checkTaskToolCallForProbe(call(binding.sessionId, 'web_fetch', { url: 'https://internal.corp.attacker.example/doc' }))
+  assert.match(refusal, /does not cover internal\.corp\.attacker\.example/)
+})
+
+test('a task approved for no host reaches none', async (t) => {
+  const b = bench()
+  t.after(() => b.cleanup())
+  // No `allowedHosts` at all: the dangerous default would be "unrestricted".
+  const { binding } = await taskWithGrant(b, { allowedTools: ['web_fetch'] })
+  assert.match(b.rt.checkTaskToolCallForProbe(call(binding.sessionId, 'web_fetch', { url: 'https://internal.corp/doc' })), /does not cover internal\.corp/)
+})
+
+test('a non-network tool is unaffected by the host list', async (t) => {
+  const b = bench()
+  t.after(() => b.cleanup())
+  const { binding } = await taskWithGrant(b, { allowedTools: ['read_file', 'web_fetch'], allowedHosts: ['internal.corp'] })
+  // The host rule must not become a second, invisible gate on tools that never open a socket:
+  // a task that could read its approved folder before this change must still be able to.
+  assert.equal(b.rt.checkTaskToolCallForProbe(call(binding.sessionId, 'read_file', { path: 'a.txt' })), undefined)
 })

@@ -95,7 +95,13 @@ export function createWorkgroupClient({ client, bridge, onBotsFromDirectory } = 
       const answered = await client.request('POST', `/invitations/${invitationId}/${decision}`, { body: {} })
       // Accepting a room means this device should receive its events from now on. Without the
       // watch the employee would sit in a room that never updates.
-      if (decision === 'accept') await bridge?.watch?.(answered.invitation.roomId)
+      //
+      // The room id comes from `answered.room`: the accept route answers with the room and the new
+      // membership, precisely because the invitee cannot know the room's id before accepting.
+      // Declining answers with the invitation instead, and needs no watch. Read without a fallback
+      // so a Hub that stops reporting the room fails here rather than leaving a silent room that
+      // never updates.
+      if (decision === 'accept') await bridge?.watch?.(answered.room.id)
       return answered
     },
 

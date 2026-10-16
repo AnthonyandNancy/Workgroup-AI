@@ -349,10 +349,10 @@ integrations/workgroup/bot-adapter/cancellation.mjs  撤销与进程终止
 |---|---|---|
 | 工作群会话 id | `wg:<roomId>`（已有函数） | 命名空间隔离，已实现 |
 | Hub 服务对象 | 宿主侧新增提供者 | 形状决定客户端可用能力 |
-| 会话视图 | 客户端 | 需把 `wg:` 会话接到工作群视图 |
+| 会话视图 | 客户端 | 需把 `wg:` 会话接到工作群视图（最终落点见下：`shell.overlay` + `wg:` 身份） |
 | Hub 连接状态 | Bridge 的 `onStateChange` | 已有回调，缺消费方 |
 
-### 是否存在真实方案分歧（仅这一处需要 A/B）
+### 是否存在真实方案分歧（已裁决）
 
 **分歧点：`wg:` 会话如何渲染工作群视图。**
 
@@ -361,9 +361,14 @@ integrations/workgroup/bot-adapter/cancellation.mjs  撤销与进程终止
 | 思路 | 在 `conversation.content`（`scope: session-maybe`）层按 `isWorkgroupSession(sessionId)` 分流，命中则渲染 `WorkgroupView`，否则原样 | 注册一个新的 `main.conversation` occupant 或独立 `sidebar.panellist`，用面板切换承载 |
 | 复用 | 完全复用 shell 的会话绑定、输入区、宽度控制、标题 | 需自建绑定 |
 | 风险 | 与上游会话渲染耦合，需确认 `session-maybe` 下替换的最小侵入点 | 与已确立的"只有一个 Bot 入口、`main.conversation` 声明权归 ui-conversation"原则**冲突**（`F07_F08_F09` 明确记录该约束） |
-| 结论 | **推荐 A** | 不符合既有架构约束 |
+| 结论 | ~~推荐 A~~ **实测不可行** | **采用变体 B′** |
 
-→ **采用方案 A**，因为它复用 shell 既有会话机制，且不违反"不注册第二个 `main.conversation`"的既有约定。
+→ **A 在实现阶段被实测否定，B 的同名冲突问题用 overlay 规避。** 原文「推荐 A」作废，理由与替代方案如下：
+
+1. **A 不可行（实测）**：`ui-slots` 的 `registerFactory`（`packages/client/ui-slots/src/index.ts:1021-1034`）对同一个槽的二次定义直接抛 `already has a definition`，`conversation.content` 已被 ui-conversation 声明，无法再影射；`useFactorySlotRuntime` 的局部槽由出现点选定，也不可从外部替换。
+2. **朴素 B 不可行**：`layout.selectPanel` 对未注册 panel 抛错，故不能注册 `main`；另立 `main.conversation` occupant 同样撞上第 1 条。
+3. **采用 B′：`shell.overlay` + `wg:<roomId>` 身份**。`shell.overlay` 是 `{ kind: 'list', scope: 'root' }`，渲染进 `css.overlayLayer`（`position:absolute;inset:0;z-index:20;pointer-events:none`，`> *` 恢复 `pointer-events:auto`）；本插件自己的 `.bt-pane`（`styles.js:318`）为 `position:fixed;top:var(--dsh-frame-chrome-top,0px);right:0;bottom:0;z-index:45`，**高于** `.bt-panel` 的 `40`（`styles.js:340`），因此面板覆盖对话区，无需额外门控。分流依据是**身份**（`isWorkgroupSession(sessionId)`）而不是面板状态，符合"只有一个 Bot 入口"的约束。
+4. **进入顺序是其中的硬约束**：`sessions.retain` → `manager.resolveTarget` 对未知 id 抛 `sessions.retain: unknown session`（`manager.ts:135-152`），而工作群由 Hub 拥有、本机从不创建该 Session。因此必须先 `sessions.create({ sessionId: 'wg:<roomId>' })` 再导航；Host 对磁盘无记录的同名 id 会沿用原 id（`agent.ts:459-505`），故 id 稳定。
 
 ## 核心流程
 
@@ -701,10 +706,10 @@ Hub 离线             → 离线/受限状态（由 Bridge onStateChange 驱动
 - 影响：WP-A 全部工作（挂载、样式、@、附件、引用、在线状态）都无法验证；WP-F 的真实模型执行也无法跑通
 - 处理：把"新增 Hub 服务提供者 + 装配到插件/宿主"列为**第一优先任务**，先让它可加载（哪怕只有 `createRoom`/`watch`/`openRoom` 三个方法），再逐个补齐能力
 
-**风险 2 · 会话渲染分流的侵入性**
+**风险 2 · 会话渲染分流的侵入性（已实测裁决，见「方案分歧」）**
 - 原因：`wg:` 会话要接入 shell 的会话渲染，而该处由上游 `ui-conversation` 拥有
 - 影响：改错位置会破坏普通会话，或违反"只有一个 Bot 一级入口 / 不注册第二个 `main.conversation`"的既有约定
-- 处理：采用**内容槽分流**（`conversation.content` 的 `session-maybe` 层），不改 `main.conversation` 的声明权；实现前先用 `apply-harness` 验证注册形状
+- 处理：**已实测否决 `conversation.content` 分流**——`registerFactory` 对同名槽的二次定义直接抛错，`layout.selectPanel` 拒绝未注册的 panel。最终落点为 `shell.overlay` + `wg:<roomId>` 会话身份（`.bt-pane` 的 `z-index:45` 高于 `.bt-panel` 的 `40`，覆盖层天然压住面板）。详见「是否存在真实方案分歧（已裁决）」
 
 **风险 3 · 在线状态的双事实来源**
 - 原因：`connections`（内存，权威）与 `devices.last_seen_at`（库，仅登录/刷新时更新）语义不同；若误用后者，会得到"登录过即在线"的错误结果
@@ -759,9 +764,11 @@ Hub 离线             → 离线/受限状态（由 Bridge onStateChange 驱动
 核心设计：
 - 工作群是 Hub 房间（kind='workgroup'），客户端以 wg:<roomId> 作为会话身份；
   Hub 是 kind 的唯一权威，客户端只读返回值
-- 会话渲染采用「内容槽分流」：在 conversation.content 的 session-maybe 层按
-  isWorkgroupSession(sessionId) 决定渲染 WorkgroupView 还是原样——不注册第二个
-  main.conversation，不破坏"只有一个 Bot 一级入口"的既有约定
+- 会话渲染采用「覆盖层 + 会话身份」：在 shell.overlay 注册 WorkgroupPane，以
+  isWorkgroupSession(sessionId) 判定是否渲染——不注册第二个 main.conversation，
+  不二次定义任何既有槽位，不破坏"只有一个 Bot 一级入口"的既有约定。
+  进入前必须先 sessions.create({ sessionId: 'wg:<roomId>' })：
+  sessions.retain 对未知 id 抛错，而工作群由 Hub 拥有、本机从不创建该 Session
 - 在线状态以 realtime/hub.js 的 connections 为唯一事实来源，瞬时、不落库、
   只对同房间成员可见；禁止用 devices.last_seen_at 代替
 - 配额淘汰、限速计数都放在既有的单一事实来源模块内（memory/store.js 事务内、

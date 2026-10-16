@@ -122,7 +122,16 @@ export function resolveTaskDirectory(candidate, { root } = {}) {
     // The comparison is on the *resolved* paths and uses a trailing separator, so `/srv/work-other`
     // is not treated as inside `/srv/work`. A prefix comparison without the separator is the classic
     // way this check passes a sibling directory.
-    const inside = realPath === realRoot || realPath.startsWith(realRoot.endsWith(sep) ? realRoot : `${realRoot}${sep}`)
+    //
+    // On Windows the two sides are folded to one case first. That filesystem is case-insensitive,
+    // and `realpathSync` there returns a path with the casing the *caller* typed rather than the
+    // casing on disk (measured), so a config that spells the approved root differently from the disk
+    // would refuse a directory the owner approved. POSIX keeps its byte comparison: case-sensitivity
+    // is the correct semantic there, and folding would widen the check rather than correct it.
+    const fold = value => process.platform === 'win32' ? value.toLowerCase() : value
+    const left = fold(realPath)
+    const right = fold(realRoot)
+    const inside = left === right || left.startsWith(right.endsWith(sep) ? right : `${right}${sep}`)
     if (!inside) {
       throw new DispatchRefused(
         `The approved working directory resolves outside the permitted root: ${realPath} is not inside ${realRoot}`,

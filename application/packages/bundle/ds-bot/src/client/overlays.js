@@ -14,10 +14,14 @@ import { useLinger } from './motion.js'
 const DIALOG_EXIT_MS = 160
 const MENU_EXIT_MS = 120
 
-export function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity, useWork, useRegistry, useBrowserPages, useBrowserTabs, useUpdate, actions, workgroups }) {
+export function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity, useWork, useRegistry, useBrowserPages, useBrowserTabs, useUpdate, useWorkgroups, actions }) {
   const roster = useRoster(value => value)
   const ui = useUi(value => value)
   useRegistry(value => value)
+  // The workgroup adapter, or `undefined` when this install has no Hub. Read as a hook because the
+  // answer is confirmed asynchronously by the Host and can change while the window is open: a prop
+  // captured at mount would freeze the first answer, and with it the menu entry.
+  const workgroups = useWorkgroups(value => value)
   const current = useSessions(list => Object.values(list.byId).find(session => (session?.retainedBy?.mainView ?? 0) > 0)?.id ?? null)
   // An open panel follows the conversation in the main view. Only a change of the
   // main view moves it, so opening details for another id (Rename) is not undone.

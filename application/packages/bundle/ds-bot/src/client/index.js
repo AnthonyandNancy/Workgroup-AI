@@ -21,7 +21,11 @@ import { SECRET_CSS, SecretDock } from './secret-card.js'
 import { MODEL_CSS, ModelChoiceDock, DeepSeekSignIn } from './model-menu.js'
 import { BOT_SETTINGS_CSS } from './bot-settings.js'
 import { GROUP_SETTINGS_CSS } from './group-settings.js'
-import { newWorkgroupName, workgroupSessionId } from './workgroup.js'
+import { newWorkgroupName } from './workgroup.js'
+import { enterWorkgroup } from './workgroup-entry.js'
+import { WorkgroupPane } from './workgroup-pane.js'
+import { needsHomeFallback } from '../shared/workgroup-session.js'
+import { createHubBridge, createWorkgroupHub } from './workgroup-hub.js'
 import { FOLDER_CSS } from './folder-menu.js'
 import { USAGE_CSS } from './usage-page.js'
 import { SCHEDULE_CSS } from './schedules.js'
@@ -33,6 +37,7 @@ import { ErrorToast, FEEDBACK_CSS } from './feedback.js'
 import { ABOUT_CSS } from './about.js'
 import { MEMBER_CSS, MemberDock } from './member-status.js'
 import { USER_MESSAGE_CSS, UserMessageCell, canDrawUserMessages } from './user-message.js'
+import { WORKGROUP_CSS } from './workgroup-style.js'
 import { noticeApprovals } from './approval-notices.js'
 import { BotPanelIcon } from './bot-panel.js'
 
@@ -488,9 +493,10 @@ export function apply(ctx) {
         if (!snapshot.ready || !snapshot.mainBotId) return
         const list = ctx.sessions.list.getSnapshot()
         const main = Object.values(list.byId ?? {}).find(session => (session?.retainedBy?.mainView ?? 0) > 0)?.id
-        if (main !== undefined && snapshot.byId[main] === undefined && snapshot.roomsById[main] === undefined) {
-          actions.openSession(snapshot.mainBotId)
-        }
+        // The shared rule rather than the two-local-collections test it replaces, because it is the
+        // same question the sidebar asks and it must answer the same way in both places: a
+        // workgroup Session is absent from the roster by design, since the Hub owns the room.
+        if (needsHomeFallback(snapshot, main)) actions.openSession(snapshot.mainBotId)
       }
       if (roster.getSnapshot().ready) home()
       else {
@@ -708,11 +714,24 @@ export function apply(ctx) {
     delete next[sessionId]
     return next
   })
-  // The fork's Hub adapter, supplied by the host half once a Hub is configured. `undefined` is the
-  // local-only install, which is a supported shape rather than an error — so this reads the service
-  // store instead of the `ctx.<name>` property proxy, which throws for an undeclared name and would
-  // fail the whole entry rather than leave the Hub features off.
-  const hub = ctx.get('workgroupHub')
+  // The fork's Hub adapter. Provided here, in the browser half, because this is where the only
+  // reader lives: a Host-side `provide` sits in a different process's service store and would be
+  // invisible to the line below. The Host still owns the Hub connection — this forwards to it over
+  // `POST /api/bot` — so the Hub credentials never reach the renderer.
+  //
+  // It is provided even when no Hub is configured, and `workgroups` below is what carries the
+  // answer: `undefined` until the Host confirms a Hub, because the menu must not offer an action
+  // that cannot succeed. `ui-conversation`'s own services are declared, so `ctx.get` is the right
+  // read for an optional service (the property proxy throws for an undeclared name).
+  const hubBridge = createHubBridge()
+  const workgroupHub = ctx.get('workgroupHub') ?? createWorkgroupHub({ bridge: hubBridge })
+  if (ctx.get('workgroupHub') === undefined) ctx.reflect.provide('workgroupHub', workgroupHub)
+  // Ask the Host once now and then on a slow poll, so a Hub that was configured or signed into
+  // after this window opened still brings the entry in. Stopped with the plugin.
+  ctx.effect(() => {
+    hubBridge.start()
+    return () => hubBridge.stop()
+  }, 'ds-bot: workgroup hub')
   const browserPages = browsers?.pages ?? createSource({})
   const browserTabs = browsers?.tabs ?? createSource({})
   // Set once the Bot entry exists. The panel-activation gate reads it so a profile that
@@ -723,24 +742,44 @@ export function apply(ctx) {
   const face = () => ({ actions, hooks: { roster, ui, activity, work, memoryNews, registry, turnClock, live, cards, browserPages, browserTabs, surface, update } })
 
   /**
-   * The workgroup entry the menu shows, or `undefined` when this install has no Hub.
+   * The workgroup entry the menu shows, or `undefined` when this install has no usable Hub.
    *
    * Absent rather than disabled: a team with no Hub configured is the local-only case, and showing
-   * a greyed-out "创建工作群聊" would advertise a feature the employee cannot have. The check is on
-   * the configuration, so the entry appears exactly when there is somewhere for a workgroup to live.
+   * a greyed-out "创建工作群聊" would advertise a feature the employee cannot have. The entry appears
+   * exactly when the Host confirms there is somewhere for a workgroup to live.
    */
-  const workgroups = hub === undefined ? undefined : {
+  const workgroupsNow = () => (workgroupHub.available ? {
     create: async () => {
       // The Hub owns the room: this asks it to create one and shows the result. Nothing local is
       // written here, which is why a workgroup exists on every machine the member signs in from and
       // a local group exists on exactly one.
-      const created = await hub.createRoom(newWorkgroupName(), { kind: 'workgroup' })
-      actions.openSession(workgroupSessionId(created.id))
-      actions.closeOverlay()
-      // The Bridge watches it from now on, so messages arrive without the user reopening anything.
-      await hub.watch?.(created.id)
+      const created = await workgroupHub.createRoom(newWorkgroupName(), { kind: 'workgroup' })
+      await enterWorkgroup({
+        roomId: created.id,
+        sessions: ctx.sessions,
+        openSession: actions.openSession,
+        closeOverlay: actions.closeOverlay,
+        watch: roomId => workgroupHub.watch(roomId),
+        report: error => actions.reportError(error, 'workgroup'),
+      })
     },
-  }
+  } : undefined)
+  // The answer arrives asynchronously and can change while the window is open, so it travels as a
+  // reactive source in the `hooks` compartment rather than as a prop captured once. A slot's
+  // injected props are cached per entry, so a plain value here would freeze the first answer and
+  // the entry could never appear after the Host confirmed a Hub.
+  const workgroups = createSource(workgroupsNow())
+  ctx.effect(() => hubBridge.view.subscribe(() => { workgroups.set(workgroupsNow()) }), 'ds-bot: workgroup availability')
+  // The Hub's connection state travels the same way, and for the same reason: it changes while the
+  // window is open, and the pane has to say so. Kept separate from `workgroups` because the two
+  // answer different questions — "is there somewhere for a workgroup to live" decides whether the
+  // menu entry exists, while "is the Hub connected" decides what an open room can say.
+  const hub = createSource(hubBridge.view.getSnapshot())
+  ctx.effect(() => hubBridge.view.subscribe(() => { hub.set(hubBridge.view.getSnapshot()) }), 'ds-bot: hub status')
+  // The overlay's own inject face: `face()` plus the workgroup source under `hooks`, which is what
+  // makes the menu see changes. Injected props are cached per slot entry, so a plain value in the
+  // returned object would freeze the first answer.
+  const overlayFace = () => ({ ...face(), hooks: { ...face().hooks, workgroups, hub } })
 
   /**
    * Register the fork's single first-level `Bot` navigation entry and its panel.
@@ -852,6 +891,7 @@ export function apply(ctx) {
     installCompiledStyles(ABOUT_CSS, 'about'),
     installCompiledStyles(MEMBER_CSS, 'members'),
     installCompiledStyles(USER_MESSAGE_CSS, 'user-messages'),
+    installCompiledStyles(WORKGROUP_CSS, 'workgroups'),
     browsers ? installCompiledStyles(BROWSER_CSS, 'browser') : null,
     installTheme(),
     shadow('sidebar.workspaces', { priority: -10, inject: face }, TeamSidebar),
@@ -863,7 +903,10 @@ export function apply(ctx) {
     // At priority -10 the whale wins the seat over a shell account plugin's own
     // launcher (the Desktop's "··· More"), which comes back in Agent mode.
     shadow('settings.launcher', { priority: -10, inject: face }, AccountLauncher),
-    shadow('shell.overlay', { id: 'bot', order: 50, inject: () => ({ ...face(), workgroups }) }, Overlays),
+    shadow('shell.overlay', { id: 'bot', order: 50, inject: overlayFace }, Overlays),
+    // The workgroup view sits strictly under `bot` so the team's own dialogs still cover it, and
+    // above nothing else: the pane renders only for a `wg:` Session and is `null` otherwise.
+    shadow('shell.overlay', { id: 'bot-workgroup', order: 45, inject: overlayFace }, WorkgroupPane),
     shadow('shell.overlay', { id: 'bot-signin', order: 55, inject: face }, DeepSeekSignIn),
     shadow('shell.overlay', { id: 'bot-toast', order: 60, inject: face }, ErrorToast),
   ]

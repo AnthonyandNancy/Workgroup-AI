@@ -438,3 +438,50 @@ describe('the redaction rules', () => {
     assert.deepEqual(recipientsForShare(undefined), [])
   })
 })
+
+// E4: publishing checks the *content* of a result, not only who receives it.
+//
+// The gap this closes: every rule above decides who may see a result, and none of them looks at what
+// the result says. A summary the owner pasted a credential into therefore travelled to the room
+// because the recipient list was correct. The policy is an explicit list of patterns, checked before
+// the payload is built, and a match stops the publish rather than annotating it.
+describe('E4 publishing checks the content', () => {
+  it('blocks a publication whose content matches the policy, and says which rule matched', () => {
+    const policy = { patterns: ['sk-live-'] }
+    expect(() => sharedPayload({
+      task: { id: 't1', roomId: 'r1', description: 'Write it', ownerUserId: 'bob' },
+      summary: 'the key is sk-live-abc123',
+    }, policy)).toThrow(ProgressError)
+    // The author is told which pattern matched so they can find it; the whole policy is not recited.
+    expect(() => sharedPayload({
+      task: { id: 't1', roomId: 'r1', description: 'Write it', ownerUserId: 'bob' },
+      summary: 'the key is sk-live-abc123',
+    }, policy)).toThrow(/sk-live-/)
+  })
+
+  it('blocks a description too, since a task description is published as well', () => {
+    // The description travels in the payload, so it is published content like any other.
+    expect(() => sharedPayload({
+      task: { id: 't1', roomId: 'r1', description: 'rotate sk-live-abc123', ownerUserId: 'bob' },
+      summary: 'done',
+    }, { patterns: ['sk-live-'] })).toThrow(ProgressError)
+  })
+
+  it('publishes content that matches nothing', () => {
+    const payload = sharedPayload({
+      task: { id: 't1', roomId: 'r1', description: 'Write it', ownerUserId: 'bob' },
+      summary: 'the summary',
+    }, { patterns: ['sk-live-'] })
+    expect(payload.summary).toBe('the summary')
+  })
+
+  it('without a policy the existing behaviour is unchanged, so no previous share breaks', () => {
+    // A deployment that has configured no policy publishes exactly what it published before; the
+    // check is additive and a missing policy is not a reason to refuse work.
+    const payload = sharedPayload({
+      task: { id: 't1', roomId: 'r1', description: 'Write it', ownerUserId: 'bob' },
+      summary: 'anything at all',
+    })
+    expect(payload.summary).toBe('anything at all')
+  })
+})

@@ -21,6 +21,9 @@ import { createElement as h, useEffect, useMemo, useState } from 'react'
 import { RoomAvatar } from './mark.js'
 import { Card, Row, InlineText } from './bot-settings.js'
 import { GroupSettingsForm } from './group-settings.js'
+import { replyParent, replyPreview } from './workgroup-reply.js'
+import { presenceOf } from './workgroup-presence.js'
+import { identityRows, identityText } from './workgroup-identity.js'
 import { t } from './i18n.js'
 
 /** The two kinds a room may be, as the Hub names them. */
@@ -56,7 +59,7 @@ export function unreadCount(messages, watermark) {
  * rather than trusted from the caller because a catch-up page and a live event can arrive out of
  * order, and a chat that shows messages out of order is worse than one that shows them late.
  */
-export function WorkgroupThread({ messages, selfUserId, empty }) {
+export function WorkgroupThread({ messages, selfUserId, empty, onReply }) {
   const ordered = useMemo(
     () => [...(messages ?? [])].sort((left, right) => (left.roomSeq ?? 0) - (right.roomSeq ?? 0)),
     [messages],
@@ -65,18 +68,35 @@ export function WorkgroupThread({ messages, selfUserId, empty }) {
     return h('div', { className: 'bt-wg-empty', 'data-wg-thread': 'empty' }, empty ?? t('No messages yet'))
   }
   return h('div', { className: 'bt-wg-thread', 'data-wg-thread': 'list' },
-    ordered.map(message => h('div', {
-      key: message.id ?? `${message.roomSeq}`,
-      className: `bt-wg-message${message.senderUserId === selfUserId ? ' bt-wg-message-own' : ''}`,
-      'data-wg-seq': String(message.roomSeq ?? ''),
-      // The sequence is exposed for the same reason it exists: a test (or a support engineer) can
-      // see exactly which messages a client holds, without parsing prose.
-    },
-    h('div', { className: 'bt-wg-message-who' }, message.senderDisplayName ?? message.senderUserId ?? ''),
-    h('div', { className: 'bt-wg-message-body' }, message.body ?? ''),
-    // A failed delivery is shown, not hidden: a client that quietly drops mentions leaves the
-    // employee believing a colleague was told.
-    message.failed ? h('div', { className: 'bt-wg-message-failed' }, t('Not delivered')) : null)))
+    ordered.map((message) => {
+      const quoted = replyParent(message, ordered)
+      return h('div', {
+        key: message.id ?? `${message.roomSeq}`,
+        className: `bt-wg-message${message.senderUserId === selfUserId ? ' bt-wg-message-own' : ''}`,
+        'data-wg-seq': String(message.roomSeq ?? ''),
+        // The sequence is exposed for the same reason it exists: a test (or a support engineer) can
+        // see exactly which messages a client holds, without parsing prose.
+      },
+      // The quoted parent is resolved from this reader's own copy of the room, so a reply whose
+      // parent was deleted still shows as a reply rather than as an unrelated message.
+      quoted === undefined ? null : h('div', { className: 'bt-wg-quote', 'data-wg-quote': quoted.id },
+        h('span', { className: 'bt-wg-quote-who' }, quoted.who === undefined ? t('An earlier message') : quoted.who),
+        quoted.body === undefined ? null : h('span', { className: 'bt-wg-quote-body' }, quoted.body)),
+      h('div', { className: 'bt-wg-message-who' }, message.senderDisplayName ?? message.senderUserId ?? ''),
+      h('div', { className: 'bt-wg-message-body' }, message.body ?? ''),
+      // A failed delivery is shown, not hidden: a client that quietly drops mentions leaves the
+      // employee believing a colleague was told.
+      message.failed ? h('div', { className: 'bt-wg-message-failed' }, t('Not delivered')) : null,
+      // Quoting is offered per message rather than as a composer mode, so the person points at what
+      // they are answering. Only a message the Hub gave an id to can be linked, and the button is
+      // therefore absent for the rest rather than present and ineffective.
+      onReply !== undefined && message.id !== undefined
+        ? h('button', {
+          type: 'button', className: 'bt-wg-reply', 'data-wg-reply': message.id,
+          'aria-label': t('Quote this message'), onClick: () => onReply(message),
+        }, t('Quote'))
+        : null)
+    }))
 }
 
 /**
@@ -85,10 +105,22 @@ export function WorkgroupThread({ messages, selfUserId, empty }) {
  * Humans first: a workgroup's point is that a colleague is on the other end, and putting Bots at
  * the top would bury them. Bots keep their owner's name attached, because a Bot acts for someone
  * and the list must not suggest otherwise.
+ *
+ * Only a human carries the presence dot. A Bot's own `state` is a different fact — whether it is
+ * running work right now — and marking a Bot as "offline" beside a colleague's dot would read as
+ * "this Bot's owner is away", which is not what either value means.
  */
 export function WorkgroupMembers({ members, bots, onOpenBot }) {
-  const humans = (members ?? []).map(member => h('div', { key: member.userId, className: 'bt-wg-member', 'data-wg-member': member.userId },
-    h('span', { className: 'bt-wg-member-name' }, memberSummary(member))))
+  const humans = (members ?? []).map(member => h('div', {
+    key: member.userId,
+    className: `bt-wg-member bt-wg-member-${presenceOf(member)}`,
+    'data-wg-member': member.userId,
+    // The state is exposed for the same reason the id is: a reader (or a test) can tell a
+    // connected colleague from an absent one without measuring a dot.
+    'data-wg-presence': presenceOf(member),
+  },
+  h('span', { className: 'bt-wg-member-dot', 'aria-hidden': 'true' }),
+  h('span', { className: 'bt-wg-member-name' }, memberSummary(member))))
   const machines = (bots ?? []).map(bot => h('div', {
     key: `${bot.ownerUserId}:${bot.botId}`,
     className: 'bt-wg-member bt-wg-member-bot',
@@ -126,6 +158,9 @@ export function WorkgroupTasks({ tasks, onDecision }) {
  * The settings view is the team's own `GroupSettingsForm`, which is what makes the workgroup's
  * management screen look and behave like a group's. Its actions are supplied by the caller and go
  * to the Hub; the component does not know the difference, which is the point of reusing it.
+ *
+ * `empty` replaces the thread's own placeholder, so a caller that could not read the room explains
+ * why in the place the messages would be instead of showing an empty conversation.
  */
 export function WorkgroupView({
   room,
@@ -134,7 +169,11 @@ export function WorkgroupView({
   messages,
   tasks,
   selfUserId,
+  // The signed-in user as the Hub describes them. Needed for the settings view, which is where a
+  // colleague looks up the id an invitation has to name.
+  identity,
   watermark,
+  empty,
   actions,
   run,
   onOpenBot,
@@ -145,19 +184,39 @@ export function WorkgroupView({
 }) {
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
+  const [reply, setReply] = useState(undefined)
   // The composer clears only after the Hub accepted the message: clearing on submit and then
   // failing loses what the employee typed.
   const send = async () => {
     if (sending || draft.trim() === '') return
     setSending(true)
-    const ok = await onSend?.(draft.trim())
+    const ok = await onSend?.(draft.trim(), reply)
     setSending(false)
-    if (ok !== false) setDraft('')
+    if (ok !== false) { setDraft(''); setReply(undefined) }
   }
-  useEffect(() => { setDraft('') }, [room?.id])
+  useEffect(() => { setDraft(''); setReply(undefined) }, [room?.id])
+  // A reply is only as good as the message it names, so a target that the room list no longer
+  // holds is dropped rather than sent as a link the reader cannot follow.
+  useEffect(() => {
+    if (reply === undefined) return
+    if (!(messages ?? []).some(message => message.id === reply.id)) setReply(undefined)
+  }, [messages, reply])
 
   if (settingsOpen) {
+    const rows = identityRows(identity)
     return h('div', { className: 'bt-wg bt-wg-settings', 'data-wg': room?.id },
+      // An invitation is sent by exact id and the Hub has no user search, so this is where a new
+      // colleague finds out what to tell the person who will invite them. Shown only when the Hub
+      // has answered for an identifier: a blank block would read as "you have no id".
+      rows.length === 0 ? null : h('div', { className: 'bt-wg-identity', 'data-wg-identity': 'self' },
+        h('div', { className: 'bt-wg-identity-note' }, t('Tell this to the colleague who will invite you.')),
+        rows.map(row => h('div', { key: row.key, className: 'bt-wg-identity-row', 'data-wg-identity-field': row.key },
+          h('span', { className: 'bt-wg-identity-label' }, t(row.label)),
+          h('code', { className: 'bt-wg-identity-value' }, row.value))),
+        h('button', {
+          type: 'button', className: 'bt-wg-identity-copy', 'data-wg-identity-copy': 'self',
+          onClick: () => { void navigator.clipboard?.writeText(identityText(identity)) },
+        }, t('Copy my ID'))),
       h(GroupSettingsForm, {
         room: { ...room, members: (members ?? []).map(member => member.userId) },
         roster: { byId: {}, bots: bots ?? [] },
@@ -173,10 +232,25 @@ export function WorkgroupView({
       room ? h(RoomAvatar, { room, roster: { byId: {}, bots: bots ?? [] }, size: 24 }) : null,
       h('span', { className: 'bt-wg-name' }, room?.name ?? ''),
       unread > 0 ? h('span', { className: 'bt-wg-unread', 'data-wg-unread': String(unread) }, String(unread)) : null,
-      h('button', { type: 'button', className: 'bt-wg-settings', 'data-wg-settings': 'open', onClick: () => run?.(null) }, t('Group settings'))),
-    h(WorkgroupThread, { messages, selfUserId, empty: t('No messages yet') }),
+      h('button', { type: 'button', className: 'bt-wg-gear', 'data-wg-settings': 'open', onClick: () => run?.(null) }, t('Group settings'))),
+    h(WorkgroupThread, {
+      messages,
+      selfUserId,
+      empty: empty ?? t('No messages yet'),
+      onReply: message => setReply(replyPreview(message)),
+    }),
     h(WorkgroupTasks, { tasks, onDecision }),
     h(WorkgroupMembers, { members, bots, onOpenBot }),
+    // What is being answered stays visible while typing, and can be dropped: a reply the sender
+    // forgot they had selected would attach to the wrong message.
+    reply === undefined ? null : h('div', { className: 'bt-wg-replying', 'data-wg-replying': reply.id },
+      h('div', { className: 'bt-wg-replying-text' },
+        h('div', { className: 'bt-wg-replying-who' }, t('Replying to {name}', { name: reply.who })),
+        h('div', { className: 'bt-wg-replying-body' }, reply.body)),
+      h('button', {
+        type: 'button', className: 'bt-wg-replying-drop', 'data-wg-reply-drop': 'clear',
+        'aria-label': t('Stop replying'), onClick: () => setReply(undefined),
+      }, t('Cancel'))),
     h('div', { className: 'bt-wg-compose' },
       h('textarea', {
         className: 'bt-wg-input',
@@ -219,30 +293,7 @@ export function newWorkgroupName(now = new Date()) {
   return `Workgroup ${stamp}`
 }
 
-/**
- * The session id a workgroup is opened under.
- *
- * A Hub room id is the session identity, exactly as a local room's id is. The prefix keeps the two
- * namespaces from colliding when a Hub is added to an install that already has local groups: two
- * different things must not be able to arrive at the same session id.
- *
- * @param {string} roomId
- */
-export function workgroupSessionId(roomId) {
-  return `wg:${roomId}`
-}
-
-/** The Hub room id inside a session id produced by `workgroupSessionId`, or `undefined`. */
-export function roomIdOfSession(sessionId) {
-  return typeof sessionId === 'string' && sessionId.startsWith('wg:') ? sessionId.slice(3) : undefined
-}
-
-/**
- * Whether a session id names a workgroup.
- *
- * Used by the surface code to decide which pane a session renders, so it is a pure function of the
- * id: a workgroup opened on one machine and re-opened after a restart is the same session.
- */
-export function isWorkgroupSession(sessionId) {
-  return roomIdOfSession(sessionId) !== undefined
-}
+// Re-exported rather than redefined: the Host creates the `wg:` Session and the browser half
+// recognizes it, so the one identity rule has to be the same string on both sides. Splitting it
+// would let a rename on one half leave the other unable to find the Session it just created.
+export { workgroupSessionId, roomIdOfSession, isWorkgroupSession } from '../shared/workgroup-session.js'

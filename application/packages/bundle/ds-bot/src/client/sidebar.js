@@ -11,6 +11,7 @@ import { Shimmer, workPhrase } from './cells.js'
 import { springEasing, SPRING_SHAPE } from './motion.js'
 import { hostText, t } from './i18n.js'
 import { showsDshRow } from './dsh-offer.js'
+import { isWorkgroupSession } from '../shared/workgroup-session.js'
 
 // -------------------------------------------------------------------------
 // Sidebar
@@ -551,6 +552,13 @@ function useLandOnMainBot(roster, useSessions, actions) {
     }
     // A DSH Agent Session, blank or not, is a real destination: it stays.
     if (id !== '' && (roster.roomsById[id] || (actions.isAgentSession?.(id) ?? roster.agentOf[id] !== undefined) || blank !== '1')) {
+      lastBot.current = null
+      return undefined
+    }
+    // A workgroup Session is a real destination too, and it is blank when first opened. The roster
+    // has no row for one — the Hub owns the room — so the timer below would otherwise pull the user
+    // back to the Main Bot moments after they entered their workgroup. The pane keys off this id.
+    if (isWorkgroupSession(id)) {
       lastBot.current = null
       return undefined
     }

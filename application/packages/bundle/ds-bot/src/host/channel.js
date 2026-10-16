@@ -84,7 +84,10 @@ export function install(rt) {
   })
   // What a host that only reads the team may still answer.
   // Updates change the dsh profile, not the team, so a reading host may run them too.
-  const READS = new Set(['state', 'models', 'efforts', 'earlier', 'room-progress', 'exchange', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'task-session-resolve', 'task-grant-check'])
+  // The `hub-*` entries listed here are the workgroup calls that only read from the Hub. The
+  // mutating ones (send, invite, create, role changes) stay out, so a host that does not own the
+  // local team also does not act on the user's behalf in a shared room.
+  const READS = new Set(['state', 'models', 'efforts', 'earlier', 'room-progress', 'exchange', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'task-session-resolve', 'task-grant-check', 'hub-view', 'hub-me', 'hub-devices', 'hub-messages', 'hub-head', 'hub-tasks', 'hub-members', 'hub-memory', 'hub-directory', 'hub-invitations', 'hub-open-room'])
 
   function setPrefs(body) {
     if (body.theme !== undefined) {
@@ -172,11 +175,15 @@ export function install(rt) {
             sessionId: binding.sessionId,
             botId: binding.botId,
             allowedTools: Array.isArray(body.allowedTools) ? body.allowedTools : [],
+            // Hosts the approval named. Omitted reads as none, which the guard treats as "this task
+            // opens no socket" — the same statement an empty list makes, and the safe direction for
+            // a caller that does not yet send the field.
+            allowedHosts: Array.isArray(body.allowedHosts) ? body.allowedHosts : [],
             workDir: typeof body.workDir === 'string' && body.workDir.length > 0 ? body.workDir : binding.workDir,
             expiresAt: typeof body.expiresAt === 'string' && body.expiresAt.length > 0 ? body.expiresAt : null,
             revocationVersion: Number.isSafeInteger(Number(body.revocationVersion)) ? Number(body.revocationVersion) : 0,
           })
-          return ok({ taskId: grant.taskId, allowedTools: grant.allowedTools, workDir: grant.workDir, expiresAt: grant.expiresAt, revocationVersion: grant.revocationVersion })
+          return ok({ taskId: grant.taskId, allowedTools: grant.allowedTools, allowedHosts: grant.allowedHosts, workDir: grant.workDir, expiresAt: grant.expiresAt, revocationVersion: grant.revocationVersion })
         }
         case 'task-grant-revoke': {
           await rt.load()
@@ -272,6 +279,34 @@ export function install(rt) {
         case 'folder-list':
           await rt.load()
           return ok(await rt.folderEndpoint(endpoint, body, signal))
+        // The fork's workgroup endpoints. They are routed as a whole prefix rather than listed
+        // one by one, and deliberately without `rt.load()`: a workgroup lives on the Hub, not in
+        // this machine's team state, so a Hub read must not depend on (or wait for) the local
+        // state file. Signing in has to work before there is any local team at all.
+        case 'hub-view':
+        case 'hub-sign-in':
+        case 'hub-sign-out':
+        case 'hub-resume':
+        case 'hub-open-room':
+        case 'hub-create-room':
+        case 'hub-invite':
+        case 'hub-invitations':
+        case 'hub-respond-invitation':
+        case 'hub-revoke-invitation':
+        case 'hub-members':
+        case 'hub-set-role':
+        case 'hub-leave-room':
+        case 'hub-kick':
+        case 'hub-send':
+        case 'hub-messages':
+        case 'hub-head':
+        case 'hub-directory':
+        case 'hub-tasks':
+        case 'hub-approve-task':
+        case 'hub-memory':
+        case 'hub-me':
+        case 'hub-devices':
+          return ok(await rt.hubEndpoint(endpoint, body, signal))
         case 'add-agent':
           await rt.load()
           return ok(await rt.addAgent())

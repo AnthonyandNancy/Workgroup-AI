@@ -1369,3 +1369,23 @@ describe('Windows tree termination', () => {
     expect(taskkillArgs(100, [])).toEqual([['/PID', '100', '/T', '/F']])
   })
 })
+
+describe('H3 third-party notices coverage', () => {
+  it('runs in the CI aggregates, so a stale notice file cannot land unnoticed', () => {
+    // The script existed and no aggregate ran it, which is the same as not having it: a gate nobody
+    // invokes cannot fail. The CI aggregates are the ones asserted, because that is where the check
+    // has to happen — `check-all` is the local convenience list and is composed separately.
+    for (const mode of ['ci-primary', 'ci-static'] as const) {
+      const ids = gatesForMode(mode).map(gate => gate.id)
+      expect(ids).toContain('third-party-notices')
+    }
+  })
+
+  it('runs the script that verifies the file, not a wrapper that regenerates it', () => {
+    // `--check` is the half that fails on drift. A gate wired to the generator would rewrite the
+    // file and always exit zero, which is the failure this case exists to prevent.
+    const gate = gatesForMode('ci-static').find(entry => entry.id === 'third-party-notices')
+    expect(gate).toBeDefined()
+    expect(gate?.displayCommand).toContain('verify-third-party-notices')
+  })
+})

@@ -375,6 +375,10 @@ function ciSharedStaticGates(): Gate[] {
     pnpmScript('package-dependencies', 'verify-package-dependencies', { label: 'package dependencies' }),
     pnpmScript('dsh-package-licenses', 'verify-dsh-package-licenses', { label: 'DSH package licenses' }),
     pnpmScript('package-meta', 'verify-package-meta', { label: 'package metadata' }),
+    // H3: the third-party notices check existed as a script but no aggregate ran it, so a changed
+    // dependency set could land with stale notices and nothing would say so. Placed with the other
+    // static package gates because it depends on the manifests those gates validate.
+    pnpmScript('third-party-notices', 'verify-third-party-notices', { label: 'third-party notices' }),
     pnpmScript('cordis-config', 'verify-cordis-config', { label: 'Cordis config' }),
     ...sharedHygieneGates(),
     pnpmScript('approval-policy', 'test:approval-policy', { label: 'Weighted approval policy' }),

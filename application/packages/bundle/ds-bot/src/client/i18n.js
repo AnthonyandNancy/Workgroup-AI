@@ -664,6 +664,38 @@ const ZH = {
   Approve: '批准',
   'A workgroup lives on the Hub and its members are real people. Messages are shared with them.':
     '工作群保存在 Hub 上，成员是真实的同事，消息会共享给他们。',
+  // A workgroup without a Hub is a room this client cannot read or post to at all, so the copy
+  // names what is missing and what would fix it instead of showing an empty room that reads like
+  // a workgroup nobody has written in yet.
+  'Workgroups need the Workgroup Hub': '工作群需要连接 Workgroup Hub',
+  'This machine is not connected to a Hub, so this workgroup cannot be shown or posted to. Ask your administrator to configure one.':
+    '本机未连接 Hub，因此无法显示或在此工作群中发言。请联系管理员完成配置。',
+  // Each blocked state names its own fix, so the copy must not be collapsed into one sentence:
+  // "reconnecting" and "never configured" send the reader to different people.
+  'Workgroup Hub is not connected': '未连接到 Workgroup Hub',
+  'This machine cannot reach the Hub right now, so this workgroup cannot be shown or posted to. It reconnects on its own; local chats and groups keep working.':
+    '本机当前无法访问 Hub，因此无法显示或在此工作群中发言。连接会自动恢复；本地聊天与普通群聊不受影响。',
+  'Workgroup Hub refused this device': 'Workgroup Hub 拒绝了此设备',
+  'The Hub no longer accepts this device’s sign-in, so this workgroup cannot be shown. Sign in again to reconnect it.':
+    'Hub 已不再接受此设备的登录状态，因此无法显示该工作群。请重新登录以恢复连接。',
+  'Not signed in to the Workgroup Hub': '尚未登录 Workgroup Hub',
+  'This machine is not signed in, so this workgroup cannot be shown or posted to. Sign in to your account to continue.':
+    '本机尚未登录，因此无法显示或在此工作群中发言。请登录账号后继续。',
+  // Quoting one message answers "which message", so the copy names the act rather than the UI.
+  Quote: '引用',
+  'Quote this message': '引用这条消息',
+  'Replying to {name}': '回复 {name}',
+  'Stop replying': '取消回复',
+  // The parent of a reply can be gone — the Hub keeps no foreign key from a reply to its parent —
+  // so the quote names what it can rather than rendering an empty header.
+  'An earlier message': '更早的消息',
+  // An invitation travels by exact id and the Hub has no user search, so these two values are how
+  // a colleague becomes reachable at all.
+  'Your user ID': '你的用户 ID',
+  'Your username': '你的用户名',
+  'Copy my ID': '复制我的 ID',
+  'Tell this to the colleague who will invite you.': '把它告诉要邀请你的同事。',
+  'Signed in as {name}': '已登录为 {name}',
   'Own chat': '单聊',
   Conversations: '对话',
   'Compaction and handoff': '压缩与交接',

@@ -21,6 +21,8 @@
 // What this file never does is report success it did not observe. Every path either completes
 // `waitForExit` or says which layer could not be confirmed.
 
+import { spawn } from 'node:child_process'
+
 /** How a cancellation ended. `CONFIRMED` is the only outcome that means the work has stopped. */
 export const CANCELLATION_OUTCOMES = Object.freeze({
   CONFIRMED: 'CONFIRMED',
@@ -86,6 +88,67 @@ export function createProcessRegistry() {
 }
 
 /**
+ * Terminate a process and, on Windows, every process it started.
+ *
+ * `handle.terminate()` reaches the process the provider spawned. On Windows that process's own
+ * children outlive it: a task that starts a shell which starts a compiler leaves the compiler
+ * running after the task is gone, so the machine keeps working for work nobody authorized any more.
+ * `taskkill /T` walks that tree, and `/F` is required because an interactive grandchild does not
+ * answer a polite request.
+ *
+ * The POSIX path deliberately does nothing here. There the provider's own signal reaches the
+ * process group and can *observe* the exit, so adding a second, unobservable mechanism would
+ * replace evidence with a guess. The result says so rather than reporting success.
+ *
+ * Every failure — a missing `taskkill`, a permission refusal, a non-zero exit — reports
+ * `confirmed: false` with the reason. Termination that cannot be confirmed is the one outcome that
+ * must never be reported as success, because the caller's next action depends on it.
+ *
+ * @param pid - the process id to terminate, and whose tree is walked on Windows.
+ * @param options - `{ platform?, run? }`; `run` executes one command and answers `{ code, stdout, stderr }`.
+ *   Both are injectable so the flag construction can be tested without killing a real process.
+ * @returns `{ confirmed: boolean, method: string, detail?: string }`.
+ */
+export async function terminateProcessTree(pid, { platform = process.platform, run } = {}) {
+  const numeric = Number(pid)
+  if (!Number.isSafeInteger(numeric) || numeric <= 0) {
+    return { confirmed: false, method: 'none', detail: `a process tree cannot be terminated from ${JSON.stringify(pid)}: that is not a pid` }
+  }
+  if (platform !== 'win32') {
+    return { confirmed: false, method: 'provider', detail: `no tree termination is implemented for ${platform}; the provider's own signal path owns this` }
+  }
+  if (typeof run !== 'function') {
+    return { confirmed: false, method: 'taskkill', detail: 'no way to run taskkill was provided' }
+  }
+  try {
+    const result = await run('taskkill', ['/PID', String(numeric), '/T', '/F'])
+    if (result?.code === 0) return { confirmed: true, method: 'taskkill' }
+    const why = String(result?.stderr ?? '').trim() || `taskkill exited with code ${String(result?.code)}`
+    return { confirmed: false, method: 'taskkill', detail: why }
+  } catch (error) {
+    return { confirmed: false, method: 'taskkill', detail: error.message }
+  }
+}
+
+/**
+ * Run one command and answer its exit code and output.
+ *
+ * Split out from `terminateProcessTree` so the flag construction is testable without spawning a
+ * real `taskkill`, and so the process this module starts is itself a tracked, awaited one.
+ */
+function runCommand(file, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args, { windowsHide: true })
+    let stdout = ''
+    let stderr = ''
+    child.stdout?.on('data', chunk => { stdout += String(chunk) })
+    child.stderr?.on('data', chunk => { stderr += String(chunk) })
+    child.once('error', reject)
+    child.once('close', code => resolve({ code, stdout, stderr }))
+  })
+}
+
+/**
  * Cancel one task: stop the turn, terminate its processes, wait for them, and revoke the binding.
  *
  * The order matters. The turn is cancelled **first** so it stops spawning; then the processes that
@@ -139,6 +202,14 @@ export async function cancelTask(input) {
       continue
     }
     try {
+      // On Windows the tree goes first, while the parent still exists to enumerate its children: a
+      // `taskkill /T` run after the parent died has no tree to walk, which is how a grandchild
+      // survives a cancellation that looks successful. On POSIX this does nothing and the
+      // provider's own signal, which can also observe the exit, remains the only mechanism.
+      if (process.platform === 'win32' && Number.isSafeInteger(Number(handle.pid))) {
+        const tree = await terminateProcessTree(handle.pid, { run: runCommand })
+        if (!tree.confirmed) report.unconfirmed.push({ id: entry.id, label: entry.label, detail: `the process tree could not be terminated: ${tree.detail}` })
+      }
       // `terminate()` is the seam's only termination verb and is idempotent, so calling it on a
       // process that already exited is a no-op rather than an error worth reporting.
       handle.terminate?.()

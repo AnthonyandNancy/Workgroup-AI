@@ -1077,6 +1077,8 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
 
+  integrations/workgroup: {}
+
   native/system:
     devDependencies:
       '@deepseek-ai/node-addon-system':
@@ -2385,6 +2387,10 @@ importers:
         version: link:../../../vendor/cordis
 
   packages/bundle/ds-bot:
+    dependencies:
+      '@deepseek-ai/dsh-workgroup':
+        specifier: workspace:*
+        version: link:../../../integrations/workgroup
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: workspace:~

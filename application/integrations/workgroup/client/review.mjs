@@ -172,15 +172,51 @@ export function reviewDecision(input) {
 }
 
 /**
+ * Whether publishing this text is allowed by the content policy.
+ *
+ * The recipient rules decide *who* may see a result and never look at what it says, so a summary the
+ * owner pasted a credential into travelled to the room because the recipient list was correct. This
+ * is the missing half: the content itself, checked before the payload is built.
+ *
+ * A missing policy allows everything. That is not a weaker rule but the same rule as before this
+ * check existed — a deployment that has configured no policy keeps publishing exactly what it
+ * published yesterday, and inventing a default would refuse work for a reason nobody set.
+ *
+ * @param text - the content about to be published.
+ * @param policy - `{ patterns }`, literal substrings to refuse.
+ * @throws {ProgressError} naming the matched pattern, never the whole policy: the author needs to
+ *   find the text, and reciting every rule teaches what the filter looks for.
+ */
+function assertContentPolicy(text, policy) {
+  if (typeof text !== 'string' || text === '') return
+  const patterns = policy?.patterns
+  if (!Array.isArray(patterns) || patterns.length === 0) return
+  for (const pattern of patterns) {
+    if (typeof pattern !== 'string' || pattern === '') continue
+    if (text.includes(pattern)) {
+      throw new ProgressError(
+        `This result contains something the content policy refuses to publish (matched ${JSON.stringify(pattern)}). Remove it, or keep the result instead of sharing it.`,
+        'CONTENT_REFUSED',
+      )
+    }
+  }
+}
+
+/**
  * What a share publishes, and what it does not.
  *
  * Separated from `reviewDecision` so the two questions stay distinct: *who* may see it (the
  * decision) and *what* they see (this). A share that carried the working directory would give the
  * recipient a map of the owner's machine.
  *
+ * The content policy runs here because this function is the single point where the published text
+ * is assembled: a caller that checked somewhere else could still build a payload without checking,
+ * and the refusal has to stop the publish rather than annotate it.
+ *
  * @param {{ task: object, artifact?: object, summary?: string }} input
+ * @param policy - `{ patterns }`; absent means the deployment configured none.
  */
-export function sharedPayload({ task, artifact, summary }) {
+export function sharedPayload({ task, artifact, summary }, policy) {
   const payload = {
     taskId: task?.id,
     roomId: task?.roomId,
@@ -193,6 +229,10 @@ export function sharedPayload({ task, artifact, summary }) {
     // A summary is written for the room by the owner; it is published because they wrote it to be.
     payload.summary = summary.trim()
   }
+  // Both texts are checked, and both are checked before the artifact reference is added, so a
+  // refused publication is refused whole rather than in part.
+  assertContentPolicy(payload.description, policy)
+  assertContentPolicy(payload.summary, policy)
   if (artifact !== undefined && artifact !== null) {
     // The artifact is referenced, never inlined: the bytes stay behind the artifact's own ACL, which
     // the Hub enforces per reader and per request.

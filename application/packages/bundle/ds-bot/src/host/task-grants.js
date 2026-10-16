@@ -25,12 +25,24 @@
 
 import { realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, resolve, sep } from 'node:path'
+import { egressTargetOf, judgeEgress } from '@deepseek-ai/dsh-workgroup/policy/egress'
 
 /** Tools every task may use whatever the approval said: they read or report, never act. */
 const ALWAYS_ALLOWED = new Set(['ask_user', 'present'])
 
 /** Tools whose arguments name a path, so the folder rule can be applied to them. */
 const PATH_ARGUMENTS = ['path', 'file_path', 'filePath', 'dir', 'directory', 'cwd', 'target', 'uri']
+
+/**
+ * Argument names that can carry a network destination.
+ *
+ * This list is the weak half of the egress rule and is written down as such: a tool whose argument
+ * is not named here is not inspected, so a new networking tool introduced by a profile would run
+ * without a host check. The strong half is `allowedHosts` on the grant, whose default is "no host
+ * approved" — so the failure mode of a missing argument name is "an approved tool was not
+ * narrowed", never "an unapproved host was reached through one".
+ */
+const NETWORK_ARGUMENTS = ['url', 'uri', 'endpoint', 'host']
 
 /**
  * The real path of `path`, resolving every link on the part of it that exists.
@@ -95,7 +107,7 @@ export function install(rt) {
    * `allowedTools` is the owner's own list; an approval that names none gets none, because
    * "no tools named" is not the same statement as "every tool allowed".
    */
-  async function mintGrant({ taskId, sessionId, botId, allowedTools, workDir, expiresAt, revocationVersion = 0 }) {
+  async function mintGrant({ taskId, sessionId, botId, allowedTools, allowedHosts, workDir, expiresAt, revocationVersion = 0 }) {
     if (typeof taskId !== 'string' || taskId.length === 0) throw new Error('ds-bot: a task grant needs a task id')
     if (!Array.isArray(allowedTools)) throw new Error('ds-bot: a task grant needs an allowedTools list')
     const grant = {
@@ -103,6 +115,9 @@ export function install(rt) {
       sessionId,
       botId: botId ?? null,
       allowedTools: [...new Set(allowedTools.map(String))],
+      // Absent means "no host approved", which is the same statement as an empty list: a task whose
+      // approval did not name a destination has no business opening a socket.
+      allowedHosts: [...new Set((allowedHosts ?? []).map(String))],
       workDir: workDir ?? null,
       expiresAt: expiresAt ?? null,
       // The version the Hub had when this was approved. A cancellation on the Hub raises it, and
@@ -167,7 +182,28 @@ export function install(rt) {
     if (!grant.allowedTools.includes(exec.name)) {
       return `The approval for this task does not include ${exec.name}. Allowed: ${grant.allowedTools.length === 0 ? '(none)' : grant.allowedTools.join(', ')}. Report what you need instead of working around this.`
     }
-    return checkPaths(exec, grant)
+    return checkPaths(exec, grant) ?? checkEgress(exec, grant)
+  }
+
+  /**
+   * Refuse a tool that reaches a host the approval did not name.
+   *
+   * The approval is over a job, not over "the network": a task approved to read one internal page
+   * must not be able to reach anywhere else the machine can, which is what an unchecked networking
+   * tool would grant. Anything this function cannot read a destination out of is allowed through to
+   * the tool-name check above — the rule narrows networking tools, it does not become a second gate
+   * on tools that open no socket.
+   *
+   * The decision itself lives in `@deepseek-ai/dsh-workgroup/policy/egress`, where the negative
+   * cases (lookalike domains, port widening, a missing host) are tested directly. This function is
+   * the enforcement point: it turns that verdict into the refusal the model reads.
+   */
+  function checkEgress(exec, grant) {
+    const target = egressTargetOf(exec, NETWORK_ARGUMENTS)
+    if (target === undefined) return undefined
+    const verdict = judgeEgress(target, { allowed: grant.allowedHosts ?? [] })
+    if (verdict.allowed) return undefined
+    return `The approval for this task does not cover ${target.host}${target.port === undefined ? '' : `:${String(target.port)}`}, so ${exec.name} will not run. Report what you need instead of working around this.`
   }
 
   /**
