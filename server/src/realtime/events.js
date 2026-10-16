@@ -28,6 +28,9 @@ export const EVENT_TYPES = Object.freeze([
   'task.approval_requested', 'task.approved', 'task.cancelled',
   'task.progress', 'task.shared',
   'group_memory.changed',
+  // A workgroup ended. Room-scoped and momentary like the rest, but it is the only event that
+  // describes a change to the room itself rather than to something inside it.
+  'room.dissolved',
 ])
 
 export class EventError extends Error {

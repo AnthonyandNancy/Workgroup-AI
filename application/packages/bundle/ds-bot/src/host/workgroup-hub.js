@@ -198,6 +198,10 @@ export function install(rt) {
         return await workgroup.setRole(body.roomId, body.userId, body.role)
       case 'hub-leave-room':
         return await workgroup.leave(body.roomId)
+      case 'hub-dissolve':
+        // A distinct endpoint from leaving or being removed: only the owner may call it, and the Hub
+        // is where that is enforced.
+        return await workgroup.dissolve(body.roomId)
       case 'hub-kick':
         return await workgroup.removeMember(body.roomId, body.userId)
       case 'hub-send':

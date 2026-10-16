@@ -79,6 +79,14 @@ export function sendMessage(db, options) {
   const key = assertClientMessageId(clientMessageId)
   const replyToMessageId = assertReplyTarget(db, { roomId, replyToMessageId: options.replyToMessageId })
 
+  // A dissolved workgroup refuses new messages. Checked here rather than in the route so every
+  // writer — including a future one — meets the same rule, and so the refusal is a fact about the
+  // room rather than an HTTP concern.
+  const roomRow = db.prepare('SELECT dissolved_at FROM rooms WHERE id = ?').get(roomId)
+  if (roomRow !== undefined && roomRow.dissolved_at !== null && roomRow.dissolved_at !== undefined) {
+    throw new MessageError('This workgroup has been dissolved, so no new messages can be added to it.', 'ROOM_DISSOLVED')
+  }
+
   // The membership check happens before the transaction so a non-member cannot take the
   // write lock for a room they cannot post to.
   requireMember(db, { roomId, userId: senderUserId })

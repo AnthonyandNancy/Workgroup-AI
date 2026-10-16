@@ -181,6 +181,10 @@ export function WorkgroupView({
   onSend,
   settingsOpen = false,
   onCloseSettings = () => {},
+  // The owner's dissolve action, passed in from the pane so this view keeps no Hub knowledge of its
+  // own. Absent means the settings form's end-the-group button does nothing, which is the right
+  // default for a viewer who is not the owner.
+  onDissolve,
 }) {
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -220,7 +224,14 @@ export function WorkgroupView({
       h(GroupSettingsForm, {
         room: { ...room, members: (members ?? []).map(member => member.userId) },
         roster: { byId: {}, bots: bots ?? [] },
-        actions,
+        // The form was written for local group chats, where "delete" is a local bookkeeping act. A
+        // workgroup is a Hub room the local store has never heard of, so the form's destructive action
+        // is redirected to the Hub's dissolve endpoint. Leaving and removing members are not redirected:
+        // only the owner ends the workgroup, and only dissolution ends it for everyone.
+        actions: {
+          ...actions,
+          deleteRoom: (roomId) => onDissolve?.(roomId),
+        },
         run: async (value) => { const done = await run?.(value); onCloseSettings(); return done },
         onDeleted: onCloseSettings,
       }))

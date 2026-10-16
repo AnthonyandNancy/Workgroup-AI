@@ -48,6 +48,10 @@ const ZH = {
   'Bot settings': 'Bot 设置',
   'Create group chat': '新建群聊',
   'Delete group': '删除群聊',
+  'Dissolve workgroup': '解散工作群',
+  'Dissolve {name}?': '解散 {name}？',
+  'Click again to dissolve. History and records are kept.': '再次点击即解散。历史与记录会保留。',
+  'Ends the workgroup for everyone. Its history is kept and stays readable.': '对所有人结束该工作群。历史保留，仍可查看。',
   "Open {name}'s chat": '打开 {name} 的对话',
   'New Bot': '新 Bot',
 

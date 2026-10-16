@@ -9,9 +9,9 @@
     "schemaVersion": { "const": "wg.v1" },
     "eventId": { "type": "string", "minLength": 8, "maxLength": 128 },
     "type": { "type": "string", "enum": [
-      "message.created", "invitation.created", "presence.changed", "task.approval_requested",
-      "task.approved", "task.cancelled", "task.progress", "task.shared",
-      "group_memory.changed", "ack", "error", "hello"
+      "message.created", "invitation.created", "member.changed", "presence.changed",
+      "task.approval_requested", "task.approved", "task.cancelled", "task.progress", "task.shared",
+      "group_memory.changed", "room.dissolved", "ack", "error", "hello"
     ] },
     "issuedAt": { "type": "string", "format": "date-time" },
     "roomId": { "type": "string" },
@@ -19,5 +19,5 @@
     "requestId": { "type": "string" },
     "payload": { "type": "object" }
   },
-  "description": "Envelope 草案。具体事件 payload 要按业务类型再定义子 schema，客户端需拒绝未识别字段组合。"
+  "description": "Envelope 草案。具体事件 payload 要按业务类型再定义子 schema，客户端需拒绝未识别字段组合。本 enum 与 server/src/realtime/events.js 的 EVENT_TYPES 必须互为超集：契约承诺而实现缺失的事件会在发布时抛错，实现发出而契约未列的事件则让客户端无法校验。"
 }

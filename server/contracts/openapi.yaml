@@ -151,6 +151,30 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Message'}
+  /rooms/{roomId}/dissolve:
+    parameters: [{name: roomId, in: path, required: true, schema: {type: string, format: uuid}}]
+    post:
+      summary: 解散工作群（仅群主；保留历史与审计，不物理删除）
+      description: >-
+        工作群进入终态：拒绝新消息与新任务、撤回待处理邀请、取消未完成任务，并向房内在线成员
+        广播 room.dissolved。房间本身与其消息、任务、成果、记忆**均保留**，因此解散后可继续只读。
+        普通成员退出与管理员移除成员是另外两个操作，不会解散工作群。
+      responses:
+        '200':
+          description: Dissolved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  room: {$ref: '#/components/schemas/Room'}
+                  cancelledTasks: {type: integer, minimum: 0}
+        '403':
+          description: 调用者不是群主
+        '404':
+          description: 房间不存在，或调用者不是成员（两者不可区分，避免探测）
+        '409':
+          description: 该工作群已被解散
   /rooms/{roomId}/tasks:
     parameters: [{name: roomId, in: path, required: true, schema: {type: string, format: uuid}}]
     post:

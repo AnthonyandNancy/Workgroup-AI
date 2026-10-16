@@ -17,8 +17,9 @@ import {
   createRoom, listRoomsFor, listMembers, findRoom, requireMember, requireRoomAdmin,
   createInvitation, acceptInvitation, declineInvitation, revokeInvitation, findInvitation,
   listInvitationsFor, removeMember, leaveRoom, setMemberRole, renameRoom,
-  publicRoom, publicMember, publicInvitation,
+  publicRoom, publicMember, publicInvitation, dissolveRoom,
 } from '../modules/rooms/store.js'
+import { cancelTask } from '../modules/tasks/store.js'
 import { makeEvent } from '../realtime/events.js'
 
 /** Map a domain refusal to a response, keeping the status semantics documented above. */
@@ -33,6 +34,7 @@ function roomFailure(reply, error) {
       case 'NO_SUCH_INVITATION':
         return reply.code(404).send({ error: { code: error.code, message: error.message } })
       case 'NOT_A_ROOM_ADMIN':
+      case 'ROOM_OWNER_REQUIRED':
       case 'NOT_ALLOWED':
       case 'ACCOUNT_DISABLED':
       case 'CANNOT_REMOVE_SELF':
@@ -42,6 +44,9 @@ function roomFailure(reply, error) {
       case 'CANNOT_CHANGE_OWNER':
       case 'OWNER_CANNOT_LEAVE':
       case 'INVITATION_NOT_PENDING':
+      // A second dissolution is a conflict, not a failure: the room is already in the state the
+      // caller asked for, and saying 200 would hide that somebody else got there first.
+      case 'ROOM_DISSOLVED':
         return reply.code(409).send({ error: { code: error.code, message: error.message } })
       case 'INVITATION_EXPIRED':
         return reply.code(410).send({ error: { code: error.code, message: error.message } })
@@ -177,6 +182,45 @@ export function makeRoomRoutes({ requireAuth }) {
           deviceId: request.auth.deviceId,
         })
         return reply.code(200).send(result)
+      } catch (error) {
+        return roomFailure(reply, error)
+      }
+    })
+
+    /**
+     * End a workgroup.
+     *
+     * Not a `DELETE`, and not spelled like one: the verb is `dissolve` because what happens is a state
+     * change that leaves the history readable, and a client author reading `DELETE /rooms/{id}` would
+     * reasonably expect the room to be gone afterwards.
+     *
+     * The announcement goes to the room's current members. A member whose socket is down learns the
+     * state from the next read, which is why every read carries `dissolvedAt`.
+     */
+    fastify.post('/api/v1/rooms/:roomId/dissolve', { preHandler: requireAuth }, async (request, reply) => {
+      try {
+        const result = dissolveRoom(db, {
+          roomId: request.params.roomId,
+          actorUserId: request.auth.user.id,
+          actorDeviceId: request.auth.deviceId,
+        })
+        // Announced rather than implied: an online member must not keep typing into a workgroup that
+        // has ended and find out only when their next send is refused.
+        fastify.hub.realtime.publishToRoom(request.params.roomId,
+          makeEvent('room.dissolved', { roomId: request.params.roomId, dissolvedBy: request.auth.user.id, pendingTasks: result.pendingTaskIds.length }, { roomId: request.params.roomId }))
+        // The tasks that were stopped are cancelled through their own transition, so the state
+        // machine and its events remain the single source of truth for what happened to them.
+        for (const taskId of result.pendingTaskIds) {
+          try {
+            cancelTask(db, { taskId, actorUserId: request.auth.user.id, actorDeviceId: request.auth.deviceId })
+          } catch (error) {
+            // A task that another request cancelled between the two steps is not an error: the goal
+            // is that nothing is left approvable, and it already is not.
+            request.log.warn({ err: error, taskId }, 'dissolve: task was already settled')
+          }
+        }
+        const room = findRoom(db, request.params.roomId)
+        return reply.code(200).send({ room: publicRoom(room), cancelledTasks: result.pendingTaskIds.length })
       } catch (error) {
         return roomFailure(reply, error)
       }

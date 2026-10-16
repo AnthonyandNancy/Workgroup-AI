@@ -153,6 +153,12 @@ export function createTask(db, {
   now = new Date(),
 }) {
   const text = assertDescription(description)
+  // A dissolved workgroup cannot take new work: nobody remains to watch it, and an approval taken
+  // here could still be minted into a grant on the owner's machine.
+  const roomRow = db.prepare('SELECT dissolved_at FROM rooms WHERE id = ?').get(roomId)
+  if (roomRow !== undefined && roomRow.dissolved_at !== null && roomRow.dissolved_at !== undefined) {
+    throw new TaskError('This workgroup has been dissolved, so it cannot take new tasks.', 'ROOM_DISSOLVED')
+  }
   requireMember(db, { roomId, userId: requesterUserId })
   // The owner must also be in the room: a task is room-scoped, and its progress is posted
   // where the requester can see it.

@@ -65,6 +65,14 @@ export function createWorkgroupClient({ client, bridge, onBotsFromDirectory } = 
     openRoom,
 
     /**
+     * End the workgroup. Owner only; the Hub enforces that, not this call.
+     *
+     * Distinct from `leave` and `removeMember` on purpose — the requirement separates them, and a
+     * client that offered one button for all three would let a member end a workgroup for everyone.
+     */
+    dissolve: roomId => client.request('POST', `/rooms/${roomId}/dissolve`, { body: {} }),
+
+    /**
      * Invite a person by their Hub user id.
      *
      * By id because the Hub has no directory of people to search: an employee knows their

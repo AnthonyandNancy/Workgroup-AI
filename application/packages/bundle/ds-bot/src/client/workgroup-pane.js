@@ -92,6 +92,18 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
     // settings make.
     view.current = async (value) => {
       if (value === null) { setSettingsOpen(true); return true }
+      if (value?.dissolve !== undefined) {
+        try {
+          await workgroups.dissolve(value.dissolve)
+          // Reloaded rather than patched in place: the Hub is the authority on the room's state, and the
+          // ended state must be what the pane shows from the next read on.
+          await load()
+          return true
+        } catch (error) {
+          setState(previous => ({ ...previous, message: error?.message ?? String(error) }))
+          return false
+        }
+      }
       const message = value?.send
       if (message === undefined) return true
       try {
@@ -150,6 +162,10 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
       onDecision,
       settingsOpen,
       onCloseSettings: () => setSettingsOpen(false),
+      // The owner's dissolve reaches the Hub through the same control the rest of this pane uses, so it
+      // shares one error path and one reload. It does not touch the local room store: a workgroup is a
+      // Hub room, and that store has never heard of it.
+      onDissolve: value => view.current({ dissolve: value }),
       empty: state.phase === 'failed' ? state.message : undefined,
     }))
 }

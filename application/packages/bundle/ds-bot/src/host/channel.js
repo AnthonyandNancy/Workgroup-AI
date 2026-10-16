@@ -296,6 +296,9 @@ export function install(rt) {
         case 'hub-members':
         case 'hub-set-role':
         case 'hub-leave-room':
+        // Ending the workgroup is its own endpoint, not an alias for removing a member: the Hub
+        // checks that the caller is the owner, which a route shared with `kick` could not express.
+        case 'hub-dissolve':
         case 'hub-kick':
         case 'hub-send':
         case 'hub-messages':

@@ -465,8 +465,91 @@ export function publicRoom(room) {
     kind: room.kind ?? DEFAULT_ROOM_KIND,
     ownerUserId: room.owner_user_id,
     createdAt: room.created_at,
+    // Omitted while the workgroup is live, so every existing caller sees exactly what it saw before
+    // this column existed. A client that wants the state asks for the field, and a client that does
+    // not know about it is not handed a null it has to interpret.
+    ...(room.dissolved_at === null || room.dissolved_at === undefined ? {} : { dissolvedAt: room.dissolved_at }),
     ...(room.member_role === undefined ? {} : { myRole: room.member_role }),
   }
+}
+
+/**
+ * Whether a workgroup has ended.
+ *
+ * A dissolved room is readable — that is how a member learns what happened — but it is not a place
+ * work happens any more. Callers check this rather than the timestamp, so the rule lives in one
+ * place.
+ *
+ * @returns `true` when the room ended.
+ */
+export function isDissolved(room) {
+  return room !== undefined && room !== null && room.dissolved_at !== null && room.dissolved_at !== undefined
+}
+
+/**
+ * End a workgroup: refuse further work, withdraw what was pending, keep everything that happened.
+ *
+ * Why a state and not a `DELETE`: `room_members` and `messages` cascade from `rooms`, so deleting the
+ * row would erase the conversation. The requirement is that history and audit survive, so the room is
+ * marked ended and every other row is left exactly as it was.
+ *
+ * The three side effects are each load-bearing:
+ *
+ *   * **Pending invitations are withdrawn.** An invitation into a workgroup that has ended would let
+ *     somebody join a collaboration that no longer exists; the invitee would see a room that refuses
+ *     everything they try.
+ *   * **Unfinished tasks are cancelled.** An approval that outlives its room could still be minted into
+ *     a grant, which would start real local work for a room nobody can watch any more. Terminal tasks
+ *     are left alone: their outcome is history, and rewriting it would be a lie.
+ *   * **The actor is recorded separately from the time**, so "who ended this" survives even if that
+ *     person later leaves.
+ *
+ * Only the owner may dissolve. An admin may remove a member; ending the room is the owner's alone,
+ * because it takes the room away from everyone in it.
+ *
+ * @throws {RoomError} `NOT_A_MEMBER` for a non-member (the route answers 404, so a guessed id is not
+ *   confirmed), `ROOM_OWNER_REQUIRED` for a member who is not the owner, `ROOM_DISSOLVED` when it has
+ *   already ended.
+ */
+export function dissolveRoom(db, { roomId, actorUserId, actorDeviceId, now = new Date() }) {
+  const membership = membershipOf(db, { roomId, userId: actorUserId })
+  if (membership === undefined) throw new RoomError('No such room, or you are not a member', 'NOT_A_MEMBER')
+  if (membership.role !== 'owner') {
+    throw new RoomError('Only the workgroup owner can dissolve it. Ask the owner, or leave the workgroup.', 'ROOM_OWNER_REQUIRED')
+  }
+  const stamp = nowIso(now)
+  const pendingTasks = []
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    // Re-read under the write lock: two dissolutions racing must produce one dissolution, and the
+    // loser has to be told rather than silently succeed.
+    const current = db.prepare('SELECT dissolved_at FROM rooms WHERE id = ?').get(roomId)
+    if (current === undefined) throw new RoomError('No such room, or you are not a member', 'NOT_A_MEMBER')
+    if (isDissolved(current)) throw new RoomError('This workgroup has already been dissolved', 'ROOM_DISSOLVED')
+
+    db.prepare('UPDATE rooms SET dissolved_at = ?, dissolved_by = ? WHERE id = ?').run(stamp, actorUserId, roomId)
+    db.prepare("UPDATE invitations SET status = 'revoked' WHERE room_id = ? AND status = 'pending'").run(roomId)
+
+    // Collected first so the caller can tell the room which tasks stopped, then cancelled with the
+    // store's own transition so the state machine and its events stay the single source of truth.
+    const unfinished = db.prepare(`SELECT id, state, version FROM tasks
+      WHERE room_id = ? AND state NOT IN ('COMPLETED','SHARED','REJECTED','EXPIRED','CANCELLED','FAILED')`).all(roomId)
+    for (const task of unfinished) pendingTasks.push(task)
+
+    audit(db, {
+      actorUserId, actorDeviceId, eventType: 'room.dissolved', objectType: 'room', objectId: roomId,
+      outcome: 'success', details: { pendingTasks: pendingTasks.length }, now,
+    })
+    db.exec('COMMIT')
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK')
+    } catch {
+      // The original failure is what matters; a failing rollback must not replace it.
+    }
+    throw error
+  }
+  return { roomId, dissolvedAt: stamp, pendingTaskIds: pendingTasks.map(task => task.id) }
 }
 
 export function publicMember(member) {

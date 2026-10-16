@@ -86,6 +86,10 @@ var ZH = {
   "Bot settings": "Bot 设置",
   "Create group chat": "新建群聊",
   "Delete group": "删除群聊",
+  "Dissolve workgroup": "解散工作群",
+  "Dissolve {name}?": "解散 {name}？",
+  "Click again to dissolve. History and records are kept.": "再次点击即解散。历史与记录会保留。",
+  "Ends the workgroup for everyone. Its history is kept and stays readable.": "对所有人结束该工作群。历史保留，仍可查看。",
   "Open {name}'s chat": "打开 {name} 的对话",
   "New Bot": "新 Bot",
   // Sidebar and account menu
@@ -9098,6 +9102,7 @@ function GroupSettingsForm({ room: room2, roster, actions, run, onDeleted }) {
   const admin = roster.byId[room2.admin];
   const mode = shownMode(room2, roster);
   const modeHint = ROOM_MODES.find(([id]) => id === mode)?.[2] ?? "";
+  const workgroup = room2.kind === "workgroup";
   const update = (patch) => run(actions.updateRoom(room2.id, patch));
   const openBot = (id) => {
     actions.closeSettings();
@@ -9218,14 +9223,26 @@ function GroupSettingsForm({ room: room2, roster, actions, run, onDeleted }) {
     (0, import_react24.createElement)(
       Card,
       { title: t("Manage") },
+      // A workgroup and a local group chat end differently, and the label is the only thing that tells
+      // the owner which is about to happen. A local group's history is archived locally; a workgroup's
+      // stays on the Hub and remains readable to its members, so calling both "Delete" would
+      // misdescribe one of them.
       (0, import_react24.createElement)(
         "button",
-        { type: "button", className: "bt-set-row bt-bs-row bt-bs-danger", "data-confirm": confirming || void 0, onClick: remove },
+        { type: "button", className: "bt-set-row bt-bs-row bt-bs-danger", "data-confirm": confirming || void 0, "data-group-action": workgroup ? "dissolve" : "delete", onClick: remove },
         (0, import_react24.createElement)(
           "span",
           { className: "bt-set-copy" },
-          (0, import_react24.createElement)("span", { className: "bt-bs-label" }, confirming ? t("Delete {name}?", { name: room2.name }) : t("Delete group")),
-          (0, import_react24.createElement)("span", { className: "bt-set-hint" }, confirming ? t("Click again to delete. Its history is archived.") : t("Removes the group chat. Its members stay on the team."))
+          (0, import_react24.createElement)(
+            "span",
+            { className: "bt-bs-label" },
+            workgroup ? confirming ? t("Dissolve {name}?", { name: room2.name }) : t("Dissolve workgroup") : confirming ? t("Delete {name}?", { name: room2.name }) : t("Delete group")
+          ),
+          (0, import_react24.createElement)(
+            "span",
+            { className: "bt-set-hint" },
+            workgroup ? confirming ? t("Click again to dissolve. History and records are kept.") : t("Ends the workgroup for everyone. Its history is kept and stays readable.") : confirming ? t("Click again to delete. Its history is archived.") : t("Removes the group chat. Its members stay on the team.")
+          )
         ),
         (0, import_react24.createElement)("span", { className: "bt-chevron" }, (0, import_react24.createElement)(ChevronRightIcon))
       )
@@ -13409,7 +13426,11 @@ function WorkgroupView({
   onSend,
   settingsOpen = false,
   onCloseSettings = () => {
-  }
+  },
+  // The owner's dissolve action, passed in from the pane so this view keeps no Hub knowledge of its
+  // own. Absent means the settings form's end-the-group button does nothing, which is the right
+  // default for a viewer who is not the owner.
+  onDissolve
 }) {
   const [draft, setDraft] = (0, import_react35.useState)("");
   const [sending, setSending] = (0, import_react35.useState)(false);
@@ -13462,7 +13483,14 @@ function WorkgroupView({
       (0, import_react35.createElement)(GroupSettingsForm, {
         room: { ...room2, members: (members ?? []).map((member) => member.userId) },
         roster: { byId: {}, bots: bots ?? [] },
-        actions,
+        // The form was written for local group chats, where "delete" is a local bookkeeping act. A
+        // workgroup is a Hub room the local store has never heard of, so the form's destructive action
+        // is redirected to the Hub's dissolve endpoint. Leaving and removing members are not redirected:
+        // only the owner ends the workgroup, and only dissolution ends it for everyone.
+        actions: {
+          ...actions,
+          deleteRoom: (roomId) => onDissolve?.(roomId)
+        },
         run: async (value) => {
           const done = await run?.(value);
           onCloseSettings();
@@ -13643,6 +13671,16 @@ function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
         setSettingsOpen(true);
         return true;
       }
+      if (value?.dissolve !== void 0) {
+        try {
+          await workgroups.dissolve(value.dissolve);
+          await load();
+          return true;
+        } catch (error) {
+          setState((previous) => ({ ...previous, message: error?.message ?? String(error) }));
+          return false;
+        }
+      }
       const message = value?.send;
       if (message === void 0) return true;
       try {
@@ -13697,6 +13735,10 @@ function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
       onDecision,
       settingsOpen,
       onCloseSettings: () => setSettingsOpen(false),
+      // The owner's dissolve reaches the Hub through the same control the rest of this pane uses, so it
+      // shares one error path and one reload. It does not touch the local room store: a workgroup is a
+      // Hub room, and that store has never heard of it.
+      onDissolve: (value) => view.current({ dissolve: value }),
       empty: state.phase === "failed" ? state.message : void 0
     })
   );
