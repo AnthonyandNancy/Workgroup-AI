@@ -222,8 +222,9 @@ integrations/workgroup/bot-adapter/cancellation.mjs  撤销与进程终止
 
 ## 确认无需修改
 
-- `tasks` 状态机与凭据铸造/消费（`store.js` 的迁移表、`grants.js`）——需求未要求改变语义
-- `policy/dispatch.mjs` 的目录校验顺序与拒绝语义——本次仅"网络出站限制"为新增能力
+- `tasks` 状态机（`store.js` 的迁移表）——需求未要求改变语义
+- **凭据铸造/消费已按 WP-E1 扩展为非对称签名链**（`server/src/modules/tasks/signing.js` 新增；`grants.js` 的 mint 增加签名，consume **先验签、后消耗**）。原设计记的是"不改"，实现按需求升级；`nonce` 语义保留（防重放），签名是其上的授权证明，二者互补
+- `policy/dispatch.mjs` 的目录校验顺序与拒绝语义——保留；本次新增的是**网络出站限制**（`policy/egress.mjs`，默认拒绝）。此外 `acceptDispatch` 增加了 `verifyGrant` 前置：位于本机可判定的检查之后、出示 nonce 之前，未签名或以伪签名出示一律拒绝且不消耗凭据
 - `bridge/index.mjs` 的 ACK/重连/补拉——已满足"不丢不重"
 - 上游 DSH 的会话、消息、编辑器组件——需求明确不得重做
 - `bot-adapter/flows.mjs` 的三 id 一致性校验——已满足
@@ -268,6 +269,10 @@ integrations/workgroup/bot-adapter/cancellation.mjs  撤销与进程终止
 | **A-03 状态回写** | 文档记"部分 PASS" | 改为"未可用" |
 
 ## 需要新增
+
+> 以下是**规划期快照**：记录的是写这份设计时"当前没有"的东西。其中多数已经实现（见各 WP 的
+> 交付记录与 `TASK_BOARD.md` 的终值），保留原文是为了让"当时缺什么"与"后来补了什么"都可追溯，
+> 不代表当下仍缺。凡实现与本节描述不同处，以代码与测试为准。
 
 | 需求项 | 新增内容 |
 |---|---|
@@ -653,7 +658,7 @@ Hub 离线             → 离线/受限状态（由 Bridge onStateChange 驱动
 | 创建房间 | rooms + room_members + audit（既有，扩展 kind） |
 | 接受邀请 | invitations + room_members + audit（既有） |
 | 记忆写入/淘汰 | group_memories + memory_revisions + audit（**扩展**） |
-| 凭据铸造/消费 | 既有（不改） |
+| 凭据铸造/消费 | grants + dispatch_grants + audit（**扩展**：Ed25519 签名，`GET /dispatch/keys` 发布公钥，轮换经 `HUB_GRANT_SIGNING_KEY_PUBLIC_PREVIOUS`） |
 
 ### 并发与幂等
 
@@ -687,7 +692,7 @@ Hub 离线             → 离线/受限状态（由 Bridge onStateChange 驱动
 | **历史数据（`rooms.kind`）** | 默认 `ordinary`；**不需要**数据回填脚本（新列带默认值）。注意：本次之前 Hub 上的房间都不是工作群，语义正确 |
 | **老接口** | `POST /rooms` 增加可选 `kind`——不传即 `ordinary`，**保持向后兼容** |
 | **老页面** | 本地群聊、DSH 会话、插件页、设置页**均不改动** |
-| **老状态** | 任务状态机、凭据、审计事件都不变 |
+| **老状态** | 任务状态机与审计事件不变；**凭据格式已变**（WP-E1 增加 `signature`/`keyId`，消费时必须携带），未配置签名私钥的 Hub **拒绝所有派发**——这是刻意的失败关闭，需写入交付文档与升级说明 |
 | **限速内存态** | 首次引入持久化后，重启不再清零——**行为变更需写入交付文档**（原 `DEPLOYMENT.md` 的"限速不跨重启"条目要更新） |
 | **`trustProxy`** | 默认仍为 `false`（安全默认）；仅显式配置后启用 → 未配置的部署**行为不变** |
 | **客户端 bundle** | `client.js` 由构建产生；`build-client.mjs --check` 必须保持通过（既有硬规则） |

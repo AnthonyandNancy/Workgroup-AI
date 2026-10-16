@@ -62,7 +62,7 @@
 | PASS | A-01（26/26 测试对真实 Hub；修复协议版本字段与设备指纹作用域两处缺陷） | `application/docs/workgroup-ai/A01_HUB_CLIENT.md` |
 | PASS | A-02（14/14 测试，真实 Hub + 真实 WebSocket；ACK/重连/离线补拉无重复） | `application/docs/workgroup-ai/A02_BRIDGE.md` |
 | PASS | A-04（原入口正下方新增工作群入口，原群聊流程未改） | `application/docs/workgroup-ai/A03_A04_WORKGROUP_UI.md` |
-| 部分 | A-03（工作群视图已实现并随 client.js 发布；组件级复用已验证，像素级一致与功能对照矩阵未做） | `application/docs/workgroup-ai/A03_A04_WORKGROUP_UI.md` |
+| 部分 PASS（M 级已实现，L 级待补） | A-03（工作群视图**已在 Bot 面板内真实挂载**：`shell.overlay` + `wg:<roomId>` 会话身份，先 `sessions.create` 再导航；组件级复用已验证。**像素级比对与真实浏览器 L 级对照未做**） | `application/docs/workgroup-ai/A03_A04_WORKGROUP_UI.md` |
 | PASS | A-05（32/32 测试对真实 Hub；邀请/成员管理/真人消息/目录可见性；修复三处服务端缺陷） | `application/docs/workgroup-ai/A05_MEMBERSHIP_MESSAGES.md` |
 | PASS | A-06（27/27 测试对真实 Hub；只有 B 能审批；三种派发方式；批准与铸造凭据分离；修正 3 处客户端缺陷） | `application/docs/workgroup-ai/A06_APPROVALS.md` |
 | PASS | A-07（21/21 测试；伪造/撤销/越界目录/符号链接逃逸全部拒绝；目录校验先于消耗凭据） | `application/docs/workgroup-ai/A07_DISPATCH.md` |
@@ -108,13 +108,13 @@ F-10 为 **S 级**（静态源码核对）。**尚无任何 N 级（双机）或
 | H-13 | server | 独立系统部署/容器部署、安全配置 | H-12 | 干净 Linux 仅 server/ 部署 | PASS（L 级真实 Linux：容器 + systemd 双路线跑通完整演练；未在独立 Linux 主机/k8s 上部署） |
 | A-01 | application | Hub 配置、登录/设备登记及协议握手 | H-03/F-08 | 可与单独 Hub 建连 | PASS（26/26 测试对真实 Hub 的真实 HTTP；修复 /auth/config 协议字段与 devices 指纹全局唯一两处服务端缺陷） |
 | A-02 | application | Bridge WSS ACK/重连/离线补拉 | A-01/H-06 | 真实双端无重复 | PASS（14/14 测试；真实 Hub 进程 + 真实 ws 客户端；重连后 roomSeq 序列恰为 [1..6] 无重复） |
-| A-03 | application | 复用原版群聊 UI，新建工作群视图 | F-08/H-04 | 视觉与原版一致、功能对照矩阵通过 | 部分 PASS（组件级复用已验证：挂载原版 GroupSettingsForm/RoomAvatar、不含本地群耦合；**像素级比对与功能对照矩阵未做**） |
+| A-03 | application | 复用原版群聊 UI，新建工作群视图 | F-08/H-04 | 视觉与原版一致、功能对照矩阵通过 | **部分 PASS（M 级已实现，L 级待补）**：挂载路径已实测（须先 `sessions.create({sessionId:'wg:<roomId>'})`，否则 `sessions.retain` 对未知 id 抛错；`installShell()` 仅在 Bot 面板选中时执行）；组件级复用已验证（原版 GroupSettingsForm/RoomAvatar、不含本地群耦合）。**像素级比对与真实浏览器功能对照矩阵未做**，故不写 PASS |
 | A-04 | application | 原创建群聊下方新增创建工作群聊 | A-03 | 普通群功能不受影响 | PASS（入口紧邻原入口、原入口未改；未配置 Hub 时菜单与上游完全一致） |
 | A-05 | application | ID 邀请/成员管理/真人消息/@Bot UI | A-02/A-04/H-07 | 两电脑群聊可见 | PASS（32/32 测试对真实 Hub，两个独立客户端与令牌；修复邀请缺房间名、私有 Bot 目录不可见、回复字段被静默忽略三处服务端缺陷。真实双机归 Q-01） |
 | A-06 | application | B 客户端本人审批卡和三种派发方式 | A-05/H-08 | 非 B 无审批权限 | PASS（27/27 测试对真实 Hub；请求人/第三方/房间管理员均无法审批；三种派发方式；批准不等于铸造凭据。审批卡的 React 组件待接入，归 A-03 剩余） |
-| A-07 | application | 本地 Bridge 严格验签并绑定已批准任务 | F-11/A-06 | 伪造或撤销不执行 | PASS（21/21 测试；伪造/撤销/非法目录全部拒绝且不消耗凭据；不回落默认目录。**凭据形式为 nonce 而非非对称签名**；子进程实际终止仍未实现，归 Q-02） |
+| A-07 | application | 本地 Bridge 严格验签并绑定已批准任务 | F-11/A-06 | 伪造或撤销不执行 | PASS（21/21 + 新增 2 例；伪造/撤销/非法目录全部拒绝且不消耗凭据；不回落默认目录。**WP-E1 已把凭据升级为非对称签名链**：`acceptDispatch` 增加 `verifyGrant` 前置，位于本机可判定检查之后、出示 nonce 之前，无验签器即拒绝。**执行侧子进程树终止（WP-E2）在 Windows 上无法确认**，已如实上报，归 Q-02） |
 | A-08 | application | 指定下属/管家分配/新建机器人三种流程 | A-07 | 真正原生 Bot 执行 | PASS（30/30 测试；三种流程汇聚同一 runner；三 id 绑定校验；**真实子进程被 SIGTERM 终止并确认**，补齐登记三次的缺口。真模型端到端归 Q-01/Q-03） |
-| A-09 | application | 任务进度脱敏、成果复核/受控分享 | A-08/H-11 | 不自动公开私有中间数据 | PASS（17/17 测试对真实 Hub 与真实 WebSocket；修复三处真实泄漏：房间可见选用 Bot/mode、事件载荷带 mode、详情把 scope 发给请求人。成果内容 DLP 未实现） |
+| A-09 | application | 任务进度脱敏、成果复核/受控分享 | A-08/H-11 | 不自动公开私有中间数据 | PASS（17/17 + 新增 3 例；修复三处真实泄漏：房间可见选用 Bot/mode、事件载荷带 mode、详情把 scope 发给请求人。**WP-E4 成果内容检查已实现**：`assertContentPolicy` 在加入 artifact 前检查说明与摘要，命中即阻止且提示原因） |
 | A-10 | application | 工作群长期记忆与授权 Bot 检索 | A-05/H-10 | 可追溯、可纠错 | PASS（16/16 测试对真实 Hub；可追溯/可纠错/可删除；Bot 以 owner 凭据检索并标注 retrievedAs。无语义检索、无容量上限） |
 | Q-01 | 两端 | E2E 双机真实协作：A @ B、本人审批、Bot 执行 | A-09 | 带完整日志的视频/截图 | **BLOCKED**（本机仅一台主机、局域网无第二台机器；已列出所需条件与单机等价证据清单） |
 | Q-02 | 两端 | 安全测试：跨群/越权/目录/工具/取消 | Q-01 | 全部负向用例通过 | PASS（23/23 负向用例对真实 Hub；L 级。缺 N 级双机，归 Q-01） |
