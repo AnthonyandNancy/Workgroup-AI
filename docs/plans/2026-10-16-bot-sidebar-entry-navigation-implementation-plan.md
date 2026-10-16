@@ -2,7 +2,7 @@
 
 > **For agentic workers:** 获得用户明确批准后，必须使用 `superpowers:executing-plans` 按步骤执行本计划；实现前使用 `superpowers:test-driven-development`，完成声明前使用 `superpowers:verification-before-completion`。每完成一个 Step，立即更新 Changed Files Tracking 与 Execution Log。
 >
-> **计划状态：等待用户审批。** 创建本文档不代表开始 Coding。
+> **计划状态：已执行；核心交付已完成，未通过的全套门禁与既有基线见第 7 节。**
 
 **Goal：** 完成 Workgroup AI 现有 Bot 一级入口的导航语义，使其稳定位于 Plugins 正下方，并正确区分原生 DSH Session 导航与 Bot 自有导航。
 
@@ -352,7 +352,7 @@ WORKGROUP_SNAPSHOT=refresh pnpm exec vitest run --config vitest.web.config.ts ap
 
 #### Current Behavior
 
-调查基线已通过 31 个相关 Vitest、10 个 DS Bot Node tests、`build-client --check` 与 `build-lib --check`；这些结果早于实现，不能作为完成证据。
+调查基线曾通过 31 个相关 Vitest、`build-client --check` 与 `build-lib --check`；这些结果早于实现，不能作为完成证据。执行期间新增的 `apps/web/tsconfig.json` 排除项、Desktop profile 断言与 build-lib 内存快照隔离已完成并重新验证。
 
 #### Change
 
@@ -386,10 +386,22 @@ WORKGROUP_SNAPSHOT=refresh pnpm exec vitest run --config vitest.web.config.ts ap
 | `application/packages/bundle/ds-bot/src/client/index.js` | Modify | 修正 Bot/native 导航和 surface mode 状态转换 |
 | `application/packages/bundle/ds-bot/README.md` | Modify | 记录当前一级 Bot 导航行为 |
 | `application/packages/bundle/ds-bot/client.js` | Modify | 从修改后 Client source 重新生成 |
-| `application/packages/bundle/ds-bot/lib/client.js` | Modify | 与根 Browser artifact 机械同步的运行时 export |
+| `application/packages/bundle/ds-bot/lib/client.js` | Modify (ignored artifact) | 与根 Browser artifact 机械同步的运行时 export |
+| `application/packages/bundle/ds-bot/package.json` | Modify | 发布 staged manifest 并保留既有 build-watch 改动 |
+| `application/packages/bundle/ds-bot/scripts/build-lib.mjs` | Modify | 生成相对 staged manifest，并支持内存 tree 比较以隔离并发测试 |
+| `application/packages/bundle/ds-bot/test/build-lib.test.js` | Modify | 覆盖 staged export、发布文件列表和无共享目录写入的幂等比较 |
+| `application/apps/web/tsconfig.json` | Modify | 排除使用 host scaffold 的真实 Web e2e，保持 client typecheck 边界 |
+| `application/apps/desktop/tests/profile-mcp.spec.ts` | Modify | 直接断言 Desktop profile 包含 DS Bot bundle |
 | `backups/2026-10-16-bot-sidebar-entry-navigation/application/packages/bundle/ds-bot/src/client/index.js` | Add | 核心 Client source 修改前备份 |
 | `backups/2026-10-16-bot-sidebar-entry-navigation/application/packages/bundle/ds-bot/client.js` | Add | 根 Browser artifact 修改前备份 |
 | `backups/2026-10-16-bot-sidebar-entry-navigation/application/packages/bundle/ds-bot/lib/client.js` | Add | 运行时 Browser export 修改前备份 |
+| `backups/2026-10-16-bot-sidebar-entry-navigation/application/apps/web/tsconfig.json` | Add | Web TypeScript 配置修改前备份 |
+| `backups/2026-10-16-bot-sidebar-entry-navigation/application/apps/web/tests/bot-entry.e2e.ts` | Add | Web e2e 首次扩展前备份 |
+| `backups/2026-10-16-bot-sidebar-entry-navigation/application/apps/web/tests/bot-entry.e2e.before-agent-switch.ts` | Add | Web e2e 加入 Agent 反向切换断言前备份 |
+| `backups/2026-10-16-bot-sidebar-entry-navigation/application/apps/web/tests/bot-entry.e2e.before-tripwire-move.ts` | Add | Web e2e 移动完整流程 tripwire 断言前备份 |
+| `backups/2026-10-16-bot-sidebar-entry-navigation/application/apps/desktop/tests/profile-mcp.spec.ts.before-bot-assertion.ts` | Add | Desktop profile 测试加入 DS Bot 断言前备份 |
+| `backups/2026-10-16-bot-sidebar-entry-navigation/application/packages/bundle/ds-bot/lib-package.json` | Add | staged manifest 单文件同步前备份 |
+| `backups/2026-10-16-bot-sidebar-entry-navigation/docs/plans/2026-10-16-bot-sidebar-entry-navigation-implementation-plan.md` | Add | 最终执行记录修改前备份 |
 
 ---
 
@@ -397,26 +409,26 @@ WORKGROUP_SNAPSHOT=refresh pnpm exec vitest run --config vitest.web.config.ts ap
 
 ### 主流程
 
-- [ ] Global panels 中 Plugins 后紧接 Bot。
-- [ ] 点击 Bot 后该行选中并出现 `Bot list` region。
-- [ ] Bot 自有 Session 导航后 Bot 行保持选中。
-- [ ] 点击 Plugins 或 Schedules 后撤销 Bot panel activation，并打开目标 panel。
+- [x] Global panels 中 Plugins 后紧接 Bot。
+- [x] 点击 Bot 后该行选中并出现 `Bot list` region。
+- [x] Bot 自有 Session 导航后 Bot 行保持选中。
+- [x] 点击 Plugins 或 Automation tasks（Schedules）后撤销 Bot panel activation，并打开目标 panel。
 
 ### 关联流程
 
-- [ ] native mode 下普通 DSH New Session/Workspace Session 不进入 Bot。
-- [ ] 保存为 classic Agent mode 时，点击 Bot 能切回 Bot。
-- [ ] “Switch to classic Agent mode” 返回 native Conversation，且无 Bot replacements 残留。
-- [ ] Bot-owned plain Agent Session 保留 Bot shell 与 native Conversation body 行为。
-- [ ] 展开和折叠 sidebar 均保留 Bot accessible name，布局稳定。
+- [x] native mode 下普通 DSH New Session 不进入 Bot。
+- [x] 保存为 classic Agent mode 时，点击 Bot 能切回 Bot。
+- [x] “Switch to classic Agent mode” 后 Bot panel/一级入口选中状态撤销，并显示 DS Bot return button；native Conversation body 未在本次 e2e 中单独断言。
+- [ ] Bot-owned plain Agent Session 保留 Bot shell 与 native Conversation body 行为未单独覆盖。
+- [ ] 展开和折叠 sidebar 均保留 Bot accessible name，布局稳定未单独覆盖。
 
 ### 边界情况
 
-- [ ] 未配置 Hub 时，本地 Bot 入口仍可用，测试不调用模型。
-- [ ] 中文与英文 locale 的 accessible name 都是 `Bot`。
-- [ ] plugin teardown 恢复 `layout.selectPanel`，无 console error，且不遗留 active Bot state。
-- [ ] Plugins/Schedules 的顺序与 analytics 行为不变。
-- [ ] 未向 Workgroup AI 代码或测试数据引入官方 DSH identity/data root。
+- [x] 未配置 Hub 时，本地 Bot 入口仍可用，focused e2e 不调用模型。
+- [ ] 中文与英文 locale 的 accessible name 都是 `Bot`；本次 focused e2e 只验证 en-US。
+- [ ] plugin teardown 恢复 `layout.selectPanel` 的独立断言未覆盖；focused e2e 验证了两组 context 的 console error/warning 为空。
+- [ ] Plugins/Schedules 的顺序已由 golden 验证；analytics 行为未单独断言。
+- [x] 未向 Workgroup AI 代码或测试数据引入官方 DSH identity/data root；identity 测试 16/16 通过。
 
 ### Test
 
@@ -435,7 +447,7 @@ pnpm run test:gui
 WORKGROUP_SNAPSHOT=replay pnpm run test:web
 ```
 
-- [ ] 每条命令退出码为 `0`；在 Execution Log 记录实际测试数与 skips。
+- [ ] 每条命令退出码为 `0`；聚焦与相关测试通过，但全套门禁存在既有/范围外失败，详见 Execution Log。
 
 ### Build
 
@@ -453,7 +465,7 @@ pnpm run build:artifacts
 pnpm run build:check
 ```
 
-- [ ] 生成 Client 文件为当前版本，两个 build 命令退出码均为 `0`。
+- [x] `build-client.mjs --check`、`build-lib.mjs --check`、`build:artifacts`（7/7）与 `build:check`（2/2）退出码为 `0`；根 `client.js` 与 `lib/client.js` 字节一致。
 
 ### Lint
 
@@ -464,7 +476,7 @@ pnpm --filter @deepseek-ai/dsh-bot run lint
 pnpm run lint
 ```
 
-- [ ] 两条 lint 命令退出码均为 `0`。
+- [ ] 包级 lint 0 errors/18 warnings，通过；根级 lint 非零（961 errors/730 warnings），诊断主要来自既有仓库范围，交付文件仅有既有 warning，未新增硬错误。
 
 ### Typecheck
 
@@ -474,14 +486,14 @@ pnpm run lint
 pnpm run typecheck
 ```
 
-- [ ] Typecheck 退出码为 `0`。
+- [x] `pnpm run typecheck` 5/5 gate 通过。
 
 ### 最终 Diff Review
 
-- [ ] `git diff --check` 无 whitespace error。
-- [ ] 除既有无关改动外，diff 只包含 Changed Files Tracking 中的文件。
-- [ ] `package.json`、`scripts/build-client.mjs`、`scripts/build-lib.mjs`、`test/build-lib.test.js` 保留用户既有改动，本任务未修改。
-- [ ] 未修改 server、protocol、schema、通用 layout 或通用 sidebar source。
+- [x] `git diff --check` 无 whitespace error。
+- [x] 本次新增/修改文件均已列入 Changed Files Tracking；工作区其他既有脏文件未触碰。
+- [x] `package.json`、`scripts/build-client.mjs` 与 `test/build-lib.test.js` 的既有改动保留；`scripts/build-lib.mjs` 与 `test/build-lib.test.js` 后续仅增加已批准的 staged manifest/快照隔离修正，详见 Plan Adjustment。
+- [x] 未修改 `server/`、protocol、schema、通用 layout 或通用 sidebar source。
 
 ---
 
@@ -508,4 +520,47 @@ pnpm run typecheck
 
 ## 7. Execution Log
 
-尚未完成任何 Implementation Step。Step 1 已进入 RED：新增 surface 回归测试通过，但真实 Web 组合在入口顺序断言处失败并定位到上述 staged manifest 问题。完成已批准调整并满足 Step 1 的预期 RED 边界后，再记录 `### Step 1 Completed`。
+### Step 1 Completed — 真实 Web 组合与 staged manifest 修复
+
+- 先运行新增 `surface.test.js` 回归，inactive-panel 断言通过；真实 Web 组合初次在 `Plugins → Bot` 入口断言失败，定位为 staged `lib/package.json` 将 `./client` 错误保留为 `./lib/client.js`，导致 ClientModules 解析到不存在的 `lib/lib/client.js`。
+- 按已批准 Plan Adjustment 修改 `package.json` 发布文件列表、`scripts/build-lib.mjs` staged manifest 生成及 `test/build-lib.test.js` export 回归；同步 `lib/package.json`（该运行时文件被 `.gitignore` 忽略并已备份）。
+- `node --import ./test/harness-resolve.mjs --test test/build-lib.test.js`：4/4 通过；覆盖无共享 `lib/` 写入的内存快照幂等比较、staged `./client.js` export 和发布文件列表。
+- Desktop profile 证据：`pnpm exec vitest run apps/desktop/tests/profile-mcp.spec.ts`：1/1 通过，profile layers 包含 `@deepseek-ai/dsh-bot`。
+
+### Step 2 Completed — Bot/native 导航状态
+
+- `src/client/index.js` 以 apply-owned `botViewChosen` 区分显式 Bot 导航、Bot-owned Session 和普通 native Conversation；`setSurface('agent')`/`setSurface('bot')` 同步 layout panel；inactive panel 不挂载 Bot groups。
+- `test/surface.test.js` 的相关单测通过；`client.js` 重新生成，`lib/client.js` 机械同步。
+
+### Step 3 Completed — 文档、golden 与真实组合
+
+- README Summary 记录 Workgroup AI 只注册一个紧随 Plugins 的一级 Bot，复用 native Conversation，并仅在 Bot 选中时启用 replacements。
+- `navigation.expected.md` 记录稳定 ARIA 顺序：Plugins、Bot、Automation tasks。
+- `bot-entry.e2e.ts` 使用真实 Loader/profile 组合，现覆盖：唯一 Bot 行与顺序、native New Session 隔离、Bot-owned Session 选中状态、Plugins/Automation tasks 退出、保存为 agent mode 后点击 Bot，以及切回 classic Agent mode 后撤销 Bot surface；两组 BrowserContext 均无 page error/warning。
+- `WORKGROUP_SNAPSHOT=replay pnpm exec vitest run --config vitest.web.config.ts apps/web/tests/bot-entry.e2e.ts`：1/1 通过（最近一次 67.8s；包含 Automation tasks、classic Agent 反向切换和完整流程 tripwire）。
+
+### Step 4 Completed — 最终验证与受限 review
+
+- Build：`pnpm run build:artifacts` 7/7 gates 通过；`pnpm run build:check` 2/2 通过；最新 `pnpm run typecheck` 5/5 通过；`build-client.mjs --check`、`build-lib.mjs --check` 与 `cmp -s client.js lib/client.js` 通过。
+- 相关 Vitest：sidebar/profile/identity/Desktop 4 files、32 tests 全部通过；identity 为 16/16，Desktop profile 为 1/1。
+- 包级 lint：0 errors、18 warnings，通过。根级 lint 实际非零（961 errors、730 warnings）；筛查交付文件未发现新增硬错误，非零诊断来自仓库既有范围，未修复无关文件。
+- DS Bot 串行全套：629 tests，628 pass、1 fail；唯一失败为未改动的 `test/dsh-update.test.js:124`，`current: null` 时读取最近 package manifest 版本（实际 `0.2.1-alpha.3`，期望 `null`）。并发运行曾因共享临时资源产生额外失败；build-lib 测试已改为内存快照比较，不再写共享 `lib/`。
+- `pnpm run test:gui`：完整运行后非零，7 个范围外用例超时/打包失败；直接相关 `packages/client/ui-sidebar/tests/panel-list.client.spec.tsx` 通过。`WORKGROUP_SNAPSHOT=replay pnpm run test:web`：build 9/9 通过，但全套 Web 在 10 分钟上限前有范围外 `document-preview.e2e.ts` 失败并超时；未修改这些无关用例。Focused Bot e2e 在隔离运行中通过；一次并行运行的 `page.goto` 超时归因于资源竞争，未作为功能通过证据。
+- `git diff --check` 通过；受限 review 覆盖 Client 状态机、staged manifest、build-lib 测试、Desktop profile、Web e2e、tsconfig 与生成 artifact。未发现 P0/P1/P2 功能缺陷；未运行真实 Desktop Electron 窗口/跨平台打包，Desktop 结论仅为 profile/composition 证据。
+
+### 未解决风险与边界
+
+- 全套 DS Bot、GUI、Web、根级 lint 仍有非零结果，不能宣称仓库全绿；这些失败均已定位到未改动的既有或范围外测试/规则。
+- 本次 focused e2e 仅验证 en-US；Bot-owned plain Agent Session、sidebar 折叠/展开、独立 teardown disposer 和 analytics 仍未单独断言。
+- 未执行真实 Desktop Electron runtime、Windows/macOS 安装包或跨电脑验证。
+
+### 2026-10-16：执行期间追加的最小修正（用户已继续批准）
+
+- `application/apps/web/tsconfig.json`：将 scaffold-based `bot-entry.e2e.ts` 加入排除清单；此前 `pnpm run typecheck` 因 host `Context` 依赖越出 client `rootDir` 失败，修改后 5/5 gate 通过。
+- `application/apps/desktop/tests/profile-mcp.spec.ts`：增加 Desktop profile 包含 `@deepseek-ai/dsh-bot` 的直接断言，1/1 通过。
+- `application/packages/bundle/ds-bot/scripts/build-lib.mjs` 与 `test/build-lib.test.js`：增加 `current` 内存快照参数；先观察到 stale 快照回归 RED（3 pass/1 fail），修正后 4/4 GREEN，消除并发 suite 写共享 `lib/` 的竞争。
+- `application/apps/web/tests/bot-entry.e2e.ts`：增加 Automation tasks 退出和 classic Agent mode 反向切换断言；最新 focused replay 1/1 通过。
+
+### Execution Result
+
+核心交付满足 Implementation Plan 的 Bot 一级入口导航目标，Web 真实组合与 Desktop profile composition 证据通过；仓库级全套验证仍受既有/范围外非零门禁阻塞，按上文记录，未将其伪报为通过。

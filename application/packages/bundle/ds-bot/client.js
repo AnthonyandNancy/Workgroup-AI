@@ -10610,6 +10610,7 @@ var FEEDBACK_CSS = `
 
 // src/client/about.js
 var import_react28 = require("react");
+var hmrWatcherProbe = "dsh-watcher-probe";
 var CHEER_MS = 1800;
 var starCount = (count) => new Intl.NumberFormat(dateLocale(), { notation: "compact", maximumFractionDigits: 1 }).format(count);
 function botHint(update) {

@@ -123,14 +123,15 @@ function writeLib(files) {
   }
 }
 
-/** Every file currently in `lib/`, as relative POSIX paths. */
-function committedFiles() {
+/** Every file currently in `lib/`, keyed by its relative POSIX path. */
+function currentLib() {
+  const current = new Map()
   try {
-    return filesUnder(LIB).map(file => `lib/${file}`)
+    for (const file of filesUnder(LIB)) current.set(file, readFileSync(join(LIB, file)))
   } catch {
     // A missing lib/ counts as stale, as it does for client.js.
-    return []
   }
+  return current
 }
 
 /**
@@ -138,19 +139,20 @@ function committedFiles() {
  * every browser-half rebuild, so an unchanged tree must leave the files — and their mtimes —
  * exactly as they are: rewriting them moves the timestamps `client-hmr` polls and reloads the
  * page for a build that changed nothing.
- * @param options - `write: false` compares against the rendered tree without touching disk.
+ * @param options - `write: false` compares without touching disk; `current` supplies the staged
+ * bytes to compare and otherwise defaults to the files under `lib/`.
  * @returns whether the tree differed, and how many files it holds.
  */
-export function stageLib({ write = true } = {}) {
+export function stageLib({ write = true, current = currentLib() } = {}) {
   const next = buildLib()
   // `--check` proves the same invariant a write does: a stale tree that omits a file a staged
   // module reads must fail here, not in a browser that only says "did not activate".
   assertManifestRelativeReads(next)
-  const committed = committedFiles().sort()
-  const expected = [...next.keys()].map(file => `lib/${file}`).sort()
+  const committed = [...current.keys()].sort()
+  const expected = [...next.keys()].sort()
   const same = committed.length === expected.length
     && committed.every((file, index) => file === expected[index])
-    && [...next].every(([target, contents]) => readFileSync(join(LIB, target)).equals(contents))
+    && [...next].every(([target, contents]) => current.get(target)?.equals(contents) === true)
   if (same) return { changed: false, files: next.size }
   if (!write) return { changed: true, files: next.size }
   writeLib(next)

@@ -8,7 +8,7 @@ import { expect, it } from 'vitest'
 import { composeEntries, loadProfileDirectory } from '@deepseek-ai/dsh-app-boot'
 import { createPluginProfile } from '../src/project-manager.ts'
 
-it('retains one shared resource consumer in the Desktop Web profile', () => {
+it('retains DS Bot and one shared resource consumer in the Desktop Web profile', () => {
   const home = mkdtempSync(join(tmpdir(), 'dsh-desktop-profile-mcp-'))
   try {
     const profileDir = join(home, 'profiles', 'desktop')
@@ -21,6 +21,7 @@ it('retains one shared resource consumer in the Desktop Web profile', () => {
       profile.patches,
     ], message => warnings.push(message))
 
+    expect(profile.layers.map(layer => layer.packageName)).toContain('@deepseek-ai/dsh-bot')
     expect(rows.filter(row => row.name === '@deepseek-ai/dsh-mcp-resources')).toEqual([
       { id: 'mcp-resources', name: '@deepseek-ai/dsh-mcp-resources' },
     ])

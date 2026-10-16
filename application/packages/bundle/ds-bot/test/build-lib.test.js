@@ -9,9 +9,16 @@ const ROOT_MANIFEST = new URL('../package.json', import.meta.url)
 // rewrite bytes: a rewrite would move the timestamps `client-hmr` polls and reload the page for a
 // build that changed nothing.
 test('stageLib is idempotent: an unchanged tree finds nothing to write', () => {
-  assert.equal(stageLib({ write: false }).changed, false, 'the staged tree must be current')
-  assert.equal(stageLib({ write: true }).changed, false, 'an unchanged tree must not be rewritten')
-  assert.equal(stageLib({ write: false }).changed, false, 'a second check must remain a no-op')
+  const current = buildLib()
+  assert.equal(stageLib({ write: false, current }).changed, false)
+  assert.equal(stageLib({ write: true, current }).changed, false, 'an unchanged tree must not be rewritten')
+  assert.equal(stageLib({ write: false, current }).changed, false, 'a second check must remain a no-op')
+})
+
+test('stageLib reports a stale in-memory tree without writing the shared lib directory', () => {
+  const current = buildLib()
+  current.delete('client.js')
+  assert.equal(stageLib({ write: false, current }).changed, true)
 })
 
 test('the staged manifest resolves the staged browser client', () => {
