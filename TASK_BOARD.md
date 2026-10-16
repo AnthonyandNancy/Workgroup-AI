@@ -96,7 +96,7 @@ F-10 为 **S 级**（静态源码核对）。**尚无任何 N 级（双机）或
 | F-13 | application | Bot 任务工具 guard/进程撤销与最小权限 PoC | F-11 | 越权拒绝、撤销停止 | PASS（L 级）。**三项欠账的后续处置**：①子进程终止——A-08 已用真实子进程补齐（原生 SIGTERM + 确认），**Windows 孙进程在 WP-E2 中实现但无法在本机确认**，已如实上报；②网络限制——**WP-E3 已实现**（`policy/egress.mjs`，默认拒绝、按 `host[:port]` 精确匹配）；③符号链接绕过——F-12 在设置目录时用 realpath，运行时的路径比较在 WP-E3/目录校验中按 `realpath` 语义处理（见 `policy/dispatch.mjs`） |
 | H-01 | server | Node/SQLite 初始化、配置校验、health endpoint | — | 仅 server/ 可独立运行 | PASS |
 | H-02 | server | DB migrations、事务和 SQLite WAL | H-01 | 初始化/重复迁移/备份恢复 | PASS（L 级，含真实恢复演练） |
-| H-03 | server | 用户注册/登录、设备身份、令牌吊销 | H-02 | 无授权无法访问 | PASS（L 级；速率限制未做，见记录） |
+| H-03 | server | 用户注册/登录、设备身份、令牌吊销 | H-02 | 无授权无法访问 | PASS（L 级）。**速率限制原欠账已由 WP-E5 关闭**：注册/登录/心跳/消息均有配额，持久化落库、跨重启不清零；语义差异（登录/注册「失败才计数」，心跳/消息「每次调用计数」）见 `ACCEPTANCE.md` |
 | H-04 | server | 创建群、成员邀请、接收/拒绝/踢出 | H-03 | 非成员不能读群数据 | PASS（L 级） |
 | H-05 | server | 消息写入、roomSeq、幂等去重、补拉 | H-04 | 重连不丢不重 | PASS（L 级） |
 | H-06 | server | WSS 鉴权、订阅、ACK、心跳和事件恢复 | H-05 | 离线/断链恢复 | PASS（L 级） |
