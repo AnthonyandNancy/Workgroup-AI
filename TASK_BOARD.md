@@ -45,7 +45,8 @@
 | PASS | F-10（无删除入口，无须改动，S 级） | `application/docs/workgroup-ai/F10_SESSION_LOG_AUDIT.md` |
 | PASS | F-11（11/11 测试 + 真实重启后身份保持；G3 核心门槛；记忆隔离未验证） | `application/docs/workgroup-ai/F11_TASK_SESSION_IDENTITY.md` |
 | PASS | F-12（18/18 测试；修复数据根默认值与根目录接受两处真实缺陷） | `application/docs/workgroup-ai/F12_PATH_VALIDATION.md` |
-| PASS | F-13（12/12 测试 + 真实运行时越权/撤销验证；子进程终止与网络限制未实现） | `application/docs/workgroup-ai/F13_TOOL_GUARD.md` |
+| PASS | F-13（12/12 测试 + 真实运行时越权/撤销验证） | `application/docs/workgroup-ai/F13_TOOL_GUARD.md` |
+| PASS | 网络出站限制（原 F-13 欠账，WP-E3 关闭） | `application/integrations/workgroup/policy/egress.mjs` + `tests/m4-egress.spec.ts`（10/10） |
 | PASS | H-01（12/12 测试 + server-only 独立启动） | `server/docs/H01_H02_DELIVERY.md` |
 | PASS | H-02（23/23 测试 + 真实备份恢复演练 + server-only 独立部署复验） | `server/docs/H01_H02_DELIVERY.md` |
 | PASS | H-03（36/36 测试 + 真实进程两端登录/轮换/吊销，含安全欠账记录） | `server/docs/H03_IDENTITY_DELIVERY.md` |
@@ -92,7 +93,7 @@ F-10 为 **S 级**（静态源码核对）。**尚无任何 N 级（双机）或
 | F-10 | application | 检查并移除 Session Log 删除动作（若实际存在） | F-03 | 保留归档和日志、删除入口缺失 | PASS（无须改动；UI 实测待 F-07/F-08 补） |
 | F-11 | application | Task Session 原生 Bot 身份持久化 PoC（G3） | F-06 | 刷新/重启不丢身份 | PASS（L 级；记忆隔离与真实模型请求待补） |
 | F-12 | application | 真实路径校验与无效 dir 拒绝 | F-11 | 不发生默认目录回退 | PASS（L 级；大小写不敏感比较未处理） |
-| F-13 | application | Bot 任务工具 guard/进程撤销与最小权限 PoC | F-11 | 越权拒绝、撤销停止 | PASS（L 级；子进程终止/网络限制/符号链接绕过未处理） |
+| F-13 | application | Bot 任务工具 guard/进程撤销与最小权限 PoC | F-11 | 越权拒绝、撤销停止 | PASS（L 级）。**三项欠账的后续处置**：①子进程终止——A-08 已用真实子进程补齐（原生 SIGTERM + 确认），**Windows 孙进程在 WP-E2 中实现但无法在本机确认**，已如实上报；②网络限制——**WP-E3 已实现**（`policy/egress.mjs`，默认拒绝、按 `host[:port]` 精确匹配）；③符号链接绕过——F-12 在设置目录时用 realpath，运行时的路径比较在 WP-E3/目录校验中按 `realpath` 语义处理（见 `policy/dispatch.mjs`） |
 | H-01 | server | Node/SQLite 初始化、配置校验、health endpoint | — | 仅 server/ 可独立运行 | PASS |
 | H-02 | server | DB migrations、事务和 SQLite WAL | H-01 | 初始化/重复迁移/备份恢复 | PASS（L 级，含真实恢复演练） |
 | H-03 | server | 用户注册/登录、设备身份、令牌吊销 | H-02 | 无授权无法访问 | PASS（L 级；速率限制未做，见记录） |
