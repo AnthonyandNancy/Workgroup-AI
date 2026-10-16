@@ -15,6 +15,7 @@ import {
   MessageError, sendMessage, readMessages, latestSeq, publicMessage,
 } from '../modules/messages/store.js'
 import { RoomError } from '../modules/rooms/store.js'
+import { messageKeys } from '../security/ratelimit-store.js'
 
 function messageFailure(reply, error) {
   if (error instanceof RoomError) {
@@ -38,6 +39,19 @@ export function makeMessageRoutes({ requireAuth }) {
 
     fastify.post('/api/v1/rooms/:roomId/messages', { preHandler: requireAuth }, async (request, reply) => {
       const body = request.body ?? {}
+      // Every send is counted, not only failures: the load here is the write itself, which allocates
+      // a room sequence number inside a transaction and holds that room's single writer while it
+      // runs. A rule counting only failures would count nothing, because a rejected body never
+      // reaches the store and a message send has no other failure path.
+      const keys = messageKeys({ roomId: request.params.roomId, source: request.ip })
+      for (const key of keys) {
+        const verdict = fastify.hub.messageLimiter.check(key)
+        if (!verdict.allowed) {
+          reply.header('retry-after', String(verdict.retryAfterSeconds))
+          return reply.code(429).send({ error: { code: 'RATE_LIMITED', message: 'Too many messages from this source.', retryAfterSeconds: verdict.retryAfterSeconds } })
+        }
+      }
+      for (const key of keys) fastify.hub.messageLimiter.recordFailure(key)
       try {
         const result = sendMessage(db, {
           roomId: request.params.roomId,

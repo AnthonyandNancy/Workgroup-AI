@@ -60,7 +60,17 @@ function roomFailure(reply, error) {
  */
 export function makeRoomRoutes({ requireAuth }) {
   return async function roomRoutes(fastify) {
-    const { db } = fastify.hub
+    const { db, realtime } = fastify.hub
+
+    /**
+     * Members with their momentary connection state.
+     *
+     * `online` is computed per read from the live socket table rather than stored, because a stored
+     * flag would survive a restart and keep claiming somebody is reachable when no socket exists.
+     * This runs only after `requireMember` has passed, so presence is never an anonymous read.
+     */
+    const membersWithPresence = roomId => listMembers(db, roomId)
+      .map(member => publicMember({ ...member, online: realtime.isUserOnline(member.user_id) }))
 
     // ---- rooms ----
 
@@ -73,6 +83,7 @@ export function makeRoomRoutes({ requireAuth }) {
       try {
         const room = createRoom(db, {
           name: body.name,
+          kind: body.kind,
           ownerUserId: request.auth.user.id,
           ownerDeviceId: request.auth.deviceId,
         })
@@ -87,7 +98,7 @@ export function makeRoomRoutes({ requireAuth }) {
         const room = requireMember(db, { roomId: request.params.roomId, userId: request.auth.user.id })
         return reply.code(200).send({
           room: publicRoom({ ...findRoom(db, request.params.roomId), member_role: room.role }),
-          members: listMembers(db, request.params.roomId).map(publicMember),
+          members: membersWithPresence(request.params.roomId),
         })
       } catch (error) {
         return roomFailure(reply, error)
@@ -113,7 +124,7 @@ export function makeRoomRoutes({ requireAuth }) {
     fastify.get('/api/v1/rooms/:roomId/members', { preHandler: requireAuth }, async (request, reply) => {
       try {
         requireMember(db, { roomId: request.params.roomId, userId: request.auth.user.id })
-        return reply.code(200).send({ members: listMembers(db, request.params.roomId).map(publicMember) })
+        return reply.code(200).send({ members: membersWithPresence(request.params.roomId) })
       } catch (error) {
         return roomFailure(reply, error)
       }

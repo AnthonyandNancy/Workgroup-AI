@@ -113,13 +113,66 @@ export function mayRead(row, viewerUserId, now = new Date()) {
 // ---------------------------------------------------------------- writes
 
 /**
+ * Evict the oldest entries until the room is back inside its ceiling.
+ *
+ * Called inside the caller's transaction, before the new entry is inserted, so the ceiling is a
+ * property of the committed state rather than something two concurrent writers could each satisfy
+ * on their own.
+ *
+ * Eviction reuses the deletion semantics this module already has, and for the same reason: the
+ * revision trail and the audit row are what make a decision checkable later, so an eviction that
+ * removed the row would remove the evidence. The body is cleared, the scope narrowed, `deleted_at`
+ * stamped — and an operator reading the trail can tell `memory.evicted` (a ceiling did it) from
+ * `memory.deleted` (the author changed their mind) or `memory.deleted_by_admin` (an admin removed
+ * it), which are three different facts about the same disappearance.
+ *
+ * `maxPerRoom` of `0` (or absent) means "no ceiling", which is what keeps an upgraded Hub from
+ * evicting memory it already holds.
+ *
+ * @returns {number} how many entries were evicted
+ */
+function evictToCeiling(db, { roomId, maxPerRoom, now }) {
+  if (!Number.isSafeInteger(maxPerRoom) || maxPerRoom < 1) return 0
+  // Room for the entry about to be inserted, so the committed count never exceeds the ceiling.
+  const live = db.prepare(`SELECT COUNT(*) AS n FROM group_memories
+    WHERE room_id = ? AND deleted_at IS NULL`).get(roomId).n
+  const overflow = live - maxPerRoom + 1
+  if (overflow <= 0) return 0
+
+  // Oldest first, ties broken by insertion order. `updated_at` moves on edit, so a frequently
+  // corrected entry is not the first to go: eviction is about age of last relevance, not creation.
+  const victims = db.prepare(`SELECT id, author_user_id, room_id FROM group_memories
+    WHERE room_id = ? AND deleted_at IS NULL
+    ORDER BY updated_at ASC, rowid ASC LIMIT ?`).all(roomId, overflow)
+  const stamp = nowIso(now)
+  for (const victim of victims) {
+    // The previous body goes to the revision trail, so the eviction leaves the same kind of trace
+    // an edit does rather than silently blanking the entry.
+    db.prepare(`INSERT INTO memory_revisions (id, memory_id, revision, editor_user_id, previous_body, new_body, changed_at)
+      SELECT ?, id, revision + 1, author_user_id, body, NULL, ? FROM group_memories WHERE id = ?`)
+      .run(randomUUID(), stamp, victim.id)
+    db.prepare(`UPDATE group_memories SET body = '', acl_json = ?, deleted_at = ?, updated_at = ? WHERE id = ?`)
+      .run(JSON.stringify({ scope: 'author', deleted: true, evicted: true }), stamp, stamp, victim.id)
+    audit(db, {
+      actorUserId: null, actorDeviceId: null, eventType: 'memory.evicted', objectId: victim.id,
+      outcome: 'success', details: { roomId: victim.room_id, reason: 'quota', limit: maxPerRoom }, now,
+    })
+  }
+  return victims.length
+}
+
+/**
  * Remember something in a room.
  *
  * `sourceMessageId`, when given, must name a message in **this** room: a memory that cites a
  * message from another room would let a member quote across a boundary they cannot read.
+ *
+ * `maxPerRoom` is the room's ceiling. It is passed in rather than read from configuration here so
+ * this module keeps owning the rule while the route keeps owning the policy — and so a test can
+ * drive the rule without a config object.
  */
 export function createMemory(db, {
-  roomId, authorUserId, authorDeviceId, body, sourceMessageId, scope = 'room', expiresAt = null, now = new Date(),
+  roomId, authorUserId, authorDeviceId, body, sourceMessageId, scope = 'room', expiresAt = null, maxPerRoom = 0, now = new Date(),
 }) {
   requireMember(db, { roomId, userId: authorUserId })
   const text = assertBody(body)
@@ -140,6 +193,7 @@ export function createMemory(db, {
   const stamp = nowIso(now)
   db.exec('BEGIN IMMEDIATE')
   try {
+    evictToCeiling(db, { roomId, maxPerRoom, now })
     db.prepare(`INSERT INTO group_memories
       (id, room_id, author_user_id, source_message_id, body, acl_json, revision, expires_at, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`)

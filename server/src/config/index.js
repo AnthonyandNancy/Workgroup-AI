@@ -38,6 +38,33 @@ function readInteger(env, name, problems, { min, max }) {
   return value
 }
 
+/**
+ * The proxies whose forwarding headers the Hub may trust, or `undefined` to trust none.
+ *
+ * Each entry is either an IP/CIDR (`10.0.0.0/8`, `192.168.1.5`, `::1`) or a positive hop count.
+ * A malformed entry refuses to start rather than being dropped: an operator who wrote a proxy down
+ * and had it silently ignored would get per-source throttling that keys on the proxy's address,
+ * which is the failure the setting exists to prevent. The default — no setting at all — keeps the
+ * socket address, exactly as every earlier release did.
+ */
+function parseTrustedProxies(raw, problems) {
+  if (raw === undefined) return undefined
+  const entries = raw.split(',').map(part => part.trim()).filter(part => part !== '')
+  if (entries.length === 0) {
+    problems.push('HUB_TRUSTED_PROXIES must name at least one address, CIDR, or hop count')
+    return undefined
+  }
+  for (const entry of entries) {
+    const isHopCount = /^[1-9]\d*$/.test(entry)
+    const isAddress = /^[0-9a-fA-F.:]+(\/\d{1,3})?$/.test(entry)
+    if (!isHopCount && !isAddress) {
+      problems.push(`HUB_TRUSTED_PROXIES entry ${JSON.stringify(entry)} is neither an address, a CIDR, nor a positive hop count`)
+      return undefined
+    }
+  }
+  return entries
+}
+
 // `readInteger` reports the full accepted range so an operator sees the real bound
 // (including that HUB_PORT accepts 0) instead of a number that looks like a typo fix.
 /**
@@ -223,6 +250,20 @@ export function loadConfig(env = process.env, options = {}) {
   const loginMaxAttempts = readInteger(env, 'HUB_LOGIN_MAX_ATTEMPTS', problems, { min: 1, max: 1000 }) ?? 10
   const loginWindowSeconds = readInteger(env, 'HUB_LOGIN_WINDOW_SECONDS', problems, { min: 10, max: 86400 }) ?? 300
   const loginLockoutSeconds = readInteger(env, 'HUB_LOGIN_LOCKOUT_SECONDS', problems, { min: 0, max: 86400 }) ?? 300
+  // The write endpoints that carried no ceiling before. Left undefined when unset so the Hub can
+  // derive them from the login budget, which keeps one env var in charge of "how strict is this
+  // deployment" while still letting a site tune them apart.
+  const heartbeatMaxAttempts = readInteger(env, 'HUB_HEARTBEAT_MAX_ATTEMPTS', problems, { min: 1, max: 100000 })
+  const messageMaxAttempts = readInteger(env, 'HUB_MESSAGE_MAX_ATTEMPTS', problems, { min: 1, max: 100000 })
+
+  // Trusted reverse proxies. A Hub behind one sees the proxy's address as every request's source,
+  // which collapses "per source" throttling into one shared budget and makes the source an
+  // attacker-chosen value if the forwarding header is trusted blindly. So the default is the safe
+  // one — trust nothing, use the socket address — and an operator who runs a reverse proxy names
+  // it explicitly. The value is accepted as a list of addresses/CIDRs, or a hop count, which is
+  // the shape Fastify's own option takes.
+  const trustedProxies = parseTrustedProxies(readString(env, 'HUB_TRUSTED_PROXIES'), problems)
+
   // Socket ceilings. `0` disables the cap, which is the right choice for a self-hosted Hub with
   // a handful of users and an operator who would rather not discover a wrong number in an
   // outage; the default is generous but finite.
@@ -259,6 +300,12 @@ export function loadConfig(env = process.env, options = {}) {
     // message limit already accepted, so the two limits must not contradict each other.
     problems.push('HUB_MAX_UPLOAD_BYTES must be greater than or equal to HUB_MAX_MESSAGE_BYTES')
   }
+
+  // Group memory is bounded per room, and `0` means "keep every entry" — the default, because an
+  // existing Hub must not start evicting what it already stored merely by being upgraded. An
+  // operator who wants a ceiling sets one, and eviction is oldest-first and soft: the entry stops
+  // being readable while its revision trail and audit row survive.
+  const maxMemoriesPerRoom = readInteger(env, 'HUB_MAX_MEMORIES_PER_ROOM', problems, { min: 0, max: 1_000_000 }) ?? 0
 
   // Retention is configuration because it is a policy decision, not a technical one: how long a
   // company keeps its audit trail and its backups depends on what it must be able to prove.
@@ -318,11 +365,16 @@ export function loadConfig(env = process.env, options = {}) {
     }),
     tokens: Object.freeze({ accessTokenTtlSeconds, refreshTokenTtlSeconds, deviceKeyTtlSeconds }),
     retention: Object.freeze({ auditRetentionDays, backupRetentionCount }),
-    limits: Object.freeze({ maxMessageBytes, maxUploadBytes }),
+    limits: Object.freeze({ maxMessageBytes, maxUploadBytes, maxMemoriesPerRoom }),
     security: Object.freeze({
       loginMaxAttempts,
       loginWindowSeconds,
       loginLockoutSeconds,
+      // Absent means "derive from loginMaxAttempts", which the server does: `undefined` here is a
+      // real state rather than a zero, and a zero ceiling would refuse everything.
+      ...(heartbeatMaxAttempts === undefined ? {} : { heartbeatMaxAttempts }),
+      ...(messageMaxAttempts === undefined ? {} : { messageMaxAttempts }),
+      trustedProxies,
       maxConnectionsPerUser,
       maxConnectionsTotal,
       /** How many keys the keyring holds, never which they are. */

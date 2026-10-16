@@ -30,6 +30,18 @@ export const ROOM_ROLES = ['owner', 'admin', 'member']
 /** Roles an invitation may grant. Ownership is not transferable by invitation. */
 export const INVITABLE_ROLES = ['admin', 'member']
 
+/**
+ * The kinds a room may be.
+ *
+ * `ordinary` is the default and the meaning every pre-existing room keeps; `workgroup` is a Hub
+ * room whose members are real people on other machines and whose Bot work needs an approval.
+ * The Hub owns this fact: a client asks for a kind at creation and then reads it back, because a
+ * client that guessed would draw workgroup affordances over an ordinary room the moment a name
+ * collided.
+ */
+export const ROOM_KINDS = ['ordinary', 'workgroup']
+export const DEFAULT_ROOM_KIND = 'ordinary'
+
 function nowIso(now) {
   return now.toISOString()
 }
@@ -42,6 +54,22 @@ export function assertRoomName(name) {
   const value = String(name ?? '').trim()
   if (value.length < 1 || value.length > ROOM_NAME_MAX) {
     throw new RoomError(`A room name must be 1-${ROOM_NAME_MAX} characters`, 'INVALID_ROOM_NAME')
+  }
+  return value
+}
+
+/**
+ * The kind a room is being created as.
+ *
+ * An unrecognised kind is refused rather than quietly treated as `ordinary`. A caller that asked
+ * for a workgroup and silently received an ordinary room would later find workgroup rules
+ * missing, with nothing in any log to explain why — the failure would surface as a permission
+ * that did not apply, long after the request that caused it.
+ */
+export function assertRoomKind(kind) {
+  const value = kind ?? DEFAULT_ROOM_KIND
+  if (!ROOM_KINDS.includes(value)) {
+    throw new RoomError(`A room kind must be one of ${ROOM_KINDS.join(', ')}`, 'INVALID_ROOM_KIND')
   }
   return value
 }
@@ -139,18 +167,22 @@ export function listMembers(db, roomId) {
  *
  * Room and owner membership are written in one transaction: a room whose creator is not a
  * member would be unreachable by anyone, including the person who just made it.
+ *
+ * `kind` is recorded here rather than inferred later from members or name. The audit entry
+ * carries it too, so "was this room ever a workgroup" is answerable from the trail alone.
  */
-export function createRoom(db, { name, ownerUserId, ownerDeviceId, now = new Date() }) {
+export function createRoom(db, { name, ownerUserId, ownerDeviceId, kind, now = new Date() }) {
   const roomName = assertRoomName(name)
+  const roomKind = assertRoomKind(kind)
   const id = randomUUID()
   const createdAt = nowIso(now)
   db.exec('BEGIN IMMEDIATE')
   try {
-    db.prepare('INSERT INTO rooms (id, name, owner_user_id, next_seq, created_at) VALUES (?, ?, ?, 1, ?)')
-      .run(id, roomName, ownerUserId, createdAt)
+    db.prepare('INSERT INTO rooms (id, name, owner_user_id, next_seq, created_at, kind) VALUES (?, ?, ?, 1, ?, ?)')
+      .run(id, roomName, ownerUserId, createdAt, roomKind)
     db.prepare('INSERT INTO room_members (room_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)')
       .run(id, ownerUserId, 'owner', createdAt)
-    audit(db, { actorUserId: ownerUserId, actorDeviceId: ownerDeviceId, eventType: 'room.created', objectType: 'room', objectId: id, outcome: 'success', details: { name: roomName }, now })
+    audit(db, { actorUserId: ownerUserId, actorDeviceId: ownerDeviceId, eventType: 'room.created', objectType: 'room', objectId: id, outcome: 'success', details: { name: roomName, kind: roomKind }, now })
     db.exec('COMMIT')
   } catch (error) {
     try {
@@ -425,11 +457,12 @@ export function setMemberRole(db, { roomId, userId, role, actorUserId, actorDevi
   return membershipOf(db, { roomId, userId })
 }
 
-/** Public shape of a room row for a response, including the caller's own role. */
+/** Public shape of a room row for a response, including the caller's own role and its kind. */
 export function publicRoom(room) {
   return {
     id: room.id,
     name: room.name,
+    kind: room.kind ?? DEFAULT_ROOM_KIND,
     ownerUserId: room.owner_user_id,
     createdAt: room.created_at,
     ...(room.member_role === undefined ? {} : { myRole: room.member_role }),
@@ -443,6 +476,9 @@ export function publicMember(member) {
     displayName: member.display_name,
     role: member.role,
     joinedAt: member.joined_at,
+    // Present only when the caller supplied it: this module has no opinion about connections, and
+    // the route that does reaches the socket table through the realtime hub.
+    ...(member.online === undefined ? {} : { online: member.online }),
   }
 }
 

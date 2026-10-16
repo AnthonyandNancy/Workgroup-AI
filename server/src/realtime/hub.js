@@ -108,7 +108,39 @@ export class RealtimeHub {
       closed: false,
     }
     this.connections.set(id, connection)
+    // Only the transition matters: a second device for somebody already online tells co-members
+    // nothing they do not know, and announcing it would send a pointless frame to every room the
+    // person is in.
+    if (this.countForUser(connection.user.id) === 1) this.#announcePresence(connection.user.id, true)
     return { ok: true, connection, auth }
+  }
+
+  /** Whether any live socket belongs to this user right now. Never stored: it is a momentary fact. */
+  isUserOnline(userId) {
+    return this.countForUser(userId) > 0
+  }
+
+  /**
+   * Tell the rooms a person is in that they came online or went offline.
+   *
+   * Membership, not subscription, decides who hears: somebody who is in the room but has not
+   * subscribed yet still counts as a member the others should see, and `publishToRoom` already
+   * refuses to send to a socket that is not subscribed. Reading membership from the database keeps
+   * this consistent with every other authorization decision in the Hub — a socket's own claim is
+   * never the source.
+   */
+  #announcePresence(userId, online) {
+    let rooms
+    try {
+      rooms = this.db.prepare('SELECT room_id FROM room_members WHERE user_id = ? AND removed_at IS NULL').all(userId)
+    } catch {
+      // A Hub whose database handle is gone must not fail the socket it is trying to admit; the
+      // membership read is an optimization over "who should hear", not a condition for connecting.
+      return
+    }
+    for (const row of rooms) {
+      this.publishToRoom(row.room_id, makeEvent('presence.changed', { userId, online }, { roomId: row.room_id }))
+    }
   }
 
   /** Open sockets belonging to one user. Counting them is what makes a per-user cap possible. */
@@ -124,6 +156,10 @@ export class RealtimeHub {
   release(connection) {
     connection.closed = true
     this.connections.delete(connection.id)
+    // The mirror of `admitFor`: only the last device leaving turns the person offline. Removing the
+    // row before asking is deliberate — this is the state co-members are about to be told about,
+    // not the state immediately before it.
+    if (!this.isUserOnline(connection.user.id)) this.#announcePresence(connection.user.id, false)
   }
 
   /** Subscribe a socket to a room, re-checking membership every time. */

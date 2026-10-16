@@ -16,6 +16,7 @@ import {
   publishEntry, withdrawEntry, heartbeat, browseDirectory, listOwnWithPresence,
   findEntry, isVisibleTo, publicEntry,
 } from '../modules/bots/store.js'
+import { heartbeatKeys } from '../security/ratelimit-store.js'
 
 function directoryFailure(reply, error) {
   if (error instanceof DirectoryError) {
@@ -71,6 +72,18 @@ export function makeBotRoutes({ requireAuth }) {
      */
     fastify.post('/api/v1/bots/:botId/heartbeat', { preHandler: requireAuth }, async (request, reply) => {
       const body = request.body ?? {}
+      // A heartbeat writes to the directory on every call, so it is counted before the write. Every
+      // call is counted, not only failures: here the heartbeat *is* the load, and a rule that counted
+      // only failures would have nothing to count, since a heartbeat has no failure path of its own.
+      const keys = heartbeatKeys({ botId: request.params.botId, source: request.ip })
+      for (const key of keys) {
+        const verdict = fastify.hub.heartbeatLimiter.check(key)
+        if (!verdict.allowed) {
+          reply.header('retry-after', String(verdict.retryAfterSeconds))
+          return reply.code(429).send({ error: { code: 'RATE_LIMITED', message: 'Too many heartbeats from this source.', retryAfterSeconds: verdict.retryAfterSeconds } })
+        }
+      }
+      for (const key of keys) fastify.hub.heartbeatLimiter.recordFailure(key)
       try {
         const entry = heartbeat(db, {
           ownerUserId: request.auth.user.id,

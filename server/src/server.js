@@ -10,7 +10,7 @@ import { loadTlsOptions } from './config/index.js'
 import { probeWritable, readMeta, writeMeta } from './db/index.js'
 import { buildRoutePlugins } from './api/index.js'
 import { makeAuthenticator, makeRequireAuth } from './auth/request.js'
-import { RateLimiter } from './security/ratelimit.js'
+import { PersistentLimiter } from './security/ratelimit-store.js'
 import { RealtimeHub } from './realtime/hub.js'
 import { registerRealtimeRoute } from './realtime/route.js'
 import { hubVersion, protocolVersion } from './version.js'
@@ -28,7 +28,10 @@ export async function createServer({ config, db, logger }) {
     bodyLimit: config.limits.maxMessageBytes,
     // Never trust a client-supplied request id as an audit fact; generate our own.
     genReqId: () => globalThis.crypto.randomUUID(),
-    trustProxy: false,
+    // `false` unless an operator names a reverse proxy. A Hub reached directly must not believe a
+    // forwarding header: `request.ip` feeds the per-source throttle key, so a spoofable source is a
+    // throttle an attacker can reset at will.
+    trustProxy: config.security.trustedProxies ?? false,
   })
 
   // The authenticator is part of the hub decoration so every route module reads the same
@@ -36,8 +39,37 @@ export async function createServer({ config, db, logger }) {
   const requireAuth = makeRequireAuth({ config, db })
   // One login limiter for the process, shared by every attempt. Built here rather than in the
   // route module so a second identity route cannot accidentally get a second, empty counter.
-  const loginLimiter = new RateLimiter({
+  //
+  // Persisted rather than in-memory: a restart used to clear every counter, which handed an
+  // attacker a one-deploy reprieve from any lockout they had earned. Registration is counted by a
+  // second instance with the same rule, because until now the route that mints identities was the
+  // only one with no ceiling at all.
+  const loginLimiter = new PersistentLimiter({
+    db,
     maxAttempts: config.security.loginMaxAttempts,
+    windowSeconds: config.security.loginWindowSeconds,
+    lockoutSeconds: config.security.loginLockoutSeconds,
+  })
+  const registerLimiter = new PersistentLimiter({
+    db,
+    maxAttempts: config.security.loginMaxAttempts,
+    windowSeconds: config.security.loginWindowSeconds,
+    lockoutSeconds: config.security.loginLockoutSeconds,
+  })
+  // The remaining write endpoints, each in its own namespace so their budgets do not interfere: a
+  // room busy enough to trip the message limit must not also refuse its members' logins. Separate
+  // instances rather than shared keys, because the limits differ — a heartbeat is emitted on a timer
+  // by the owner's runtime while a message is typed by a person, so one ceiling cannot serve both
+  // without being either too strict for typing or too loose for a flood.
+  const heartbeatLimiter = new PersistentLimiter({
+    db,
+    maxAttempts: config.security.heartbeatMaxAttempts ?? config.security.loginMaxAttempts * 4,
+    windowSeconds: config.security.loginWindowSeconds,
+    lockoutSeconds: config.security.loginLockoutSeconds,
+  })
+  const messageLimiter = new PersistentLimiter({
+    db,
+    maxAttempts: config.security.messageMaxAttempts ?? config.security.loginMaxAttempts * 5,
     windowSeconds: config.security.loginWindowSeconds,
     lockoutSeconds: config.security.loginLockoutSeconds,
   })
@@ -49,7 +81,7 @@ export async function createServer({ config, db, logger }) {
     authenticate: makeAuthenticator({ config, db }),
     log: server.log,
   })
-  server.decorate('hub', { config, db, version: hubVersion(), requireAuth, realtime, loginLimiter })
+  server.decorate('hub', { config, db, version: hubVersion(), requireAuth, realtime, loginLimiter, registerLimiter, heartbeatLimiter, messageLimiter })
 
   server.setErrorHandler((error, request, reply) => {
     const status = error.statusCode ?? 500

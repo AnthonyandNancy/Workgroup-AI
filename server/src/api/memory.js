@@ -52,7 +52,7 @@ function publishMemoryChange(fastify, roomId, reason, memoryId) {
 
 export function makeMemoryRoutes({ requireAuth }) {
   return async function memoryRoutes(fastify) {
-    const { db } = fastify.hub
+    const { db, config } = fastify.hub
 
     /** Remember something. The author is the caller; there is no parameter that names someone else. */
     fastify.post('/api/v1/rooms/:roomId/memories', { preHandler: requireAuth }, async (request, reply) => {
@@ -66,6 +66,9 @@ export function makeMemoryRoutes({ requireAuth }) {
           sourceMessageId: body.sourceMessageId,
           scope: body.scope,
           expiresAt: body.expiresAt ?? null,
+          // The ceiling is operator policy, so it comes from configuration rather than from the
+          // request: a caller must not be able to raise its own room's limit.
+          maxPerRoom: config.limits.maxMemoriesPerRoom,
         })
         publishMemoryChange(fastify, request.params.roomId, 'created', memory.id)
         return reply.code(201).send({ memory: publicMemory(memory) })

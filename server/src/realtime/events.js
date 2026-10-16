@@ -21,6 +21,10 @@ export const EVENT_TYPES = Object.freeze([
   'hello', 'ack', 'error',
   'message.created',
   'invitation.created', 'member.changed',
+  // Whether a person has a live socket. Momentary by definition: it is emitted on the transitions
+  // and never stored, so a restarted Hub starts with everyone offline rather than remembering a
+  // connection that no longer exists.
+  'presence.changed',
   'task.approval_requested', 'task.approved', 'task.cancelled',
   'task.progress', 'task.shared',
   'group_memory.changed',

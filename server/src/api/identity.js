@@ -13,6 +13,7 @@
 
 import { issueAccessToken, generateRefreshToken } from '../auth/tokens.js'
 import { loginKeys } from '../security/ratelimit.js'
+import { registrationKeys } from '../security/ratelimit-store.js'
 import { protocolVersion } from '../version.js'
 import {
   IdentityError, createUser, findUserByHandle, findUserById, registerDevice, findDeviceById, listDevices,
@@ -106,16 +107,39 @@ export async function identityRoutes(fastify) {
   // One limiter per Hub, built from configuration and shared by every login attempt. A limiter
   // constructed per request would count nothing.
   const loginLimiter = fastify.hub.loginLimiter
+  // Registration gets its own counter with the same rule. It is a separate instance because the
+  // keys carry a different prefix: a shared budget would let a burst of failed registrations lock
+  // out sign-in for the same address, which is a denial of service an attacker can trigger for
+  // free.
+  const registerLimiter = fastify.hub.registerLimiter
 
   // ---- registration ----
 
   fastify.post('/api/v1/auth/register', async (request, reply) => {
     const body = request.body ?? {}
+    // Throttled before the secret comparison and before the password hash: a refused attempt must
+    // cost the Hub nothing beyond the check, or the limiter itself becomes the amplifier. The route
+    // that mints identities is the one an open Hub most needs a ceiling on, because the bootstrap
+    // secret is the only other thing between a reachable Hub and unlimited accounts.
+    const keys = registrationKeys({ source: request.ip })
+    for (const key of keys) {
+      const verdict = registerLimiter.check(key)
+      if (!verdict.allowed) {
+        reply.header('retry-after', String(verdict.retryAfterSeconds))
+        return authError(reply, 429, 'TOO_MANY_ATTEMPTS', 'Too many registration attempts; wait before trying again')
+      }
+    }
     const denied = registrationAllowed(config, body, reply)
-    if (denied !== undefined) return denied
+    if (denied !== undefined) {
+      // A refused attempt is what the counter exists for: without this, only successful
+      // registrations would be counted and the limit would never be reached by an attacker.
+      for (const key of keys) registerLimiter.recordFailure(key)
+      return denied
+    }
     try {
       assertPasswordAcceptable(body.password)
     } catch (error) {
+      for (const key of keys) registerLimiter.recordFailure(key)
       return identityFailure(reply, error)
     }
 
@@ -124,8 +148,12 @@ export async function identityRoutes(fastify) {
     try {
       user = createUser(db, { handle: body.userHandle, displayName: body.displayName, passwordHash })
     } catch (error) {
+      for (const key of keys) registerLimiter.recordFailure(key)
       return identityFailure(reply, error)
     }
+    // A successful registration clears the caller's own history, so an operator onboarding several
+    // colleagues from one machine is not locked out by the retries that got them there.
+    for (const key of keys) registerLimiter.clear(key)
     return reply.code(201).send({ user: publicUser(user) })
   })
 

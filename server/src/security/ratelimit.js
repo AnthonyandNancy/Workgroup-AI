@@ -1,10 +1,16 @@
-// Login throttling: the failure counter that turns "guess the password" from an offline
-// problem into an online one the Hub can refuse.
+// Login throttling: the counting rule that turns "guess the password" from an offline problem into
+// an online one the Hub can refuse.
 //
-// H-03 shipped the login endpoint without any limit and recorded the gap: an attacker with a
-// word list can present it at full network speed, and bcrypt cost only makes each guess a
-// little slower, not impossible. This module is the missing half — a counting rule enforced
-// before the hash is even computed, so a blocked attempt costs the Hub nothing.
+// H-03 shipped the login endpoint without any limit and recorded the gap: an attacker with a word
+// list can present it at full network speed, and bcrypt cost only makes each guess a little slower,
+// not impossible. This module is the missing half — a counting rule enforced before the hash is
+// even computed, so a blocked attempt costs the Hub nothing.
+//
+// **This class is the rule; `ratelimit-store.js` is where it now lives.** The in-memory version
+// below stays as the reference implementation and as what the unit tests drive, because the rule
+// (two keys, failures count, bounded) is easier to read without the SQL around it. The Hub itself
+// uses `PersistentLimiter`, which keeps the same observable contract but survives a restart —
+// a process-local counter gave an attacker a one-deploy reprieve from any lockout they had earned.
 //
 // Design decisions, each of which a reviewer would otherwise ask about:
 //
@@ -15,10 +21,9 @@
 //    a legitimate user who mistyped twice is not locked out by their own typo an hour later.
 //    The per-source counter is not cleared by a success: one valid account must not buy an
 //    attacker a fresh budget for the accounts they are still guessing.
-//  * **In-memory, and said out loud.** The Hub is deliberately a single process with a single
-//    SQLite writer, so a process-local counter is complete rather than approximate. A restart
-//    forgets the counters; that is a real property of this design and is documented in
-//    `deploy/DEPLOYMENT.md` instead of being hidden behind "rate limited".
+//  * **In-memory here, durable in production.** A process-local counter is complete while the
+//    process lives and forgets everything when it does not; see `PersistentLimiter` for the
+//    version the Hub runs, and `deploy/DEPLOYMENT.md` for the operator-facing statement.
 //  * **Bounded memory.** Counters are pruned on every check, so a Hub under a spray attack from
 //    many sources cannot be made to allocate without bound. That is itself an attack the naive
 //    implementation of a limiter hands to the attacker.
