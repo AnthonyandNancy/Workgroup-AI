@@ -90,8 +90,12 @@ export function createHubBridge({ pollMs = 4000, callImpl = call } = {}) {
 export function createWorkgroupHub({ bridge }) {
   const invoke = (endpoint, payload) => bridge.send(endpoint, payload)
   return {
-    get available() {
+    get configured() {
       return bridge.view.getSnapshot().configured === true
+    },
+    get available() {
+      const snapshot = bridge.view.getSnapshot()
+      return snapshot.configured === true && snapshot.signedIn === true
     },
     get signedIn() {
       return bridge.view.getSnapshot().signedIn === true
@@ -107,12 +111,20 @@ export function createWorkgroupHub({ bridge }) {
     },
     view: bridge.view,
 
+    configure: value => {
+      const url = typeof value === 'string' ? value : value?.url
+      return invoke('hub-configure', { hubUrl: url })
+    },
+    register: payload => invoke('hub-register', payload),
     signIn: credentials => invoke('hub-sign-in', credentials),
     signOut: () => invoke('hub-sign-out', {}),
     resume: () => invoke('hub-resume', {}),
+    rooms: () => invoke('hub-rooms', {}).then(result => result?.rooms ?? result),
     createRoom: (name, options = {}) => invoke('hub-create-room', { name, ...options }),
     openRoom: roomId => invoke('hub-open-room', { roomId }),
     watch: roomId => invoke('hub-open-room', { roomId }),
+    dissolve: roomId => invoke('hub-dissolve', { roomId }),
+    uploadArtifact: (roomId, payload) => invoke('hub-upload-artifact', { roomId, ...payload }),
     invite: (roomId, options) => invoke('hub-invite', { roomId, ...options }),
     invitations: () => invoke('hub-invitations', {}),
     respondToInvitation: (invitationId, decision) => invoke('hub-respond-invitation', { invitationId, decision }),

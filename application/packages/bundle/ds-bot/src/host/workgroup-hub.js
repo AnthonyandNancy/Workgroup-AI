@@ -24,25 +24,30 @@
 // relative path out of this package: `lib/` staging copies files without rewriting imports, so a
 // relative path that leaves `src/host` would resolve to a different depth once published under
 // `lib/src/host`. A package name is the same string in both trees.
-import { createHubClient, hubStatePath, resolveHubUrl } from '@deepseek-ai/dsh-workgroup/protocol/hub-client'
+import { clearHubSession, createHubClient, hubConfigPath, hubStatePath, loadHubConfig, resolveHubUrl, saveHubConfig } from '@deepseek-ai/dsh-workgroup/protocol/hub-client'
 import { createWorkgroupClient } from '@deepseek-ai/dsh-workgroup/client'
 import { createBridge } from '@deepseek-ai/dsh-workgroup/bridge'
 
 export function install(rt) {
   const { config, dshHome } = rt
 
-  // A configured address is read once, at install. Reading it per call would let a mid-session
-  // environment change silently move the user to a different Hub while a session file for the old
-  // one is still on disk.
+  // The URL is non-sensitive configuration; the session file below remains the only place that
+  // carries Hub-issued credentials. An explicit runtime value wins over the persisted value, and
+  // both are normalized before a client is created.
+  const statePath = config.hubStatePath ?? hubStatePath(dshHome)
+  const configPath = config.hubConfigPath ?? hubConfigPath(dshHome)
+  const savedConfig = loadHubConfig(configPath)
   let hubUrl
   let configError
   try {
-    hubUrl = config.hubUrl ?? resolveHubUrl(config.env ?? process.env)
+    const configuredUrl = config.hubUrl ?? savedConfig.hubUrl
+    hubUrl = configuredUrl === undefined
+      ? resolveHubUrl(config.env ?? process.env)
+      : resolveHubUrl({ WORKGROUP_HUB_URL: configuredUrl })
   } catch (error) {
     configError = error
   }
 
-  const statePath = config.hubStatePath ?? hubStatePath(dshHome)
   let client
   let workgroup
   let bridge
@@ -80,6 +85,7 @@ export function install(rt) {
       // `configured: false` is what tells the browser half to leave the workgroup menu entry out
       // rather than offer an action that cannot succeed.
       configured: configError === undefined,
+      ...(configError === undefined && hubUrl !== undefined ? { hubUrl } : {}),
       ...(configError === undefined ? {} : { reason: configError.code ?? 'HUB_NOT_CONFIGURED', message: configError.message }),
       signedIn,
       ...(identity === undefined ? {} : { userId: identity.userId, userHandle: identity.userHandle, displayName: identity.displayName, deviceId: identity.deviceId }),
@@ -147,6 +153,49 @@ export function install(rt) {
     return hubView()
   }
 
+  /** Switch Hub without carrying the old Hub session or watched rooms across the change. */
+  async function configureHub(rawUrl) {
+    const nextHubUrl = resolveHubUrl({ WORKGROUP_HUB_URL: rawUrl })
+    saveHubConfig(configPath, { hubUrl: nextHubUrl })
+    try {
+      await client?.logout()
+    } finally {
+      if (client === undefined) clearHubSession(statePath)
+      bridge?.stop()
+      bridge = undefined
+      client = undefined
+      workgroup = undefined
+      watched.clear()
+      hubUrl = nextHubUrl
+      configError = undefined
+      connectionState = 'signed-out'
+      connectionDetail = undefined
+    }
+    return hubView()
+  }
+
+  /** Register without returning the Hub response's private or credential-shaped fields. */
+  async function register({ userHandle, displayName, password, bootstrapSecret, deviceLabel }) {
+    ensureClient()
+    await client.handshake()
+    const result = await client.register({ userHandle, displayName, password, bootstrapSecret, deviceLabel })
+    const user = result?.user ?? {}
+    return {
+      user: {
+        userId: user.userId ?? user.id,
+        userHandle: user.userHandle,
+        displayName: user.displayName,
+      },
+    }
+  }
+
+  /** Return only rooms visible to the current authenticated Hub user. */
+  async function rooms() {
+    ensureClient()
+    const result = await client.request('GET', '/rooms')
+    return result?.rooms ?? []
+  }
+
   /**
    * The workgroup endpoint table, reached from the browser half as ordinary `/api/bot` calls.
    *
@@ -160,6 +209,7 @@ export function install(rt) {
     // browser asks `hub-view` first, and a throw here would leave the UI with no way to explain
     // why the feature is off.
     if (endpoint === 'hub-view') return hubView()
+    if (endpoint === 'hub-configure') return await configureHub(body?.hubUrl)
 
     ensureClient()
     switch (endpoint) {
@@ -169,6 +219,16 @@ export function install(rt) {
         return await signOut()
       case 'hub-resume':
         return await resume()
+      case 'hub-register':
+        return await register({
+          userHandle: body.userHandle,
+          displayName: body.displayName,
+          password: body.password,
+          bootstrapSecret: body.bootstrapSecret,
+          deviceLabel: body.deviceLabel,
+        })
+      case 'hub-rooms':
+        return await rooms()
       case 'hub-open-room': {
         // An open room is a watched room: the caller's intent is to look at it, and a room that
         // showed a conversation but never updated would be a worse answer than an explicit error.
@@ -221,6 +281,17 @@ export function install(rt) {
         return await workgroup.sendMessage(body.roomId, body.text, {
           ...(body.clientMessageId === undefined ? {} : { clientMessageId: body.clientMessageId }),
           ...(body.replyToMessageId === undefined ? {} : { replyToMessageId: body.replyToMessageId }),
+          ...(Array.isArray(body.mentions) ? {
+            mentions: body.mentions.map(entry => ({
+              userId: entry?.userId,
+              ...(entry?.botId === undefined ? {} : { botId: entry.botId }),
+            })),
+          } : {}),
+          ...(Array.isArray(body.attachments) ? {
+            attachments: body.attachments.map(entry => ({
+              artifactId: typeof entry === 'string' ? entry : entry?.artifactId,
+            })),
+          } : {}),
         })
       case 'hub-messages':
         return body.afterSeq === undefined

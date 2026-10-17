@@ -475,6 +475,48 @@ describe('the @Bot surface', () => {
 describe('applying events to a room view', () => {
   const room = { id: 'room-1', name: 'Room' }
 
+  it('updates a member presence event idempotently and ignores another room', () => {
+    const state = {
+      room,
+      members: [{ userId: 'u1', online: false }, { userId: 'u2', online: false }],
+      messages: [],
+      tasks: [],
+      head: 0,
+    }
+    const event = {
+      type: 'presence.changed',
+      roomId: 'room-1',
+      payload: { userId: 'u1', online: true },
+    }
+    const next = reduceWorkgroup(state, event)
+    assert.equal(next.members.find(member => member.userId === 'u1').online, true)
+    assert.equal(next.members.find(member => member.userId === 'u2').online, false)
+    assert.deepEqual(reduceWorkgroup(next, event), next)
+    assert.equal(reduceWorkgroup(state, { ...event, roomId: 'room-2' }), state)
+  })
+
+  it('adds and replaces task approval, progress, and cancellation events', () => {
+    const state = { room, members: [], messages: [], tasks: [], head: 0 }
+    const requested = reduceWorkgroup(state, {
+      type: 'task.approval_requested',
+      roomId: 'room-1',
+      payload: { task: { id: 't2', state: 'PENDING_APPROVAL' } },
+    })
+    assert.deepEqual(requested.tasks, [{ id: 't2', state: 'PENDING_APPROVAL' }])
+    const progress = reduceWorkgroup(requested, {
+      type: 'task.progress',
+      roomId: 'room-1',
+      payload: { task: { id: 't2', state: 'RUNNING', progress: 50 } },
+    })
+    assert.deepEqual(progress.tasks, [{ id: 't2', state: 'RUNNING', progress: 50 }])
+    const cancelled = reduceWorkgroup(progress, {
+      type: 'task.cancelled',
+      roomId: 'room-1',
+      payload: { task: { id: 't2', state: 'CANCELLED' } },
+    })
+    assert.deepEqual(cancelled.tasks, [{ id: 't2', state: 'CANCELLED' }])
+  })
+
   it('adds a message in sequence order and advances the head', () => {
     const state = { room, members: [], messages: [], tasks: [], head: 0 }
     const event = {

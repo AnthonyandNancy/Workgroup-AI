@@ -132,6 +132,39 @@ describe('the workgroup Hub provider', () => {
     expect(calls[0].payload).toEqual({ name: 'Finance', kind: 'workgroup' })
   })
 
+  it('forwards room dissolution and artifact upload through the Host', async () => {
+    const { bridge, calls } = bridgeOver({
+      'hub-view': { configured: true, signedIn: true, state: 'open' },
+      'hub-dissolve': { dissolved: true, roomId: 'room-1' },
+      'hub-upload-artifact': { artifactId: 'artifact-1', fileName: 'report.txt' },
+    })
+    const hub = createWorkgroupHub({ bridge })
+
+    const dissolved = await hub.dissolve('room-1')
+    const uploaded = await hub.uploadArtifact('room-1', {
+      fileName: 'report.txt',
+      bytes: [1, 2, 3],
+      contentType: 'text/plain',
+      recipients: ['u1'],
+    })
+
+    expect(dissolved).toEqual({ dissolved: true, roomId: 'room-1' })
+    expect(uploaded).toEqual({ artifactId: 'artifact-1', fileName: 'report.txt' })
+    expect(calls.filter(({ endpoint }) => endpoint !== 'hub-view')).toEqual([
+      { endpoint: 'hub-dissolve', payload: { roomId: 'room-1' } },
+      {
+        endpoint: 'hub-upload-artifact',
+        payload: {
+          roomId: 'room-1',
+          fileName: 'report.txt',
+          bytes: [1, 2, 3],
+          contentType: 'text/plain',
+          recipients: ['u1'],
+        },
+      },
+    ])
+  })
+
   it('never carries a credential into the renderer', async () => {
     const { bridge } = bridgeOver({
       'hub-view': { configured: true, signedIn: true, state: 'open', userId: 'u1', userHandle: 'alice', displayName: 'Alice', deviceId: 'd1' },

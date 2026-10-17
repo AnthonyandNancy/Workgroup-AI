@@ -134,6 +134,7 @@ export function fakeShell() {
     inject: (_deps, fn) => { const d = typeof fn === 'function' ? fn(ctx) : undefined; return typeof d === 'function' ? d : noop },
     slots,
     sessions: { list: { getSnapshot: () => ({ byId: {}, ids: [] }), subscribe: () => noop }, binding: () => undefined },
+    inputTriggers: { registerSource: () => noop, sessionOf: () => undefined },
     uiWorkspace: { openSession: noop, startSession: noop },
     uiConversation: { binding: () => ({ target: () => ({ getSnapshot: () => undefined }) }) },
     // The theme is installed by overriding the shell's tokens; the release function is what the

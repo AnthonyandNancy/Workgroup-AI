@@ -360,6 +360,42 @@ function saveSession(statePath, session) {
   renameSync(temporary, statePath)
 }
 
+/** Where this product keeps the non-sensitive Hub URL configuration for one user. */
+export function hubConfigPath(dataRoot) {
+  return join(dataRoot, 'workgroup', 'hub-config.json')
+}
+
+/** Read the configured Hub URL without ever reading or returning session credentials. */
+export function loadHubConfig(configPath) {
+  if (!existsSync(configPath)) return {}
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, 'utf8'))
+    return parsed !== null && typeof parsed === 'object' && typeof parsed.hubUrl === 'string'
+      ? { hubUrl: parsed.hubUrl }
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+/** Persist only the validated, non-sensitive Hub URL with the same atomic write rules as session state. */
+export function saveHubConfig(configPath, { hubUrl }) {
+  mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 })
+  const temporary = `${configPath}.${randomUUID()}.tmp`
+  writeFileSync(temporary, `${JSON.stringify({ hubUrl })}\n`, { mode: 0o600 })
+  try {
+    chmodSync(temporary, 0o600)
+  } catch {
+    // Windows ignores POSIX modes; the file is already created with the only mode it understands.
+  }
+  renameSync(temporary, configPath)
+}
+
+/** Clear a locally persisted session when the user moves this device to another Hub. */
+export function clearHubSession(statePath) {
+  saveSession(statePath, {})
+}
+
 /** Where this product keeps the Hub session for one user. */
 export function hubStatePath(dataRoot) {
   return join(dataRoot, 'workgroup', 'hub-session.json')

@@ -788,7 +788,7 @@ export function apply(ctx) {
   // The overlay's own inject face: `face()` plus the workgroup source under `hooks`, which is what
   // makes the menu see changes. Injected props are cached per slot entry, so a plain value in the
   // returned object would freeze the first answer.
-  const overlayFace = () => ({ ...face(), hooks: { ...face().hooks, workgroups, hub } })
+  const overlayFace = () => ({ ...face(), sessions: ctx.sessions, workgroupHub, hooks: { ...face().hooks, workgroups, hub } })
 
   /**
    * Register the fork's single first-level `Bot` navigation entry and its panel.

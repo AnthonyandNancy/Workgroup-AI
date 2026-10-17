@@ -220,4 +220,18 @@ it('the activation gate is armed before it is read', () => {
   expect(source, 'the flag must be declared').toMatch(/let panelRegistered = false/)
   expect(source, 'the flag must be set by the registration').toMatch(/panelRegistered = true/)
 })
+
+it('the Hub settings page is globally reachable and receives the live Host adapter', () => {
+  const settings = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'settings.js'), 'utf8')
+  const sidebar = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'sidebar.js'), 'utf8')
+  const overlays = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'overlays.js'), 'utf8')
+  const source = readFileSync(clientSource, 'utf8')
+  expect(settings).toMatch(/\['hub', 'Workgroup Hub'\]/)
+  expect(settings).toMatch(/workgroupHub\.configure/)
+  expect(settings).toMatch(/workgroupHub\.register/)
+  expect(sidebar).toMatch(/actions\.openSettings\('hub'\)/)
+  expect(overlays).toMatch(/useHub/)
+  expect(overlays).toMatch(/workgroupHub/)
+  expect(source).toMatch(/workgroupHub,/) 
+})
 })

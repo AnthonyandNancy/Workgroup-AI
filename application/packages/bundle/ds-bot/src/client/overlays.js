@@ -14,9 +14,10 @@ import { useLinger } from './motion.js'
 const DIALOG_EXIT_MS = 160
 const MENU_EXIT_MS = 120
 
-export function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity, useWork, useRegistry, useBrowserPages, useBrowserTabs, useUpdate, useWorkgroups, actions }) {
+export function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity, useWork, useRegistry, useBrowserPages, useBrowserTabs, useUpdate, useWorkgroups, useHub, workgroupHub, sessions, actions }) {
   const roster = useRoster(value => value)
   const ui = useUi(value => value)
+  const hub = useHub(value => value)
   useRegistry(value => value)
   // The workgroup adapter, or `undefined` when this install has no Hub. Read as a hook because the
   // answer is confirmed asynchronously by the Host and can change while the window is open: a prop
@@ -49,6 +50,6 @@ export function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useA
     ui.exchange ? createPortal(h(ExchangeDialog, { pair: ui.exchange, roster, actions }), document.body) : null,
     ui.voice ? createPortal(h(VoiceMode, { key: ui.voice, sessionId: ui.voice, roster, actions, useSessions, useSessionStatus }), document.body) : null,
     menu ? createPortal(h(ContextMenu, { key: `${menu.kind ?? ''}:${menu.id}:${menu.x}:${menu.y}`, menu, roster, actions, leaving: menuLeaving }), document.body) : null,
-    settings ? createPortal(h(SettingsDialog, { page: settings.page, id: settings.id, roster, actions, useUpdate, leaving: settingsLeaving }), document.body) : null,
+    settings ? createPortal(h(SettingsDialog, { page: settings.page, id: settings.id, roster, actions, useUpdate, hub, workgroupHub, sessions, leaving: settingsLeaving }), document.body) : null,
     memory && roster.byId[memory] ? createPortal(h(MemoryDialog, { key: memory, bot: roster.byId[memory], actions, leaving: memoryLeaving }), document.body) : null)
 }

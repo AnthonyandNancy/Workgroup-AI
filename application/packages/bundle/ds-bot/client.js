@@ -715,6 +715,43 @@ var ZH = {
   // the copy must not let them read as the same thing.
   "Create workgroup chat": "创建工作群聊",
   "Workgroup": "工作群",
+  "Workgroup Hub": "Workgroup Hub",
+  "Current status": "当前状态",
+  "Hub URL": "Hub URL",
+  "The Host keeps this non-sensitive address on this machine.": "Host 会在本机保存这个非敏感地址。",
+  "Enter a Hub URL": "请输入 Hub URL",
+  "Configure Hub": "配置 Hub",
+  "Hub configuration saved": "Hub 配置已保存",
+  "Hub is not configured": "尚未配置 Hub",
+  "Configured, signed out": "已配置，尚未登录",
+  "Hub account": "Hub 账号",
+  Username: "用户名",
+  Password: "密码",
+  "Device label": "设备名称",
+  "Device ID": "设备 ID",
+  "Use this exact handle when a colleague invites you.": "同事邀请你时需要使用这个准确的用户名。",
+  "Sign in": "登录",
+  "Signed in": "已登录",
+  "Sign out": "退出登录",
+  Resume: "恢复登录",
+  "Sign-in restored": "登录已恢复",
+  Register: "注册",
+  "Register this account": "注册账号",
+  "Registration key": "注册 key",
+  "Only sent to the Host for this request.": "只在本次请求中发送给 Host。",
+  "Display name": "显示名称",
+  "Registration submitted": "注册请求已提交",
+  "Copy my username": "复制我的用户名",
+  "Rooms I belong to": "我加入的工作群",
+  "No workgroups yet.": "还没有工作群。",
+  Reopen: "重新打开",
+  Invitations: "邀请",
+  "No pending invitations": "没有待处理邀请",
+  Accept: "接受",
+  "Invitation accepted": "邀请已接受",
+  "Invitation rejected": "邀请已拒绝",
+  "Copy is unavailable": "当前无法复制",
+  "Unknown user": "未知用户",
   Owner: "群主",
   "for {name}": "由 {name} 使用",
   "Not delivered": "未送达",
@@ -2186,6 +2223,7 @@ button.bt-q-opt:active{background:var(--bt-active)}
 .bt-send{height:40px;min-width:40px;border-radius:999px;border:0;background:var(--bt-accent);color:var(--bt-accent-ink,#fff);font-size:14px;padding:0 14px;cursor:pointer;flex:none;white-space:nowrap}
 .bt-send:disabled{opacity:.35;cursor:default}
 .bt-error{padding:0 14px 10px;color:#e02135;font-size:12px}
+.bt-success{padding:0 14px 10px;color:var(--bt-green);font-size:12px}
 
 .bt-pane{position:fixed;top:var(--dsh-frame-chrome-top,0px);right:0;bottom:0;z-index:45;pointer-events:auto;background:var(--bt-main);color:var(--bt-ink);display:flex;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
 .bt-dialog{flex:1;display:flex;flex-direction:column;min-width:0}
@@ -2356,6 +2394,9 @@ button.bt-set-row:hover{background:var(--bt-hover)}
 .bt-set-copy{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
 .bt-set-hint{font-size:12px;line-height:16px;color:color-mix(in srgb,var(--bt-ink-2) 50%,var(--bt-ink-3))}
 .bt-set-control{flex:none;display:flex;align-items:center;gap:6px}
+.bt-set-control-wide{flex:1;min-width:0}
+.bt-set-control-wide .bt-input{width:100%}
+.bt-set-card>.bt-actions{padding:10px 12px}
 .bt-set-value{font-size:13px;color:var(--bt-ink-2);text-align:right}
 .bt-set-bot{flex:1;display:flex;align-items:center;gap:8px;min-width:0}
 .bt-set-paste{flex-direction:column;align-items:stretch;gap:8px}
@@ -5450,7 +5491,8 @@ function AccountLauncher({ seat = true, settingsOpen, openSettings, openOnboardi
       [t("Usage"), GaugeIcon, () => actions.openSettings("usage")],
       [t("Connectors"), ConnectorIcon, () => actions.openConnectors()],
       [t("Automation tasks"), ClockIcon, () => actions.selectPanel("schedules")],
-      [t("Bot settings"), GearIcon, () => actions.openSettings("general")]
+      [t("Bot settings"), GearIcon, () => actions.openSettings("general")],
+      [t("Workgroup Hub"), PlugIcon, () => actions.openSettings("hub")]
     ],
     [
       [t("Switch to classic Agent mode"), SwitchIcon, () => actions.setSurface("agent")]
@@ -9342,6 +9384,25 @@ var GROUP_SETTINGS_CSS = `
 @media (prefers-reduced-motion:reduce){.bt-gs-pick{animation:none}}
 `;
 
+// src/client/workgroup-entry.js
+async function enterWorkgroup({ roomId, sessions, openSession, closeOverlay, watch, report }) {
+  const sessionId = workgroupSessionId(roomId);
+  const known = sessions.list?.getSnapshot?.()?.byId?.[sessionId] !== void 0;
+  if (!known) {
+    try {
+      await sessions.create({ sessionId });
+    } catch (error) {
+      report?.(error);
+      return void 0;
+    }
+  }
+  openSession(sessionId);
+  closeOverlay?.();
+  await watch?.(roomId).catch?.(() => {
+  });
+  return sessionId;
+}
+
 // src/client/usage-data.js
 var HOUR = 0;
 var OWNER = 1;
@@ -10610,7 +10671,6 @@ var FEEDBACK_CSS = `
 
 // src/client/about.js
 var import_react28 = require("react");
-var hmrWatcherProbe = "dsh-watcher-probe";
 var CHEER_MS = 1800;
 var starCount = (count) => new Intl.NumberFormat(dateLocale(), { notation: "compact", maximumFractionDigits: 1 }).format(count);
 function botHint(update) {
@@ -10753,17 +10813,17 @@ body:not([data-bt-motion=quiet]) .bt-about-mark:hover .bt-mark[data-live][data-s
 // src/client/settings.js
 var import_react29 = require("react");
 var capitalize2 = (word) => word[0].toUpperCase() + word.slice(1);
-var SETTINGS_PAGES = [["general", "General"], ["bots", "Bots"], ["groups", "Group chats"], ["connectors", "Connectors"], ["capabilities", "Capabilities"], ["schedules", "Scheduled tasks"], ["usage", "Usage"], ["secrets", "Secrets"], ["feedback", "Feedback"], ["about", "About DS Bot"]];
-var PAGE_ICONS = { ...SETTINGS_ICONS, connectors: ConnectorIcon, capabilities: PlugIcon, schedules: ClockIcon, secrets: KeyIcon, feedback: FeedbackIcon, about: InfoIcon };
+var SETTINGS_PAGES = [["general", "General"], ["hub", "Workgroup Hub"], ["bots", "Bots"], ["groups", "Group chats"], ["connectors", "Connectors"], ["capabilities", "Capabilities"], ["schedules", "Scheduled tasks"], ["usage", "Usage"], ["secrets", "Secrets"], ["feedback", "Feedback"], ["about", "About DS Bot"]];
+var PAGE_ICONS = { ...SETTINGS_ICONS, hub: PlugIcon, connectors: ConnectorIcon, capabilities: PlugIcon, schedules: ClockIcon, secrets: KeyIcon, feedback: FeedbackIcon, about: InfoIcon };
 function SetSection({ title, children }) {
   return (0, import_react29.createElement)("section", { className: "bt-set-section" }, (0, import_react29.createElement)("h3", null, title), (0, import_react29.createElement)("div", { className: "bt-set-card" }, children));
 }
-function SetRow({ label, hint, children }) {
+function SetRow({ label, hint, children, wide = false }) {
   return (0, import_react29.createElement)(
     "div",
     { className: "bt-set-row" },
     (0, import_react29.createElement)("div", { className: "bt-set-copy" }, (0, import_react29.createElement)("span", null, label), hint ? (0, import_react29.createElement)("span", { className: "bt-set-hint" }, hint) : null),
-    children ? (0, import_react29.createElement)("div", { className: "bt-set-control" }, children) : null
+    children ? (0, import_react29.createElement)("div", { className: `bt-set-control${wide ? " bt-set-control-wide" : ""}` }, children) : null
   );
 }
 function GeneralPage({ roster, actions, run }) {
@@ -10948,7 +11008,185 @@ function GroupsPage({ roster, actions, run }) {
     )
   ];
 }
-function SettingsDialog({ page, id, roster, actions, useUpdate, leaving = false }) {
+function HubPage({ hub, workgroupHub, sessions, actions }) {
+  const [url, setUrl] = (0, import_react29.useState)(hub?.hubUrl ?? "");
+  const [userHandle, setUserHandle] = (0, import_react29.useState)("");
+  const [displayName, setDisplayName] = (0, import_react29.useState)("");
+  const [password, setPassword] = (0, import_react29.useState)("");
+  const [bootstrapSecret, setBootstrapSecret] = (0, import_react29.useState)("");
+  const [deviceLabel, setDeviceLabel] = (0, import_react29.useState)("");
+  const [rooms, setRooms] = (0, import_react29.useState)([]);
+  const [invitations, setInvitations] = (0, import_react29.useState)([]);
+  const [busy, setBusy] = (0, import_react29.useState)(false);
+  const [notice, setNotice] = (0, import_react29.useState)("");
+  const [error, setError] = (0, import_react29.useState)("");
+  (0, import_react29.useEffect)(() => {
+    if (hub?.hubUrl !== void 0) setUrl(hub.hubUrl);
+  }, [hub?.hubUrl]);
+  const refresh = (0, import_react29.useCallback)(async () => {
+    if (hub?.signedIn !== true) {
+      setRooms([]);
+      setInvitations([]);
+      return;
+    }
+    const [nextRooms, nextInvitations] = await Promise.all([
+      workgroupHub.rooms(),
+      workgroupHub.invitations()
+    ]);
+    setRooms(Array.isArray(nextRooms) ? nextRooms : []);
+    setInvitations(Array.isArray(nextInvitations) ? nextInvitations : nextInvitations?.invitations ?? []);
+  }, [hub?.signedIn, workgroupHub]);
+  (0, import_react29.useEffect)(() => {
+    void refresh().catch((failure) => setError(failure?.message ?? String(failure)));
+  }, [refresh]);
+  const invoke = async (task, success, refreshRooms = false) => {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await task();
+      setNotice(t(success));
+      if (refreshRooms) await refresh();
+    } catch (failure) {
+      setError(failure?.message ?? String(failure));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const copy2 = async (value) => {
+    if (!value || typeof navigator === "undefined" || !navigator.clipboard) {
+      setError(t("Copy is unavailable"));
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(value);
+      setNotice(t("Copied"));
+      setError("");
+    } catch (failure) {
+      setError(failure?.message ?? String(failure));
+    }
+  };
+  const openRoom = (roomId) => enterWorkgroup({
+    roomId,
+    sessions,
+    openSession: actions.openSession,
+    closeOverlay: actions.closeSettings,
+    watch: (room2) => workgroupHub.watch(room2),
+    report: (failure) => setError(failure?.message ?? String(failure))
+  });
+  const configured = hub?.configured === true;
+  const signedIn = hub?.signedIn === true;
+  const status = !configured ? t("Hub is not configured") : signedIn ? t("Signed in as {name}", { name: hub.userHandle ?? hub.userId ?? t("Unknown user") }) : t("Configured, signed out");
+  const submitRegistration = () => {
+    const payload = { userHandle: userHandle.trim(), displayName: displayName.trim(), password, deviceLabel: deviceLabel.trim() };
+    if (bootstrapSecret.trim() !== "") payload.bootstrapSecret = bootstrapSecret;
+    return workgroupHub.register(payload);
+  };
+  return [
+    (0, import_react29.createElement)(
+      SetSection,
+      { key: "connection", title: t("Connection") },
+      (0, import_react29.createElement)(SetRow, { label: t("Current status"), hint: hub?.state ?? "unknown" }, (0, import_react29.createElement)("span", { className: "bt-tag" }, status)),
+      (0, import_react29.createElement)(
+        SetRow,
+        { label: t("Hub URL"), wide: true, hint: t("The Host keeps this non-sensitive address on this machine.") },
+        (0, import_react29.createElement)("input", { className: "bt-input", type: "url", value: url, placeholder: t("Enter a Hub URL"), autoComplete: "url", onChange: (event) => setUrl(event.target.value) })
+      ),
+      (0, import_react29.createElement)(
+        "div",
+        { className: "bt-actions" },
+        (0, import_react29.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", disabled: busy || url.trim() === "", onClick: () => invoke(() => workgroupHub.configure({ url: url.trim() }), "Hub configuration saved") }, t("Configure Hub")),
+        signedIn ? (0, import_react29.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", disabled: busy, onClick: () => invoke(() => workgroupHub.signOut(), "Signed out") }, t("Sign out")) : null,
+        configured && !signedIn ? (0, import_react29.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", disabled: busy, onClick: () => invoke(() => workgroupHub.resume(), "Sign-in restored") }, t("Resume")) : null
+      )
+    ),
+    (0, import_react29.createElement)(
+      SetSection,
+      { key: "account", title: t("Hub account") },
+      (0, import_react29.createElement)(
+        SetRow,
+        { label: t("Username"), wide: true, hint: t("Use this exact handle when a colleague invites you.") },
+        (0, import_react29.createElement)("input", { className: "bt-input", value: userHandle, autoComplete: "username", onChange: (event) => setUserHandle(event.target.value), placeholder: t("Username") })
+      ),
+      (0, import_react29.createElement)(
+        SetRow,
+        { label: t("Password"), wide: true },
+        (0, import_react29.createElement)("input", { className: "bt-input", type: "password", value: password, autoComplete: "current-password", onChange: (event) => setPassword(event.target.value), placeholder: t("Password") })
+      ),
+      (0, import_react29.createElement)(
+        SetRow,
+        { label: t("Device label"), wide: true },
+        (0, import_react29.createElement)("input", { className: "bt-input", value: deviceLabel, autoComplete: "off", onChange: (event) => setDeviceLabel(event.target.value), placeholder: t("Device label") })
+      ),
+      (0, import_react29.createElement)(
+        "div",
+        { className: "bt-actions" },
+        (0, import_react29.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", disabled: busy || userHandle.trim() === "" || password === "", onClick: () => invoke(() => workgroupHub.signIn({ userHandle: userHandle.trim(), password, label: deviceLabel.trim() }), "Signed in") }, t("Sign in")),
+        (0, import_react29.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", disabled: busy || !configured, onClick: () => invoke(() => workgroupHub.resume(), "Sign-in restored") }, t("Resume"))
+      ),
+      signedIn && hub?.userId ? (0, import_react29.createElement)(
+        SetRow,
+        { label: t("Your user ID"), hint: t("Copy this ID to let a colleague invite you.") },
+        (0, import_react29.createElement)("span", { className: "bt-tag" }, hub.userId),
+        (0, import_react29.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => copy2(hub.userId) }, t("Copy my ID"))
+      ) : null,
+      signedIn && hub?.userHandle ? (0, import_react29.createElement)(
+        SetRow,
+        { label: t("Your username") },
+        (0, import_react29.createElement)("span", { className: "bt-tag" }, hub.userHandle),
+        (0, import_react29.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => copy2(hub.userHandle) }, t("Copy my username"))
+      ) : null,
+      signedIn && hub?.displayName ? (0, import_react29.createElement)(SetRow, { label: t("Display name") }, (0, import_react29.createElement)("span", { className: "bt-tag" }, hub.displayName)) : null,
+      signedIn && hub?.deviceId ? (0, import_react29.createElement)(SetRow, { label: t("Device ID") }, (0, import_react29.createElement)("span", { className: "bt-tag" }, hub.deviceId)) : null
+    ),
+    (0, import_react29.createElement)(
+      SetSection,
+      { key: "register", title: t("Register this account") },
+      (0, import_react29.createElement)(
+        SetRow,
+        { label: t("Display name"), wide: true },
+        (0, import_react29.createElement)("input", { className: "bt-input", value: displayName, autoComplete: "name", onChange: (event) => setDisplayName(event.target.value), placeholder: t("Display name") })
+      ),
+      (0, import_react29.createElement)(
+        SetRow,
+        { label: t("Registration key"), wide: true, hint: t("Only sent to the Host for this request.") },
+        (0, import_react29.createElement)("input", { className: "bt-input", type: "password", value: bootstrapSecret, autoComplete: "off", onChange: (event) => setBootstrapSecret(event.target.value), placeholder: t("Registration key") })
+      ),
+      (0, import_react29.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", disabled: busy || !configured || userHandle.trim() === "" || password === "", onClick: () => invoke(submitRegistration, "Registration submitted") }, t("Register"))
+    ),
+    signedIn ? (0, import_react29.createElement)(
+      SetSection,
+      { key: "rooms", title: t("Rooms I belong to") },
+      rooms.length === 0 ? (0, import_react29.createElement)(SetRow, { label: t("No workgroups yet.") }) : rooms.map((room2) => (0, import_react29.createElement)(
+        "button",
+        {
+          key: room2.id,
+          type: "button",
+          className: "bt-set-row",
+          onClick: () => void openRoom(room2.id)
+        },
+        (0, import_react29.createElement)("span", { className: "bt-row-title" }, room2.name ?? room2.id),
+        (0, import_react29.createElement)("span", { className: "bt-tag" }, t("Reopen")),
+        (0, import_react29.createElement)("span", { className: "bt-chevron" }, (0, import_react29.createElement)(ChevronRightIcon))
+      ))
+    ) : null,
+    signedIn ? (0, import_react29.createElement)(
+      SetSection,
+      { key: "invitations", title: t("Invitations") },
+      invitations.length === 0 ? (0, import_react29.createElement)(SetRow, { label: t("No pending invitations") }) : invitations.map((invitation) => (0, import_react29.createElement)(
+        "div",
+        { key: invitation.id, className: "bt-set-row" },
+        (0, import_react29.createElement)("span", { className: "bt-row-title" }, invitation.roomName ?? invitation.room?.name ?? invitation.roomId),
+        (0, import_react29.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", disabled: busy, onClick: () => invoke(() => workgroupHub.respondToInvitation(invitation.id, "accept"), "Invitation accepted", true) }, t("Accept")),
+        (0, import_react29.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", disabled: busy, onClick: () => invoke(() => workgroupHub.respondToInvitation(invitation.id, "decline"), "Invitation rejected", true) }, t("Reject"))
+      ))
+    ) : null,
+    notice ? (0, import_react29.createElement)("div", { key: "notice", className: "bt-success", role: "status" }, notice) : null,
+    error ? (0, import_react29.createElement)("div", { key: "error", className: "bt-error", role: "alert" }, error) : null
+  ];
+}
+function SettingsDialog({ page, id, roster, actions, useUpdate, hub, workgroupHub, sessions, leaving = false }) {
   const [error, setError] = (0, import_react29.useState)("");
   const close = (0, import_react29.useCallback)(() => actions.closeSettings(), []);
   useEscape(close);
@@ -11017,6 +11255,7 @@ function SettingsDialog({ page, id, roster, actions, useUpdate, leaving = false 
           { key: pageKey, className: "bt-settings-scroll bt-settings-page", "data-move": last.current.move },
           errorLine,
           shown === "general" ? (0, import_react29.createElement)(GeneralPage, { roster, actions, run }) : null,
+          shown === "hub" ? (0, import_react29.createElement)(HubPage, { hub, workgroupHub, sessions, actions }) : null,
           bot ? (0, import_react29.createElement)("div", { className: "bt-settings-form" }, (0, import_react29.createElement)(BotSettingsForm, { key: bot.id, bot, roster, actions, run })) : null,
           shown === "bots" && !bot ? (0, import_react29.createElement)(BotsPage, { roster, actions, run }) : null,
           room2 ? (0, import_react29.createElement)("div", { className: "bt-settings-form" }, (0, import_react29.createElement)(GroupSettingsForm, { key: room2.id, room: room2, roster, actions, run })) : null,
@@ -12417,9 +12656,10 @@ var import_react34 = require("react");
 var import_react_dom9 = require("react-dom");
 var DIALOG_EXIT_MS = 160;
 var MENU_EXIT_MS3 = 120;
-function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity, useWork, useRegistry, useBrowserPages, useBrowserTabs, useUpdate, useWorkgroups, actions }) {
+function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity, useWork, useRegistry, useBrowserPages, useBrowserTabs, useUpdate, useWorkgroups, useHub, workgroupHub, sessions, actions }) {
   const roster = useRoster((value) => value);
   const ui2 = useUi((value) => value);
+  const hub = useHub((value) => value);
   useRegistry((value) => value);
   const workgroups = useWorkgroups((value) => value);
   const current = useSessions((list) => Object.values(list.byId).find((session) => (session?.retainedBy?.mainView ?? 0) > 0)?.id ?? null);
@@ -12452,7 +12692,7 @@ function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity
     ui2.exchange ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(ExchangeDialog, { pair: ui2.exchange, roster, actions }), document.body) : null,
     ui2.voice ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(VoiceMode, { key: ui2.voice, sessionId: ui2.voice, roster, actions, useSessions, useSessionStatus }), document.body) : null,
     menu ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(ContextMenu, { key: `${menu.kind ?? ""}:${menu.id}:${menu.x}:${menu.y}`, menu, roster, actions, leaving: menuLeaving }), document.body) : null,
-    settings ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(SettingsDialog, { page: settings.page, id: settings.id, roster, actions, useUpdate, leaving: settingsLeaving }), document.body) : null,
+    settings ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(SettingsDialog, { page: settings.page, id: settings.id, roster, actions, useUpdate, hub, workgroupHub, sessions, leaving: settingsLeaving }), document.body) : null,
     memory && roster.byId[memory] ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(MemoryDialog, { key: memory, bot: roster.byId[memory], actions, leaving: memoryLeaving }), document.body) : null
   );
 }
@@ -13728,25 +13968,6 @@ function newWorkgroupName(now = /* @__PURE__ */ new Date()) {
   return `Workgroup ${stamp}`;
 }
 
-// src/client/workgroup-entry.js
-async function enterWorkgroup({ roomId, sessions, openSession, closeOverlay, watch, report }) {
-  const sessionId = workgroupSessionId(roomId);
-  const known = sessions.list?.getSnapshot?.()?.byId?.[sessionId] !== void 0;
-  if (!known) {
-    try {
-      await sessions.create({ sessionId });
-    } catch (error) {
-      report?.(error);
-      return void 0;
-    }
-  }
-  openSession(sessionId);
-  closeOverlay?.();
-  await watch?.(roomId).catch?.(() => {
-  });
-  return sessionId;
-}
-
 // src/client/workgroup-status.js
 var HUB_STATUSES = ["live", "offline", "refused", "signed-out", "absent", "unknown"];
 var OFFLINE = {
@@ -13955,8 +14176,12 @@ function createHubBridge({ pollMs = 4e3, callImpl = call } = {}) {
 function createWorkgroupHub({ bridge }) {
   const invoke = (endpoint, payload) => bridge.send(endpoint, payload);
   return {
-    get available() {
+    get configured() {
       return bridge.view.getSnapshot().configured === true;
+    },
+    get available() {
+      const snapshot = bridge.view.getSnapshot();
+      return snapshot.configured === true && snapshot.signedIn === true;
     },
     get signedIn() {
       return bridge.view.getSnapshot().signedIn === true;
@@ -13969,12 +14194,20 @@ function createWorkgroupHub({ bridge }) {
       return snapshot.userId === void 0 ? void 0 : { userId: snapshot.userId, userHandle: snapshot.userHandle, displayName: snapshot.displayName, deviceId: snapshot.deviceId };
     },
     view: bridge.view,
+    configure: (value) => {
+      const url = typeof value === "string" ? value : value?.url;
+      return invoke("hub-configure", { hubUrl: url });
+    },
+    register: (payload) => invoke("hub-register", payload),
     signIn: (credentials) => invoke("hub-sign-in", credentials),
     signOut: () => invoke("hub-sign-out", {}),
     resume: () => invoke("hub-resume", {}),
+    rooms: () => invoke("hub-rooms", {}).then((result) => result?.rooms ?? result),
     createRoom: (name, options = {}) => invoke("hub-create-room", { name, ...options }),
     openRoom: (roomId) => invoke("hub-open-room", { roomId }),
     watch: (roomId) => invoke("hub-open-room", { roomId }),
+    dissolve: (roomId) => invoke("hub-dissolve", { roomId }),
+    uploadArtifact: (roomId, payload) => invoke("hub-upload-artifact", { roomId, ...payload }),
     invite: (roomId, options) => invoke("hub-invite", { roomId, ...options }),
     invitations: () => invoke("hub-invitations", {}),
     respondToInvitation: (invitationId, decision) => invoke("hub-respond-invitation", { invitationId, decision }),
@@ -15049,7 +15282,7 @@ function apply(ctx) {
   ctx.effect(() => hubBridge.view.subscribe(() => {
     hub.set(hubBridge.view.getSnapshot());
   }), "ds-bot: hub status");
-  const overlayFace = () => ({ ...face(), hooks: { ...face().hooks, workgroups, hub } });
+  const overlayFace = () => ({ ...face(), sessions: ctx.sessions, workgroupHub, hooks: { ...face().hooks, workgroups, hub } });
   const registerBotPanel = () => {
     panelRegistered = true;
     ctx.slots.inject("sidebar.panellist", () => ctx.slots.register({

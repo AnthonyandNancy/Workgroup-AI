@@ -284,6 +284,9 @@ export function install(rt) {
         // this machine's team state, so a Hub read must not depend on (or wait for) the local
         // state file. Signing in has to work before there is any local team at all.
         case 'hub-view':
+        case 'hub-configure':
+        case 'hub-register':
+        case 'hub-rooms':
         case 'hub-sign-in':
         case 'hub-sign-out':
         case 'hub-resume':

@@ -314,6 +314,7 @@ button.bt-q-opt:active{background:var(--bt-active)}
 .bt-send{height:40px;min-width:40px;border-radius:999px;border:0;background:var(--bt-accent);color:var(--bt-accent-ink,#fff);font-size:14px;padding:0 14px;cursor:pointer;flex:none;white-space:nowrap}
 .bt-send:disabled{opacity:.35;cursor:default}
 .bt-error{padding:0 14px 10px;color:#e02135;font-size:12px}
+.bt-success{padding:0 14px 10px;color:var(--bt-green);font-size:12px}
 
 .bt-pane{position:fixed;top:var(--dsh-frame-chrome-top,0px);right:0;bottom:0;z-index:45;pointer-events:auto;background:var(--bt-main);color:var(--bt-ink);display:flex;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
 .bt-dialog{flex:1;display:flex;flex-direction:column;min-width:0}
@@ -484,6 +485,9 @@ button.bt-set-row:hover{background:var(--bt-hover)}
 .bt-set-copy{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
 .bt-set-hint{font-size:12px;line-height:16px;color:color-mix(in srgb,var(--bt-ink-2) 50%,var(--bt-ink-3))}
 .bt-set-control{flex:none;display:flex;align-items:center;gap:6px}
+.bt-set-control-wide{flex:1;min-width:0}
+.bt-set-control-wide .bt-input{width:100%}
+.bt-set-card>.bt-actions{padding:10px 12px}
 .bt-set-value{font-size:13px;color:var(--bt-ink-2);text-align:right}
 .bt-set-bot{flex:1;display:flex;align-items:center;gap:8px;min-width:0}
 .bt-set-paste{flex-direction:column;align-items:stretch;gap:8px}
