@@ -120,6 +120,8 @@ export function makeRoomRoutes({ requireAuth }) {
           actorUserId: request.auth.user.id,
           actorDeviceId: request.auth.deviceId,
         })
+        fastify.hub.realtime.publishToRoom(request.params.roomId,
+          makeEvent('room.renamed', { roomId: request.params.roomId, name: room.name }, { roomId: request.params.roomId }))
         return reply.code(200).send({ room: publicRoom(room) })
       } catch (error) {
         return roomFailure(reply, error)

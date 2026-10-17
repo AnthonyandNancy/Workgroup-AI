@@ -31,6 +31,9 @@ export const EVENT_TYPES = Object.freeze([
   // A workgroup ended. Room-scoped and momentary like the rest, but it is the only event that
   // describes a change to the room itself rather than to something inside it.
   'room.dissolved',
+  // The room's name changed. Additive in wg.v1: older clients ignore an unknown event, while a
+  // client that knows it can update an open room without re-opening it.
+  'room.renamed',
 ])
 
 export class EventError extends Error {

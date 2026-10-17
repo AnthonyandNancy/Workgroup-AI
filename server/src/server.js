@@ -9,6 +9,9 @@ import fastifyWebsocket from '@fastify/websocket'
 import { loadTlsOptions } from './config/index.js'
 import { probeWritable, readMeta, writeMeta } from './db/index.js'
 import { buildRoutePlugins } from './api/index.js'
+import { makeAdminRoutes } from './api/admin.js'
+import { createAdminAuth, makeRequireOperator } from './admin/auth.js'
+import { registerAdminWeb } from './admin/web.js'
 import { makeAuthenticator, makeRequireAuth } from './auth/request.js'
 import { PersistentLimiter } from './security/ratelimit-store.js'
 import { createSigningKeySet } from './modules/tasks/signing.js'
@@ -51,6 +54,17 @@ export async function createServer({ config, db, logger }) {
     windowSeconds: config.security.loginWindowSeconds,
     lockoutSeconds: config.security.loginLockoutSeconds,
   })
+  const adminLoginLimiter = new PersistentLimiter({
+    db,
+    maxAttempts: config.security.loginMaxAttempts,
+    windowSeconds: config.security.loginWindowSeconds,
+    lockoutSeconds: config.security.loginLockoutSeconds,
+  })
+  const adminAuth = createAdminAuth({
+    db,
+    secureCookies: String(config.publicUrl ?? '').startsWith('https:'),
+  })
+  const requireOperator = makeRequireOperator({ adminAuth })
   const registerLimiter = new PersistentLimiter({
     db,
     maxAttempts: config.security.loginMaxAttempts,
@@ -96,7 +110,7 @@ export async function createServer({ config, db, logger }) {
     authenticate: makeAuthenticator({ config, db }),
     log: server.log,
   })
-  server.decorate('hub', { config, db, version: hubVersion(), requireAuth, realtime, loginLimiter, registerLimiter, bootstrapLimiter, heartbeatLimiter, messageLimiter, signing })
+  server.decorate('hub', { config, db, version: hubVersion(), requireAuth, requireOperator, adminAuth, adminLoginLimiter, realtime, loginLimiter, registerLimiter, bootstrapLimiter, heartbeatLimiter, messageLimiter, signing })
 
   server.setErrorHandler((error, request, reply) => {
     const status = error.statusCode ?? 500
@@ -115,13 +129,16 @@ export async function createServer({ config, db, logger }) {
 
   // The decorator is declared once, before any plugin can read `request.auth`.
   server.decorateRequest('auth', null)
+  server.decorateRequest('operator', null)
   // WebSocket support is registered before the route that declares the websocket handler.
   await server.register(fastifyWebsocket)
   for (const plugin of buildRoutePlugins({ requireAuth })) await server.register(plugin)
+  await server.register(makeAdminRoutes({ adminAuth, requireOperator }))
   // `/api/v1/realtime` is a route on the root instance, not a plugin: it needs the hub the
   // handler below closes over, and keeping it beside the health routes makes the socket
   // surface visible in one place.
   registerRealtimeRoute({ fastify: server, hub: realtime })
+  registerAdminWeb(server)
 
   server.get('/api/v1/health/live', { config: { rateLimit: false } }, async () => ({
     status: 'ok',

@@ -17,6 +17,7 @@
 
 - V1 必做：本机 DSH/Bot 功能回归、内置导航、真实群、人类审批、原生隔离任务、有限工具权限、审计、群记忆、任务分享、断线恢复、独立部署。
 - V1 不做：让 Web 浏览器在未运行用户本地 Host 时控制本地工具、把所有人的 Agent Runtime 集中到 Hub、跨互联网 NAT 自动打洞、大规模公开社交、自动读取个人私人记忆、重新设计 DS Bot UI。
+- 本地演示附加：Hub 管理端只管理工作群；用户只读；不做用户 CRUD、设备管理、审计 UI、消息搜索。
 - 未来可选：外网 Hub、SSO、集群高可用、移动客户端、端到端加密群内容；**不能以将来功能替代 V1 权限边界**。
 
 ## 2. 唯一的两端项目架构
@@ -206,7 +207,7 @@ DS Bot 身份由自身运行时及 Session 索引管理。禁止往普通 DSH Se
 
 ## 8. 数据实体与迁移
 
-详见 `server/db/migrations/0001_schema.sql`。基础实体：users、devices、rooms、room_members、invitations、messages、bot_directory、tasks、approvals、task_events、artifacts、group_memories、memory_revisions、audit_events、idempotency_keys。
+详见 `server/db/migrations/0001_schema.sql`。基础实体：users、devices、rooms、room_members、invitations、messages、bot_directory、tasks、approvals、task_events、artifacts、group_memories、memory_revisions、audit_events、idempotency_keys、operators（独立管理员表）。`audit_events` 增加 `actor_operator_id`，用于记录 operator 操作。
 
 完整群数据在 Hub 中；Bot 私人记忆、私人 Session、原生执行 logs 不上传。共享成果可在 server 对象存储（单机可用文件系统）保存，但应使用内容哈希、ACL 和引用关系管理。随着上传规模增长再引入对象存储，不因此增加第三代码项目。
 
@@ -214,7 +215,7 @@ DS Bot 身份由自身运行时及 Session 索引管理。禁止往普通 DSH Se
 
 ### 9.1 生产部署只使用 server/
 
-将 `server/` 复制到一台无 DSH/DS Bot/Electron 源码的 Linux 服务器，安装固定 Node 版本和服务端依赖，提供持久 `data/` 目录与 TLS 证书，运行迁移，启动单一 Hub 进程。可在 `server/deploy/` 提供 systemd 和 Docker 方案，选择其一作为生产支持路线。安装应用端不需要安装 server 源码。
+将 `server/` 复制到一台无 DSH/DS Bot/Electron 源码的 Linux 服务器，安装固定 Node 版本和服务端依赖，提供持久 `data/` 目录与 TLS 证书，运行迁移，启动单一 Hub 进程。可在 `server/deploy/` 提供 systemd 和 Docker 方案，选择其一作为生产支持路线。安装应用端不需要安装 server 源码。`/admin/` 由同一个 `server/` 进程提供；默认 admin 仅限本地/内网演示，生产必须修改 `operators` 表中的密码并限制网络访问。
 
 ### 9.2 运维守则
 
@@ -248,7 +249,33 @@ DS Bot 身份由自身运行时及 Session 索引管理。禁止往普通 DSH Se
 | 全权限继承 | 工具/路径/网络/进程的任务级强制交集 | P0 |
 | SQLite 单机 Hub 吞吐瓶颈 | WAL + 压测，必要时扩展但不拆第三项目 | P1 |
 | Hub 离线/移动客户端假定可用 | 降级状态与离线补偿，不承诺无 Host 本地执行 | P1 |
+| 固定 admin 密码 | 仅本地/内网演示；生产修改 `operators` 密码并限制 `/admin` 网络访问 | P0 |
+| 管理员可读消息正文 | 仅 operator；每次读取写审计；不记录正文 | P0 |
 
 ## 12. 开发顺序与交接方式
 
-使用 `TASK_BOARD.md` 的逐项任务。推荐先 P0 源码/构建与 G3 技术探针，再做基础 Hub，再复用 Bot UI 开工作群，最后跨用户执行与安全。每个阶段都需提交实测证据和更新 `ACCEPTANCE.md`，不能用页面展示替代真实端到端结果。
+使用 `TASK_BOARD.md` 的逐项任务。推荐先 P0 源码/构建与 G3 技术探针，再做基础 Hub，再复用 Bot UI 开工作群，最后跨用户执行与安全。每个阶段都需提交实测证据和更新 `ACCEPTANCE.md`，不能用页面展示替代真实端到端结果。本地演示管理端按 `DOC-01 → ADM-01 → ADM-02 → ADM-03 → ADM-04` 执行，不阻塞 G0-G5。
+
+## 13. 本地演示 Hub 管理端（范围收缩）
+
+### 13.1 目标与边界
+
+本地演示需要一个独立于 `application/` 的 Hub Web 管理端，只管理工作群（`rooms.kind='workgroup'`）。应用内不出现 Hub 管理、登录、注册或地址配置入口。
+
+管理员使用独立 `operators` 表，不写入 `users` 表。默认演示账号为 `admin / abcd1234567890`，密码以 scrypt 哈希保存；生产环境通过数据库修改密码或停用。
+
+### 13.2 数据与账号
+
+新增 `operators` 表；`audit_events` 增加 `actor_operator_id`。admin 的登录、工作群变更和消息查看均写审计，但不记录密码、token 或消息正文。不做物理删除：工作群解散使用 `dissolved_at`，成员移除使用 `removed_at`，消息保留。
+
+### 13.3 API 与页面
+
+管理 API 位于 `/api/v1/admin`：登录/登出/会话；只读用户列表；工作群列表、创建、详情、改名、解散、成员增删；工作群消息正文只读分页。`/admin/` 使用 `server/web/admin` 下的原生 HTML/CSS/JS，由 `server/` 自身提供，不引入前端构建链。
+
+### 13.4 明确不做
+
+不做用户 CRUD、设备管理、成员角色修改、owner 转移、审计 UI、Dashboard、消息搜索、附件下载、消息编辑/删除、多管理员权限。普通 room、Bot 本地群和私人 Session 永不进入管理端。
+
+### 13.5 验收
+
+admin 可登录 `/admin`；工作群列表只显示 workgroup；可创建、改名、解散、增删成员；消息正文可分页只读；改名后应用端实时更新群名；guest Bearer 不能访问 admin API；无物理删除。

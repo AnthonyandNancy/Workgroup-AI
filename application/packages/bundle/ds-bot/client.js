@@ -13798,6 +13798,12 @@ function reduceWorkgroup(state, event) {
       if (change.roomId !== void 0 && change.roomId !== state.room?.id) return state;
       return { ...state, membersStale: true };
     }
+    case "room.renamed": {
+      const change = event.payload ?? {};
+      if (change.roomId !== void 0 && change.roomId !== state.room?.id) return state;
+      if (typeof change.name !== "string" || change.name === state.room?.name) return state;
+      return { ...state, room: { ...state.room, name: change.name } };
+    }
     case "invitation.created":
       return { ...state, invitationsStale: true };
     case "task.approval_requested":

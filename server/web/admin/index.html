@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Workgroup Hub Admin</title>
+  <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+  <section id="login-view" class="login-panel">
+    <h1>Workgroup Hub</h1>
+    <p class="muted">本地演示管理端</p>
+    <form id="login-form">
+      <label for="admin-handle">管理员账号</label>
+      <input id="admin-handle" name="userHandle" value="admin" autocomplete="username" required>
+      <label for="admin-password">密码</label>
+      <input id="admin-password" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">登录</button>
+      <p id="login-error" class="error" role="alert"></p>
+    </form>
+  </section>
+
+  <section id="app-view" hidden>
+    <header class="topbar">
+      <div>
+        <strong>Workgroup Hub</strong>
+        <span class="muted">本地演示管理端</span>
+      </div>
+      <div>
+        <span id="operator-name" class="muted"></span>
+        <button id="logout" type="button" class="secondary">退出</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="list-pane">
+        <form id="create-form" class="create-form">
+          <h2>创建工作群</h2>
+          <input id="new-workgroup-name" placeholder="工作群名称" maxlength="120" required>
+          <select id="new-workgroup-owner" required></select>
+          <button type="submit">创建</button>
+        </form>
+        <div class="list-head">
+          <h2>工作群</h2>
+          <button id="refresh-workgroups" type="button" class="secondary">刷新</button>
+        </div>
+        <ul id="workgroup-list" class="workgroup-list"></ul>
+      </aside>
+
+      <section id="workgroup-detail" class="detail-pane">
+        <p class="muted">选择左侧工作群查看详情。</p>
+      </section>
+    </main>
+    <p id="app-error" class="error" role="alert"></p>
+  </section>
+
+  <script src="/admin/app.js"></script>
+</body>
+</html>

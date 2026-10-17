@@ -581,6 +581,28 @@ describe('applying events to a room view', () => {
     assert.deepEqual(next.members, [{ userId: 'bob' }])
   })
 
+  it('updates an open room name from a room rename event', () => {
+    const state = { room, members: [], messages: [], tasks: [], head: 0 }
+    const next = reduceWorkgroup(state, {
+      type: 'room.renamed',
+      roomId: 'room-1',
+      payload: { roomId: 'room-1', name: 'Renamed room' },
+    })
+    assert.equal(next.room.name, 'Renamed room')
+    assert.equal(next.members, state.members)
+    // A rename for another room or a malformed name is ignored.
+    assert.equal(reduceWorkgroup(state, {
+      type: 'room.renamed',
+      roomId: 'room-2',
+      payload: { roomId: 'room-2', name: 'Elsewhere' },
+    }), state)
+    assert.equal(reduceWorkgroup(state, {
+      type: 'room.renamed',
+      roomId: 'room-1',
+      payload: { roomId: 'room-1' },
+    }), state)
+  })
+
   it('replaces a task rather than appending a second copy of it', () => {
     const state = { room, members: [], messages: [], tasks: [{ id: 't1', state: 'PENDING_APPROVAL' }], head: 0 }
     const next = reduceWorkgroup(state, { type: 'task.approved', payload: { task: { id: 't1', state: 'APPROVED' } } })

@@ -217,7 +217,7 @@ integrations/workgroup/bot-adapter/cancellation.mjs  撤销与进程终止
 | 日志/审计 | `audit_events`（33 类） | 新增淘汰类；限速拒绝需留痕 |
 | 通知 | `approval-notices.js`（客户端） | 已有，需与工作群联动 |
 | 后台任务 | `cli/hub.js`（backup/restore/audit-prune） | 限速表需纳入备份与恢复 |
-| 管理端 | **不存在** | 不需要（无系统级管理员） |
+| 管理端 | **本地演示版** | `/admin` 只管理工作群；独立 `operators` 表、固定 admin、用户只读、消息正文只读；不做用户 CRUD/设备管理/审计 UI |
 | 用户端 | Bot 内部 UI | 工作群在此展示 |
 
 ## 确认无需修改

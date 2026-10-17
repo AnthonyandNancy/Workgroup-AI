@@ -13,6 +13,11 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    operatorCookie:
+      type: apiKey
+      in: cookie
+      name: hub_admin_session
+      description: Local-demo operator session; not a user bearer token.
   schemas:
     Room:
       type: object
@@ -354,3 +359,139 @@ paths:
       summary: 取消任务与吊销执行授权
       responses:
         '200': {description: Cancellation requested}
+
+  # ---- local-demo operator admin ----
+  /admin/login:
+    post:
+      security: []
+      summary: 本地演示管理员登录
+      description: 固定 admin 账号位于独立 operators 表；成功返回 HttpOnly cookie。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userHandle, password]
+              properties:
+                userHandle: {type: string}
+                password: {type: string}
+      responses:
+        '200': {description: Operator session cookie}
+        '401': {description: Invalid credentials}
+        '429': {description: Too many attempts}
+  /admin/logout:
+    post:
+      security: [{operatorCookie: []}]
+      summary: 管理员登出
+      responses:
+        '200': {description: Session cleared}
+  /admin/session:
+    get:
+      security: [{operatorCookie: []}]
+      summary: 当前管理员会话
+      responses:
+        '200': {description: Operator}
+        '401': {description: Not authenticated}
+  /admin/users:
+    get:
+      security: [{operatorCookie: []}]
+      summary: 只读用户列表，用于选择 owner/成员
+      parameters:
+        - {name: query, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100}}
+      responses:
+        '200': {description: Users without password hashes}
+  /admin/workgroups:
+    get:
+      security: [{operatorCookie: []}]
+      summary: 工作群列表（仅 kind=workgroup）
+      parameters:
+        - {name: query, in: query, schema: {type: string}}
+        - {name: status, in: query, schema: {type: string, enum: [live, dissolved, all]}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100}}
+      responses:
+        '200': {description: Workgroups}
+    post:
+      security: [{operatorCookie: []}]
+      summary: 创建工作群
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, ownerUserId]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 120}
+                ownerUserId: {type: string, format: uuid}
+      responses:
+        '201': {description: Created workgroup}
+        '400': {description: Invalid owner or name}
+  /admin/workgroups/{workgroupId}:
+    parameters: [{name: workgroupId, in: path, required: true, schema: {type: string, format: uuid}}]
+    get:
+      security: [{operatorCookie: []}]
+      summary: 工作群详情
+      responses:
+        '200': {description: Workgroup}
+        '404': {description: No such workgroup}
+    patch:
+      security: [{operatorCookie: []}]
+      summary: 修改工作群名称
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 120}
+      responses:
+        '200': {description: Renamed workgroup}
+        '409': {description: Dissolved or invalid state}
+    delete:
+      security: [{operatorCookie: []}]
+      summary: 解散工作群（软状态，不删除消息）
+      responses:
+        '200': {description: Dissolved workgroup}
+        '409': {description: Already dissolved}
+  /admin/workgroups/{workgroupId}/members:
+    parameters: [{name: workgroupId, in: path, required: true, schema: {type: string, format: uuid}}]
+    post:
+      security: [{operatorCookie: []}]
+      summary: 直接添加 active 用户（角色 member）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId]
+              properties:
+                userId: {type: string, format: uuid}
+      responses:
+        '201': {description: Member added}
+        '409': {description: Already a member or workgroup dissolved}
+  /admin/workgroups/{workgroupId}/members/{userId}:
+    parameters:
+      - {name: workgroupId, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: userId, in: path, required: true, schema: {type: string, format: uuid}}
+    delete:
+      security: [{operatorCookie: []}]
+      summary: 移除工作群成员（软移除）
+      responses:
+        '200': {description: Member removed}
+        '409': {description: Owner cannot be removed or workgroup dissolved}
+  /admin/workgroups/{workgroupId}/messages:
+    parameters: [{name: workgroupId, in: path, required: true, schema: {type: string, format: uuid}}]
+    get:
+      security: [{operatorCookie: []}]
+      summary: 只读工作群消息正文
+      parameters:
+        - {name: beforeSeq, in: query, schema: {type: integer, minimum: 1}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100}}
+      responses:
+        '200': {description: Message page; body is returned for operator reading}
+        '404': {description: No such workgroup}

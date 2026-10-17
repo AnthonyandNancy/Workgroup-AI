@@ -11,7 +11,7 @@
     "type": { "type": "string", "enum": [
       "message.created", "invitation.created", "member.changed", "presence.changed",
       "task.approval_requested", "task.approved", "task.cancelled", "task.progress", "task.shared",
-      "group_memory.changed", "room.dissolved", "ack", "error", "hello"
+      "group_memory.changed", "room.dissolved", "room.renamed", "ack", "error", "hello"
     ] },
     "issuedAt": { "type": "string", "format": "date-time" },
     "roomId": { "type": "string" },

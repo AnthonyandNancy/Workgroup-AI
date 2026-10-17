@@ -107,6 +107,11 @@ F-10 为 **S 级**（静态源码核对）。**尚无任何 N 级（双机）或
 | H-11 | server | 受控附件上传、下载、元数据 ACL | H-04 | 非接收人不能下载 | PASS（L 级；无扫描、无容量配额） |
 | H-12 | server | 审计、备份、恢复、保留策略 | H-08/H-10 | 恢复真实群和状态 | PASS（L 级；两项遗留——备份调度、附件字节入备份——已由 H-13 关闭） |
 | H-13 | server | 独立系统部署/容器部署、安全配置 | H-12 | 干净 Linux 仅 server/ 部署 | PASS（L 级真实 Linux：容器 + systemd 双路线跑通完整演练；未在独立 Linux 主机/k8s 上部署） |
+| DOC-01 | 文档 | 收缩范围并同步实施书/验收/README | — | 文档不再宣称完整后台 | PASS（实施书第 13 节、F 验收、ADM-01/DOC-01 与 Markdown 文档已核对） |
+| ADM-01 | server | operators 表、固定 admin 登录/会话 | H-13 | admin 独立表；登录/登出；guest token 拒绝 | PASS（M 级：`adm-auth.test.js` 5/5；登录限流、cookie 会话、guest 拒绝） |
+| ADM-02 | server | 管理端工作群 API（仅 workgroup） | ADM-01/H-04 | CRUD/成员增删/消息只读；普通 room 不可见 | PASS（M 级：`adm-workgroups` 4/4 + `adm-messages` 2/2；普通 room 404、软删除保留消息） |
+| ADM-03 | server | `/admin` Web UI | ADM-02 | 登录、列表/详情、消息正文 | 部分 PASS（M 级：静态页/资源与 API 接线测试通过；真实浏览器 CRUD 未跑） |
+| ADM-04 | server+application | `room.renamed` 实时事件 | ADM-02/A-05 | 改名后应用端实时更新 | PASS（M 级：契约 enum、发布测试、`a05` reducer 测试通过；真实 WebSocket 双端未跑） |
 | A-01 | application | Hub 配置、登录/设备登记及协议握手 | H-03/F-08 | 可与单独 Hub 建连 | PASS（26/26 测试对真实 Hub 的真实 HTTP；修复 /auth/config 协议字段与 devices 指纹全局唯一两处服务端缺陷） |
 | A-02 | application | Bridge WSS ACK/重连/离线补拉 | A-01/H-06 | 真实双端无重复 | PASS（14/14 测试；真实 Hub 进程 + 真实 ws 客户端；重连后 roomSeq 序列恰为 [1..6] 无重复） |
 | A-03 | application | 复用原版群聊 UI，新建工作群视图 | F-08/H-04 | 视觉与原版一致、功能对照矩阵通过 | **部分 PASS（M 级已实现，L 级待补）**：挂载路径已实测（须先 `sessions.create({sessionId:'wg:<roomId>'})`，否则 `sessions.retain` 对未知 id 抛错；`installShell()` 仅在 Bot 面板选中时执行）；组件级复用已验证（原版 GroupSettingsForm/RoomAvatar、不含本地群耦合）。**像素级比对与真实浏览器功能对照矩阵未做**，故不写 PASS |

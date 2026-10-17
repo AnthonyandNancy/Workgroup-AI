@@ -74,14 +74,15 @@ export function assertRoomKind(kind) {
   return value
 }
 
-function audit(db, { actorUserId, actorDeviceId, eventType, objectType, objectId, outcome, details, now }) {
+function audit(db, { actorUserId, actorDeviceId, actorOperatorId, eventType, objectType, objectId, outcome, details, now }) {
   db.prepare(`INSERT INTO audit_events
-    (id, actor_user_id, actor_device_id, event_type, object_type, object_id, outcome, safe_details_json, occurred_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    (id, actor_user_id, actor_device_id, actor_operator_id, event_type, object_type, object_id, outcome, safe_details_json, occurred_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(
       randomUUID(),
       actorUserId ?? null,
       actorDeviceId ?? null,
+      actorOperatorId ?? null,
       eventType,
       objectType,
       objectId ?? null,
@@ -171,7 +172,7 @@ export function listMembers(db, roomId) {
  * `kind` is recorded here rather than inferred later from members or name. The audit entry
  * carries it too, so "was this room ever a workgroup" is answerable from the trail alone.
  */
-export function createRoom(db, { name, ownerUserId, ownerDeviceId, kind, now = new Date() }) {
+export function createRoom(db, { name, ownerUserId, ownerDeviceId, kind, actorOperatorId, now = new Date() }) {
   const roomName = assertRoomName(name)
   const roomKind = assertRoomKind(kind)
   const id = randomUUID()
@@ -182,7 +183,17 @@ export function createRoom(db, { name, ownerUserId, ownerDeviceId, kind, now = n
       .run(id, roomName, ownerUserId, createdAt, roomKind)
     db.prepare('INSERT INTO room_members (room_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)')
       .run(id, ownerUserId, 'owner', createdAt)
-    audit(db, { actorUserId: ownerUserId, actorDeviceId: ownerDeviceId, eventType: 'room.created', objectType: 'room', objectId: id, outcome: 'success', details: { name: roomName, kind: roomKind }, now })
+    audit(db, {
+      actorUserId: actorOperatorId === undefined ? ownerUserId : null,
+      actorDeviceId: ownerDeviceId,
+      actorOperatorId,
+      eventType: 'room.created',
+      objectType: 'room',
+      objectId: id,
+      outcome: 'success',
+      details: { name: roomName, kind: roomKind, ...(actorOperatorId === undefined ? {} : { operator: true }) },
+      now,
+    })
     db.exec('COMMIT')
   } catch (error) {
     try {
@@ -195,13 +206,23 @@ export function createRoom(db, { name, ownerUserId, ownerDeviceId, kind, now = n
   return findRoom(db, id)
 }
 
-export function renameRoom(db, { roomId, name, actorUserId, actorDeviceId, now = new Date() }) {
+export function renameRoom(db, { roomId, name, actorUserId, actorDeviceId, actorOperatorId, now = new Date() }) {
   const roomName = assertRoomName(name)
   db.exec('BEGIN IMMEDIATE')
   try {
     const result = db.prepare('UPDATE rooms SET name = ? WHERE id = ?').run(roomName, roomId)
     if (result.changes === 0) throw new RoomError('No such room', 'NO_SUCH_ROOM')
-    audit(db, { actorUserId, actorDeviceId, eventType: 'room.renamed', objectType: 'room', objectId: roomId, outcome: 'success', details: { name: roomName }, now })
+    audit(db, {
+      actorUserId: actorOperatorId === undefined ? actorUserId : null,
+      actorDeviceId,
+      actorOperatorId,
+      eventType: 'room.renamed',
+      objectType: 'room',
+      objectId: roomId,
+      outcome: 'success',
+      details: { name: roomName, ...(actorOperatorId === undefined ? {} : { operator: true }) },
+      now,
+    })
     db.exec('COMMIT')
   } catch (error) {
     try {
@@ -381,11 +402,11 @@ export function revokeInvitation(db, { invitationId, actorUserId, actorDeviceId,
  * Removal also revokes that member's pending invitations to the room, so a removal cannot
  * be undone by accepting an offer that was already in flight.
  */
-export function removeMember(db, { roomId, userId, actorUserId, actorDeviceId, now = new Date() }) {
+export function removeMember(db, { roomId, userId, actorUserId, actorDeviceId, actorOperatorId, now = new Date() }) {
   const membership = membershipOf(db, { roomId, userId })
   if (membership === undefined) throw new RoomError('That user is not a member', 'NOT_A_MEMBER')
   if (membership.role === 'owner') throw new RoomError('The room owner cannot be removed', 'CANNOT_REMOVE_OWNER')
-  if (userId === actorUserId) throw new RoomError('Use leave to remove yourself', 'CANNOT_REMOVE_SELF')
+  if (actorOperatorId === undefined && userId === actorUserId) throw new RoomError('Use leave to remove yourself', 'CANNOT_REMOVE_SELF')
 
   const removedAt = nowIso(now)
   db.exec('BEGIN IMMEDIATE')
@@ -394,7 +415,17 @@ export function removeMember(db, { roomId, userId, actorUserId, actorDeviceId, n
       .run(removedAt, roomId, userId)
     db.prepare("UPDATE invitations SET status = 'revoked' WHERE room_id = ? AND target_user_id = ? AND status = 'pending'")
       .run(roomId, userId)
-    audit(db, { actorUserId, actorDeviceId, eventType: 'room.member_removed', objectType: 'room', objectId: roomId, outcome: 'success', details: { removedUserId: userId }, now })
+    audit(db, {
+      actorUserId: actorOperatorId === undefined ? actorUserId : null,
+      actorDeviceId,
+      actorOperatorId,
+      eventType: 'room.member_removed',
+      objectType: 'room',
+      objectId: roomId,
+      outcome: 'success',
+      details: { removedUserId: userId, ...(actorOperatorId === undefined ? {} : { operator: true }) },
+      now,
+    })
     db.exec('COMMIT')
   } catch (error) {
     try {
@@ -511,11 +542,16 @@ export function isDissolved(room) {
  *   confirmed), `ROOM_OWNER_REQUIRED` for a member who is not the owner, `ROOM_DISSOLVED` when it has
  *   already ended.
  */
-export function dissolveRoom(db, { roomId, actorUserId, actorDeviceId, now = new Date() }) {
-  const membership = membershipOf(db, { roomId, userId: actorUserId })
-  if (membership === undefined) throw new RoomError('No such room, or you are not a member', 'NOT_A_MEMBER')
-  if (membership.role !== 'owner') {
-    throw new RoomError('Only the workgroup owner can dissolve it. Ask the owner, or leave the workgroup.', 'ROOM_OWNER_REQUIRED')
+export function dissolveRoom(db, { roomId, actorUserId, actorDeviceId, actorOperatorId, now = new Date() }) {
+  if (actorOperatorId === undefined) {
+    const membership = membershipOf(db, { roomId, userId: actorUserId })
+    if (membership === undefined) throw new RoomError('No such room, or you are not a member', 'NOT_A_MEMBER')
+    if (membership.role !== 'owner') {
+      throw new RoomError('Only the workgroup owner can dissolve it. Ask the owner, or leave the workgroup.', 'ROOM_OWNER_REQUIRED')
+    }
+  } else {
+    const room = findRoom(db, roomId)
+    if (room === undefined || room.kind !== 'workgroup') throw new RoomError('No such room', 'NO_SUCH_ROOM')
   }
   const stamp = nowIso(now)
   const pendingTasks = []
@@ -527,7 +563,8 @@ export function dissolveRoom(db, { roomId, actorUserId, actorDeviceId, now = new
     if (current === undefined) throw new RoomError('No such room, or you are not a member', 'NOT_A_MEMBER')
     if (isDissolved(current)) throw new RoomError('This workgroup has already been dissolved', 'ROOM_DISSOLVED')
 
-    db.prepare('UPDATE rooms SET dissolved_at = ?, dissolved_by = ? WHERE id = ?').run(stamp, actorUserId, roomId)
+    const dissolvedBy = actorOperatorId === undefined ? actorUserId : null
+    db.prepare('UPDATE rooms SET dissolved_at = ?, dissolved_by = ? WHERE id = ?').run(stamp, dissolvedBy, roomId)
     db.prepare("UPDATE invitations SET status = 'revoked' WHERE room_id = ? AND status = 'pending'").run(roomId)
 
     // Collected first so the caller can tell the room which tasks stopped, then cancelled with the
@@ -537,8 +574,15 @@ export function dissolveRoom(db, { roomId, actorUserId, actorDeviceId, now = new
     for (const task of unfinished) pendingTasks.push(task)
 
     audit(db, {
-      actorUserId, actorDeviceId, eventType: 'room.dissolved', objectType: 'room', objectId: roomId,
-      outcome: 'success', details: { pendingTasks: pendingTasks.length }, now,
+      actorUserId: actorOperatorId === undefined ? actorUserId : null,
+      actorDeviceId,
+      actorOperatorId,
+      eventType: 'room.dissolved',
+      objectType: 'room',
+      objectId: roomId,
+      outcome: 'success',
+      details: { pendingTasks: pendingTasks.length, ...(actorOperatorId === undefined ? {} : { operator: true }) },
+      now,
     })
     db.exec('COMMIT')
   } catch (error) {

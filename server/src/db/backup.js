@@ -37,7 +37,7 @@ export function entityCounts(db) {
   const tables = [
     'users', 'devices', 'refresh_tokens', 'rooms', 'room_members', 'invitations', 'messages',
     'bot_directory', 'tasks', 'approvals', 'task_events', 'dispatch_grants',
-    'artifacts', 'group_memories', 'memory_revisions', 'audit_events',
+    'artifacts', 'group_memories', 'memory_revisions', 'operators', 'audit_events',
   ]
   const counts = {}
   for (const table of tables) {

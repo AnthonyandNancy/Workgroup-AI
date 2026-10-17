@@ -320,6 +320,12 @@ export function reduceWorkgroup(state, event) {
       // otherwise leave the member visible.
       return { ...state, membersStale: true }
     }
+    case 'room.renamed': {
+      const change = event.payload ?? {}
+      if (change.roomId !== undefined && change.roomId !== state.room?.id) return state
+      if (typeof change.name !== 'string' || change.name === state.room?.name) return state
+      return { ...state, room: { ...state.room, name: change.name } }
+    }
     case 'invitation.created':
       return { ...state, invitationsStale: true }
     case 'task.approval_requested':
