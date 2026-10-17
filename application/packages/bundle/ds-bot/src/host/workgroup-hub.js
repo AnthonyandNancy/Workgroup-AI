@@ -24,7 +24,8 @@
 // relative path out of this package: `lib/` staging copies files without rewriting imports, so a
 // relative path that leaves `src/host` would resolve to a different depth once published under
 // `lib/src/host`. A package name is the same string in both trees.
-import { clearHubSession, createHubClient, hubConfigPath, hubStatePath, loadHubConfig, resolveHubUrl, saveHubConfig } from '@deepseek-ai/dsh-workgroup/protocol/hub-client'
+import { randomUUID } from 'node:crypto'
+import { clearHubSession, createHubClient, hubConfigPath, hubInstallationPath, hubStatePath, loadHubConfig, loadInstallationState, resolveHubUrl, saveHubConfig, saveInstallationState } from '@deepseek-ai/dsh-workgroup/protocol/hub-client'
 import { createWorkgroupClient, reduceWorkgroup } from '@deepseek-ai/dsh-workgroup/client'
 import { createApprovalClient } from '@deepseek-ai/dsh-workgroup/client/approvals'
 import { createBridge } from '@deepseek-ai/dsh-workgroup/bridge'
@@ -37,14 +38,21 @@ export function install(rt) {
   // both are normalized before a client is created.
   const statePath = config.hubStatePath ?? hubStatePath(dshHome)
   const configPath = config.hubConfigPath ?? hubConfigPath(dshHome)
+  const installationPath = config.hubInstallationPath ?? hubInstallationPath(dshHome)
   const savedConfig = loadHubConfig(configPath)
+  const savedInstallation = loadInstallationState(installationPath)
+  const appVersion = rt.version ?? '0.0.0'
+  const installationId = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(savedInstallation.installationId ?? '')
+    ? savedInstallation.installationId
+    : randomUUID()
   let hubUrl
   let configError
   try {
-    const configuredUrl = config.hubUrl ?? savedConfig.hubUrl
+    const configuredUrl = config.hubUrl ?? savedConfig.hubUrl ?? savedInstallation.hubUrl
     hubUrl = configuredUrl === undefined
       ? resolveHubUrl(config.env ?? process.env)
       : resolveHubUrl({ WORKGROUP_HUB_URL: configuredUrl })
+    saveInstallationState(installationPath, { installationId, hubUrl, appVersion })
   } catch (error) {
     configError = error
   }
@@ -53,6 +61,7 @@ export function install(rt) {
   let workgroup
   let bridge
   let bridgeStarting
+  let guestSessionStarting
   /** 'signed-out' before sign-in, then the Bridge's own states. Surfaced to the browser. */
   let connectionState = 'signed-out'
   let connectionDetail
@@ -75,7 +84,7 @@ export function install(rt) {
   const ensureClient = () => {
     if (configError !== undefined) throw configError
     if (client === undefined) {
-      client = createHubClient({ hubUrl, statePath, appVersion: rt.version ?? '0.0.0' })
+      client = createHubClient({ hubUrl, statePath, appVersion })
       workgroup = createWorkgroupClient({
         client,
         bridge: {
@@ -94,7 +103,7 @@ export function install(rt) {
    * is a renderer, and a credential that reaches it has escaped the Host for no benefit.
    */
   const hubView = () => {
-    const signedIn = client?.signedIn ?? false
+    const signedIn = connectionState === 'unavailable' ? false : client?.signedIn ?? false
     // `identity` rather than the session record: it carries the display fields and none of the
     // credentials, which is the only thing a renderer may have.
     const identity = client?.identity
@@ -138,6 +147,38 @@ export function install(rt) {
     })
     bridgeStarting = starting
     await starting
+  }
+
+  const ensureGuestSession = () => {
+    if (guestSessionStarting !== undefined) return guestSessionStarting
+    const operation = (async () => {
+      const current = ensureClient()
+      if (current.signedIn) {
+        try {
+          await current.ensureFreshToken()
+        } catch (error) {
+          rt.warn?.('ds-bot: persisted Hub session was not refreshed; bootstrapping a replacement: %s', error?.message ?? error)
+          bridge?.stop()
+          bridge = undefined
+          client = undefined
+          workgroup = undefined
+          clearHubSession(statePath)
+          connectionState = 'signed-out'
+          connectionDetail = undefined
+        }
+      }
+      if (client === current && current.signedIn) {
+        await startBridge()
+        return
+      }
+      await ensureClient().bootstrap({ installationId, deviceLabel: 'DSH Bot', platform: 'web' })
+      await startBridge()
+    })()
+    const tracked = operation.finally(() => {
+      if (guestSessionStarting === tracked) guestSessionStarting = undefined
+    })
+    guestSessionStarting = tracked
+    return tracked
   }
 
   /**
@@ -185,6 +226,7 @@ export function install(rt) {
   async function configureHub(rawUrl) {
     const nextHubUrl = resolveHubUrl({ WORKGROUP_HUB_URL: rawUrl })
     saveHubConfig(configPath, { hubUrl: nextHubUrl })
+    saveInstallationState(installationPath, { installationId, hubUrl: nextHubUrl, appVersion })
     try {
       await client?.logout()
     } finally {
@@ -260,7 +302,15 @@ export function install(rt) {
     // Reads that describe the connection itself must not require a connection to answer: the
     // browser asks `hub-view` first, and a throw here would leave the UI with no way to explain
     // why the feature is off.
-    if (endpoint === 'hub-view') return hubView()
+    if (endpoint === 'hub-view') {
+      try {
+        await ensureGuestSession()
+      } catch (error) {
+        connectionState = 'unavailable'
+        connectionDetail = `${error?.code ?? 'HUB_UNAVAILABLE'}: ${error?.message ?? 'The Hub is unavailable'}`
+      }
+      return hubView()
+    }
     if (endpoint === 'hub-configure') return await configureHub(body?.hubUrl)
 
     ensureClient()

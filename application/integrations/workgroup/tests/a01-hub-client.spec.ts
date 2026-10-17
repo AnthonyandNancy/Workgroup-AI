@@ -12,7 +12,7 @@
 //     case, because each one is a distinct thing for the person at the keyboard to do.
 //
 // The client is imported as the application will import { recycleTestPath } from './recycle.mjs'
-import it, through its own entry point, so a
+// it, through its own entry point, so a
 // change to how the module is shaped breaks this test rather than only breaking at runtime.
 
 import assert from 'node:assert/strict'
@@ -22,10 +22,14 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, it } from 'vitest'
+import { recycleTestPath } from './recycle.mjs'
 import {
   createHubClient,
   deviceFingerprint,
   hubStatePath,
+  hubInstallationPath,
+  loadInstallationState,
+  saveInstallationState,
   resolveHubUrl,
   PROTOCOL_VERSION,
   HubProtocolError,
@@ -96,6 +100,7 @@ async function startRealHub({ registration = 'admin_secret', env = {} } = {}) {
 }
 
 let hub
+let guestHub
 const temporaryDirs = []
 
 function tempDir() {
@@ -104,11 +109,39 @@ function tempDir() {
   return path
 }
 
+// ---------------------------------------------------------------------------
+// Installation state
+// ---------------------------------------------------------------------------
+
+describe('installation state', () => {
+  it('stores only the installation identity and non-sensitive Hub metadata', () => {
+    const dataRoot = tempDir()
+    const path = hubInstallationPath(dataRoot)
+    saveInstallationState(path, {
+      installationId: '44444444-4444-4444-8444-444444444444',
+      hubUrl: 'https://hub.example/api/v1',
+      appVersion: '0.1.0-test',
+      accessToken: 'must-not-persist',
+      refreshToken: 'must-not-persist',
+    })
+
+    assert.deepEqual(loadInstallationState(path), {
+      installationId: '44444444-4444-4444-8444-444444444444',
+      hubUrl: 'https://hub.example/api/v1',
+      appVersion: '0.1.0-test',
+    })
+    const raw = readFileSync(path, 'utf8')
+    assert.equal(raw.includes('must-not-persist'), false)
+  })
+})
+
 beforeAll(async () => {
   hub = await startRealHub()
+  guestHub = await startRealHub({ env: { HUB_ANONYMOUS_BOOTSTRAP: 'true' } })
 }, 60_000)
 
 afterAll(async () => {
+  await guestHub?.stop()
   await hub?.stop()
   for (const path of temporaryDirs) recycleTestPath(path)
 }, 30_000)
@@ -215,8 +248,45 @@ describe('Hub address configuration', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Registration and sign-in against the real Hub
+// Anonymous guest bootstrap against the real Hub
 // ---------------------------------------------------------------------------
+
+describe('anonymous guest bootstrap', () => {
+  it('bootstraps a guest session and persists only Host session fields', async () => {
+    const statePath = join(tempDir(), 'session.json')
+    const agent = createHubClient({ hubUrl: guestHub.base, statePath, appVersion: '0.1.0-test' })
+    const session = await agent.bootstrap({
+      installationId: '22222222-2222-4222-8222-222222222222',
+      deviceLabel: 'DSH Bot',
+      platform: 'web',
+    })
+
+    assert.match(session.userHandle, /^guest-/)
+    assert.equal(agent.signedIn, true)
+    assert.equal(agent.identity.accessToken, undefined)
+    assert.equal(agent.identity.refreshToken, undefined)
+    const persisted = JSON.parse(readFileSync(statePath, 'utf8'))
+    assert.equal(typeof persisted.refreshToken, 'string')
+    assert.equal('installationId' in persisted, false)
+  })
+
+  it('reports the stable disabled error when anonymous bootstrap is off', async () => {
+    const agent = createHubClient({ hubUrl: hub.base, statePath: join(tempDir(), 'session.json') })
+    await assert.rejects(
+      agent.bootstrap({
+        installationId: '33333333-3333-4333-8333-333333333333',
+        deviceLabel: 'DSH Bot',
+        platform: 'web',
+      }),
+      error => {
+        assert.equal(error.code, 'ANONYMOUS_BOOTSTRAP_DISABLED')
+        assert.equal(error.status, 403)
+        return true
+      },
+    )
+  })
+})
+
 
 describe('registration and sign-in', () => {
   it('registers with the operator bootstrap secret and signs in from this device', async () => {

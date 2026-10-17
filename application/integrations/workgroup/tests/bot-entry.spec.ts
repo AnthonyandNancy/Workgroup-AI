@@ -143,18 +143,16 @@ it('A-04: the menu gains one workgroup entry, immediately below the group entry'
   expect(pushedBetween, `something was pushed between them: ${pushedBetween.join(' | ')}`).toEqual([])
 })
 
-it('A-04: the workgroup entry appears only when a Hub is configured', () => {
+it('A-04: the workgroup entry stays visible without a signed-in Hub', () => {
   const source = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'new-chat.js'), 'utf8')
-  // The entry is gated on a prop rather than on a global, so a plain-plugin install — where no
-  // Hub exists — keeps upstream's menu exactly as it was.
+  // The entry is still gated on the prop rather than on a global, so an install that mounts the
+  // pane without the workgroup adapter keeps upstream's menu exactly as it was. The shipped
+  // client always supplies that adapter, so the row is present whether or not a Hub answers;
+  // invoking it reports the Host's stable unavailable reason instead of hiding the feature.
   expect(source).toMatch(/if \(workgroups !== undefined\) \{/)
-  // The adapter is chosen in `index.js` from the Hub adapter's own availability, not a constant.
-  // The runtime behaviour — that availability turns true only after the Host confirms a Hub, and
-  // that it can change while a window is open — is covered by a11-hub-provider.spec.ts. What is
-  // checked here is only that this module reads that reactive flag rather than freezing a value.
   const indexSource = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'index.js'), 'utf8')
-  expect(indexSource).toMatch(/const workgroupsNow = \(\) => workgroupHub\.available \? workgroupActions : undefined/)
-  expect(indexSource).toMatch(/hubBridge\.view\.subscribe\(\(\) => \{ workgroups\.set\(workgroupsNow\(\)\) \}\)/)
+  expect(indexSource).toMatch(/const workgroups = createSource\(workgroupActions\)/)
+  expect(indexSource).not.toMatch(/workgroupHub\.available \? workgroupActions : undefined/)
   // And the original group entry is not behind any Hub gate.
   const groupLine = source.split(String.fromCharCode(10)).find(line => line.includes("t('Create group chat')"))
   expect(groupLine).toBeDefined()
@@ -227,17 +225,19 @@ it('the activation gate is armed before it is read', () => {
   expect(source, 'the flag must be set by the registration').toMatch(/panelRegistered = true/)
 })
 
-it('the Hub settings page is globally reachable and receives the live Host adapter', () => {
+it('keeps Hub authentication out of Bot Settings while retaining the Host-backed provider', () => {
   const settings = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'settings.js'), 'utf8')
   const sidebar = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'sidebar.js'), 'utf8')
   const overlays = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'overlays.js'), 'utf8')
   const source = readFileSync(clientSource, 'utf8')
-  expect(settings).toMatch(/\['hub', 'Workgroup Hub'\]/)
-  expect(settings).toMatch(/workgroupHub\.configure/)
-  expect(settings).toMatch(/workgroupHub\.register/)
-  expect(sidebar).toMatch(/actions\.openSettings\('hub'\)/)
+  expect(settings).not.toMatch(/\['hub', 'Workgroup Hub'\]/)
+  expect(settings).not.toMatch(/workgroupHub\.configure/)
+  expect(settings).not.toMatch(/workgroupHub\.register/)
+  expect(settings).not.toMatch(/HubPage/)
+  expect(sidebar).not.toMatch(/Workgroup Hub/)
+  expect(sidebar).not.toMatch(/actions\.openSettings\('hub'\)/)
   expect(overlays).toMatch(/useHub/)
   expect(overlays).toMatch(/workgroupHub/)
-  expect(source).toMatch(/workgroupHub,/) 
+  expect(source).toMatch(/workgroupHub,/)
 })
 })

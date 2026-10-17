@@ -10,13 +10,11 @@
 // `ctx.provide('workgroupHub', …)` is simply invisible from here. What *is* shared is the
 // `POST /api/bot` channel, so the Host owns the Hub connection and this module forwards to it.
 //
-// Why there is still a provider object when nothing is configured: the menu gate reads a value
-// captured during `apply`. Returning `undefined` for "no Hub" would mean the entry could never
-// appear even after a Hub was configured and the user signed in, because nothing would re-read it.
-// So the service is always provided and its `available` flag is reactive: `workgroups` is
-// `undefined` until a Hub answers, and the menu appears when one does. That keeps the promise the
-// menu makes to the user — the entry exists exactly when there is somewhere for a workgroup to
-// live — without freezing the answer at mount time.
+// Why there is still a provider object when nothing is configured: the menu reads a value captured
+// during `apply`, so returning `undefined` for "no Hub" would freeze that answer at mount time.
+// The service is always provided and its `available` flag is reactive. The creation entries use the
+// action regardless of that flag, and the Host answers an unavailable Hub with a stable reason the
+// entry surfaces; keeping the row visible is what makes the feature discoverable.
 import { call } from './api.js'
 import { createSource } from './sources.js'
 import { reduceWorkgroup } from '@deepseek-ai/dsh-workgroup/client'

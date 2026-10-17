@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
@@ -20,17 +20,170 @@ function response(payload) {
   return { ok: true, status: 200, json: async () => payload }
 }
 
-function runtime({ hubUrl = 'https://initial.example', hubStatePath, hubConfigPath, ctx } = {}) {
+function runtime({ hubUrl = 'https://initial.example', hubStatePath, hubConfigPath, dshHome = join(tmpdir(), 'workgroup-host-adapter-home'), ctx } = {}) {
   return {
     config: { hubUrl, hubStatePath, hubConfigPath },
-    dshHome: join(tmpdir(), 'workgroup-host-adapter-home'),
+    dshHome,
     version: 'test',
     warn: vi.fn(),
     ctx,
   }
 }
 
+function errorResponse(status, payload) {
+  return { ok: false, status, json: async () => payload }
+}
+
+function webSocketStub() {
+  class TestWebSocket {
+    static OPEN = 1
+    static instances = []
+    readyState = TestWebSocket.OPEN
+    listeners = new Map()
+    constructor(url, options) {
+      this.url = url
+      this.options = options
+      TestWebSocket.instances.push(this)
+    }
+    addEventListener(type, listener) { this.listeners.set(type, listener) }
+    send() {}
+    close() { this.readyState = 3 }
+  }
+  return TestWebSocket
+}
+
 describe('the Host workgroup adapter', () => {
+  it('bootstraps one guest session for concurrent hub-view calls and redacts credentials', async () => {
+    const hubStatePath = temporaryPath('wg-host-guest-', 'hub-session.json')
+    const dshHome = temporaryPath('wg-host-guest-home-', 'dsh')
+    const requests = []
+    vi.stubGlobal('WebSocket', webSocketStub())
+    vi.stubGlobal('fetch', async (url, init) => {
+      requests.push({ url: String(url), init })
+      if (String(url).endsWith('/auth/bootstrap')) {
+        return response({
+          user: { id: 'guest-user', userHandle: 'guest-abcd', displayName: 'Guest ABCD', status: 'active' },
+          device: { id: 'guest-device', label: 'DSH Bot', platform: 'web', appVersion: 'test' },
+          accessToken: 'host-only-access',
+          refreshToken: 'host-only-refresh',
+          accessTokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+          refreshTokenExpiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+        })
+      }
+      throw new Error(`unexpected request ${String(url)}`)
+    })
+
+    const rt = runtime({ hubStatePath, dshHome })
+    install(rt)
+    const views = await Promise.all([rt.hubEndpoint('hub-view'), rt.hubEndpoint('hub-view')])
+
+    expect(views[0]).toMatchObject({ configured: true, signedIn: true, userHandle: 'guest-abcd' })
+    expect(views[1]).toMatchObject({ configured: true, signedIn: true, userHandle: 'guest-abcd' })
+    expect(requests.filter(request => request.url.endsWith('/auth/bootstrap'))).toHaveLength(1)
+    expect(JSON.parse(requests[0].init.body)).toMatchObject({
+      installationId: expect.any(String), deviceLabel: 'DSH Bot', platform: 'web', appVersion: 'test',
+    })
+    expect(JSON.stringify(views)).not.toContain('host-only')
+
+    const installation = JSON.parse(readFileSync(join(dshHome, 'workgroup', 'installation.json'), 'utf8'))
+    expect(Object.keys(installation).sort()).toEqual(['appVersion', 'hubUrl', 'installationId'])
+    expect(installation).toMatchObject({ hubUrl: 'https://initial.example/api/v1', appVersion: 'test' })
+    expect(installation.installationId).toMatch(/^[0-9a-f-]{36}$/)
+    expect(readFileSync(hubStatePath, 'utf8')).not.toContain('installationId')
+  })
+
+  it('keeps the provider unavailable when guest bootstrap cannot reach the Hub', async () => {
+    const hubStatePath = temporaryPath('wg-host-offline-', 'hub-session.json')
+    const dshHome = temporaryPath('wg-host-offline-home-', 'dsh')
+    vi.stubGlobal('fetch', async () => { throw new Error('offline') })
+
+    const rt = runtime({ hubStatePath, dshHome })
+    install(rt)
+    await expect(rt.hubEndpoint('hub-view')).resolves.toMatchObject({
+      configured: true, signedIn: false, state: 'unavailable',
+    })
+  })
+
+  it('resumes a persisted guest session and refreshes it without bootstrapping again', async () => {
+    const hubStatePath = temporaryPath('wg-host-resume-', 'hub-session.json')
+    const dshHome = temporaryPath('wg-host-resume-home-', 'dsh')
+    writeFileSync(hubStatePath, JSON.stringify({
+      userId: 'guest-user', userHandle: 'guest-old', displayName: 'Guest Old', deviceId: 'guest-device',
+      accessToken: 'old-access', refreshToken: 'old-refresh',
+      accessTokenExpiresAt: new Date(Date.now() - 1_000).toISOString(),
+      refreshTokenExpiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+    }))
+    const requests = []
+    vi.stubGlobal('WebSocket', webSocketStub())
+    vi.stubGlobal('fetch', async (url, init) => {
+      requests.push({ url: String(url), init })
+      if (String(url).endsWith('/auth/refresh')) {
+        return response({
+          accessToken: 'refreshed-access',
+          accessTokenExpiresIn: 3_600,
+          refreshToken: 'refreshed-refresh',
+          refreshTokenExpiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+        })
+      }
+      throw new Error(`unexpected request ${String(url)}`)
+    })
+
+    const rt = runtime({ hubStatePath, dshHome })
+    install(rt)
+    const view = await rt.hubEndpoint('hub-view')
+
+    expect(view).toMatchObject({ configured: true, signedIn: true, userHandle: 'guest-old' })
+    expect(requests.filter(request => request.url.endsWith('/auth/refresh'))).toHaveLength(1)
+    expect(requests.filter(request => request.url.endsWith('/auth/bootstrap'))).toHaveLength(0)
+  })
+
+  it('replaces a guest session after refresh failure while retaining installation identity', async () => {
+    const hubStatePath = temporaryPath('wg-host-rebootstrap-', 'hub-session.json')
+    const dshHome = temporaryPath('wg-host-rebootstrap-home-', 'dsh')
+    mkdirSync(join(dshHome, 'workgroup'), { recursive: true })
+    const installationPath = join(dshHome, 'workgroup', 'installation.json')
+    writeFileSync(installationPath, JSON.stringify({
+      installationId: '44444444-4444-4444-8444-444444444444',
+      hubUrl: 'https://initial.example/api/v1',
+      appVersion: 'test',
+    }))
+    writeFileSync(hubStatePath, JSON.stringify({
+      userId: 'guest-old', userHandle: 'guest-old', displayName: 'Guest Old', deviceId: 'old-device',
+      accessToken: 'expired-access', refreshToken: 'revoked-refresh',
+      accessTokenExpiresAt: new Date(Date.now() - 1_000).toISOString(),
+      refreshTokenExpiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+    }))
+    const requests = []
+    vi.stubGlobal('WebSocket', webSocketStub())
+    vi.stubGlobal('fetch', async (url, init) => {
+      requests.push({ url: String(url), init })
+      if (String(url).endsWith('/auth/refresh')) return errorResponse(401, { error: { code: 'REFRESH_TOKEN_REVOKED', message: 'revoked' } })
+      if (String(url).endsWith('/auth/bootstrap')) {
+        return response({
+          user: { id: 'guest-new', userHandle: 'guest-new', displayName: 'Guest New', status: 'active' },
+          device: { id: 'new-device', label: 'DSH Bot', platform: 'web', appVersion: 'test' },
+          accessToken: 'replacement-access',
+          refreshToken: 'replacement-refresh',
+          accessTokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+          refreshTokenExpiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+        })
+      }
+      throw new Error(`unexpected request ${String(url)}`)
+    })
+
+    const rt = runtime({ hubStatePath, dshHome })
+    install(rt)
+    const view = await rt.hubEndpoint('hub-view')
+
+    expect(view).toMatchObject({ configured: true, signedIn: true, userHandle: 'guest-new' })
+    expect(requests.filter(request => request.url.endsWith('/auth/refresh'))).toHaveLength(1)
+    expect(requests.filter(request => request.url.endsWith('/auth/bootstrap'))).toHaveLength(1)
+    expect(JSON.parse(readFileSync(installationPath, 'utf8'))).toEqual({
+      installationId: '44444444-4444-4444-8444-444444444444',
+      hubUrl: 'https://initial.example/api/v1',
+      appVersion: 'test',
+    })
+  })
   it('publishes Bridge events through the existing DSH event channel', async () => {
     const hubStatePath = temporaryPath('wg-host-events-', 'hub-session.json')
     writeFileSync(hubStatePath, JSON.stringify({

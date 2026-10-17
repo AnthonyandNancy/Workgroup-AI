@@ -16,7 +16,7 @@ import { loginKeys } from '../security/ratelimit.js'
 import { registrationKeys } from '../security/ratelimit-store.js'
 import { protocolVersion } from '../version.js'
 import {
-  IdentityError, createUser, findUserByHandle, findUserById, registerDevice, findDeviceById, listDevices,
+  IdentityError, createUser, createGuestIdentity, findUserByHandle, findUserById, registerDevice, findDeviceById, listDevices,
   isDeviceActive, revokeDevice, revokeAllForUser, issueRefreshToken, findRefreshToken, rotateRefreshToken,
   revokeRefreshToken, touchDevice,
 } from '../auth/store.js'
@@ -93,6 +93,34 @@ function publicDevice(device) {
   }
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+function bootstrapSourceKey(source) {
+  return `bootstrap:source:${typeof source === 'string' && source !== '' ? source : 'unknown'}`
+}
+
+function parseBootstrapRequest(body) {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: ['INVALID_BOOTSTRAP_REQUEST', 'A bootstrap request object is required'] }
+  }
+  if (typeof body.installationId !== 'string' || !UUID_PATTERN.test(body.installationId)) {
+    return { error: ['INVALID_INSTALLATION_ID', 'installationId must be a UUID'] }
+  }
+  const deviceLabel = typeof body.deviceLabel === 'string' ? body.deviceLabel.trim() : ''
+  if (deviceLabel.length < 1 || deviceLabel.length > 120) {
+    return { error: ['INVALID_DEVICE_LABEL', 'deviceLabel must be 1-120 characters'] }
+  }
+  const platform = typeof body.platform === 'string' ? body.platform.trim() : ''
+  if (platform.length < 1 || platform.length > 64) {
+    return { error: ['INVALID_PLATFORM', 'platform must be 1-64 characters'] }
+  }
+  const appVersion = typeof body.appVersion === 'string' ? body.appVersion.trim() : ''
+  if (appVersion.length > 120) {
+    return { error: ['INVALID_APP_VERSION', 'appVersion must be at most 120 characters'] }
+  }
+  return { value: { installationId: body.installationId, deviceLabel, platform, appVersion: appVersion || null } }
+}
+
 /**
  * Fastify plugin holding every H-03 route. Registered from `src/api/index.js`.
  *
@@ -112,6 +140,65 @@ export async function identityRoutes(fastify) {
   // out sign-in for the same address, which is a denial of service an attacker can trigger for
   // free.
   const registerLimiter = fastify.hub.registerLimiter
+  const bootstrapLimiter = fastify.hub.bootstrapLimiter
+
+  // ---- anonymous bootstrap ----
+
+  fastify.post('/api/v1/auth/bootstrap', async (request, reply) => {
+    const sourceKey = bootstrapSourceKey(request.ip)
+    const verdict = bootstrapLimiter.check(sourceKey)
+    if (!verdict.allowed) {
+      reply.header('retry-after', String(verdict.retryAfterSeconds))
+      return authError(reply, 429, 'TOO_MANY_ATTEMPTS', 'Too many bootstrap attempts; wait before trying again')
+    }
+
+    if (!config.anonymousBootstrapEnabled) {
+      bootstrapLimiter.recordFailure(sourceKey)
+      return authError(reply, 403, 'ANONYMOUS_BOOTSTRAP_DISABLED', 'Anonymous bootstrap is disabled on this Hub')
+    }
+
+    const parsed = parseBootstrapRequest(request.body ?? {})
+    if (parsed.error !== undefined) {
+      bootstrapLimiter.recordFailure(sourceKey)
+      return authError(reply, 400, parsed.error[0], parsed.error[1])
+    }
+
+    const now = new Date()
+    const refreshSecret = generateRefreshToken()
+    let session
+    try {
+      session = createGuestIdentity(db, {
+        deviceLabel: parsed.value.deviceLabel,
+        platform: parsed.value.platform,
+        appVersion: parsed.value.appVersion,
+        refreshSecret,
+        refreshTokenTtlSeconds: config.tokens.refreshTokenTtlSeconds,
+        now,
+      })
+    } catch (error) {
+      bootstrapLimiter.recordFailure(sourceKey)
+      request.log.error({ err: error }, 'anonymous bootstrap failed')
+      return authError(reply, 500, 'BOOTSTRAP_FAILED', 'The Hub could not create a guest session')
+    }
+
+    const accessToken = issueAccessToken({
+      keyring: config.tokenKeyring,
+      signingKey: config.readTokenSigningKey(),
+      userId: session.user.id,
+      deviceId: session.device.id,
+      ttlSeconds: config.tokens.accessTokenTtlSeconds,
+      now,
+    })
+    bootstrapLimiter.clear(sourceKey)
+    return reply.code(201).send({
+      user: publicUser(session.user),
+      device: publicDevice(session.device),
+      accessToken,
+      refreshToken: refreshSecret,
+      accessTokenExpiresAt: new Date(now.getTime() + config.tokens.accessTokenTtlSeconds * 1000).toISOString(),
+      refreshTokenExpiresAt: session.refresh.expiresAt,
+    })
+  })
 
   // ---- registration ----
 

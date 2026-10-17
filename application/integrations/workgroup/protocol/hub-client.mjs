@@ -217,8 +217,36 @@ export function createHubClient(options) {
     },
 
     /**
-     * Sign in from this device.
+     * Create a Hub-owned guest identity for this application installation.
      *
+     * The installation id is an identity input for the Hub only. It is deliberately not copied into
+     * the credential file, which stores only the credentials and public identity needed to resume.
+     */
+    async bootstrap({ installationId, deviceLabel = 'DSH Bot', platform: clientPlatform = 'web' }) {
+      const payload = await request('POST', '/auth/bootstrap', {
+        auth: false,
+        body: {
+          installationId,
+          deviceLabel,
+          platform: clientPlatform,
+          appVersion,
+        },
+      })
+      session = {
+        userId: payload.user.id,
+        userHandle: payload.user.userHandle,
+        displayName: payload.user.displayName,
+        deviceId: payload.device.id,
+        accessToken: payload.accessToken,
+        accessTokenExpiresAt: payload.accessTokenExpiresAt,
+        refreshToken: payload.refreshToken,
+        refreshTokenExpiresAt: payload.refreshTokenExpiresAt,
+      }
+      persist()
+      return session
+    },
+
+    /**
      * The fingerprint identifies the machine; the Hub reuses an existing device row for it, so
      * restarting the client does not accumulate devices.
      */
@@ -389,6 +417,40 @@ export function saveHubConfig(configPath, { hubUrl }) {
     // Windows ignores POSIX modes; the file is already created with the only mode it understands.
   }
   renameSync(temporary, configPath)
+}
+
+/** Where this product keeps the non-sensitive identity for one local installation. */
+export function hubInstallationPath(dataRoot) {
+  return join(dataRoot, 'workgroup', 'installation.json')
+}
+
+/** Read installation identity and non-sensitive Hub metadata without returning credential fields. */
+export function loadInstallationState(statePath) {
+  if (!existsSync(statePath)) return {}
+  try {
+    const parsed = JSON.parse(readFileSync(statePath, 'utf8'))
+    if (parsed === null || typeof parsed !== 'object') return {}
+    const state = {}
+    if (typeof parsed.installationId === 'string') state.installationId = parsed.installationId
+    if (typeof parsed.hubUrl === 'string') state.hubUrl = parsed.hubUrl
+    if (typeof parsed.appVersion === 'string') state.appVersion = parsed.appVersion
+    return state
+  } catch {
+    return {}
+  }
+}
+
+/** Persist only installation identity and non-sensitive Hub metadata. */
+export function saveInstallationState(statePath, { installationId, hubUrl, appVersion }) {
+  mkdirSync(dirname(statePath), { recursive: true, mode: 0o700 })
+  const temporary = `${statePath}.${randomUUID()}.tmp`
+  writeFileSync(temporary, `${JSON.stringify({ installationId, hubUrl, appVersion })}\n`, { mode: 0o600 })
+  try {
+    chmodSync(temporary, 0o600)
+  } catch {
+    // Windows ignores POSIX modes; the file is already created with the only mode it understands.
+  }
+  renameSync(temporary, statePath)
 }
 
 /** Clear a locally persisted session when the user moves this device to another Hub. */

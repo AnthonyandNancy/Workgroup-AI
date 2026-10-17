@@ -274,6 +274,8 @@ export function loadConfig(env = process.env, options = {}) {
   const loginMaxAttempts = readInteger(env, 'HUB_LOGIN_MAX_ATTEMPTS', problems, { min: 1, max: 1000 }) ?? 10
   const loginWindowSeconds = readInteger(env, 'HUB_LOGIN_WINDOW_SECONDS', problems, { min: 10, max: 86400 }) ?? 300
   const loginLockoutSeconds = readInteger(env, 'HUB_LOGIN_LOCKOUT_SECONDS', problems, { min: 0, max: 86400 }) ?? 300
+  const bootstrapMaxAttempts = readInteger(env, 'HUB_BOOTSTRAP_MAX_ATTEMPTS', problems, { min: 1, max: 1000 }) ?? 5
+  const bootstrapWindowSeconds = readInteger(env, 'HUB_BOOTSTRAP_WINDOW_SECONDS', problems, { min: 10, max: 86400 }) ?? 300
   // The write endpoints that carried no ceiling before. Left undefined when unset so the Hub can
   // derive them from the login budget, which keeps one env var in charge of "how strict is this
   // deployment" while still letting a site tune them apart.
@@ -311,6 +313,11 @@ export function loadConfig(env = process.env, options = {}) {
   if (!['open', 'admin_secret', 'closed'].includes(registrationMode)) {
     problems.push('HUB_REGISTRATION must be one of open, admin_secret, closed')
   }
+  const anonymousBootstrapRaw = readString(env, 'HUB_ANONYMOUS_BOOTSTRAP')
+  if (anonymousBootstrapRaw !== undefined && !['true', 'false'].includes(anonymousBootstrapRaw)) {
+    problems.push('HUB_ANONYMOUS_BOOTSTRAP must be true or false')
+  }
+  const anonymousBootstrapEnabled = anonymousBootstrapRaw === 'true'
   const adminBootstrapSecret = readString(env, 'HUB_ADMIN_BOOTSTRAP_SECRET')
   if (registrationMode === 'admin_secret') {
     if (adminBootstrapSecret === undefined) problems.push('HUB_ADMIN_BOOTSTRAP_SECRET is required when HUB_REGISTRATION=admin_secret')
@@ -396,6 +403,7 @@ export function loadConfig(env = process.env, options = {}) {
         return timingSafeEqual(expected, actual)
       },
     }),
+    anonymousBootstrapEnabled,
     tokens: Object.freeze({ accessTokenTtlSeconds, refreshTokenTtlSeconds, deviceKeyTtlSeconds }),
     retention: Object.freeze({ auditRetentionDays, backupRetentionCount }),
     limits: Object.freeze({ maxMessageBytes, maxUploadBytes, maxMemoriesPerRoom }),
@@ -412,6 +420,8 @@ export function loadConfig(env = process.env, options = {}) {
       loginMaxAttempts,
       loginWindowSeconds,
       loginLockoutSeconds,
+      bootstrapMaxAttempts,
+      bootstrapWindowSeconds,
       // Absent means "derive from loginMaxAttempts", which the server does: `undefined` here is a
       // real state rather than a zero, and a zero ceiling would refuse everything.
       ...(heartbeatMaxAttempts === undefined ? {} : { heartbeatMaxAttempts }),

@@ -9,7 +9,6 @@ import { useEscape } from './overlay-hooks.js'
 import { BotSettingsForm } from './bot-settings.js'
 import { Segmented, useGlide } from './motion.js'
 import { GroupSettingsForm, NewGroupForm } from './group-settings.js'
-import { enterWorkgroup } from './workgroup-entry.js'
 import { CreateBot } from './create-bot.js'
 import { KeyIcon, SecretsPage } from './secret-card.js'
 import { UsagePage } from './usage-page.js'
@@ -24,8 +23,8 @@ const capitalize = word => word[0].toUpperCase() + word.slice(1)
 
 // Settings dialog: a 198px page list beside the page. Bots and group chats each list
 // their members, and one opens on its own settings form. Usage widens the dialog.
-const SETTINGS_PAGES = [['general', 'General'], ['hub', 'Workgroup Hub'], ['bots', 'Bots'], ['groups', 'Group chats'], ['connectors', 'Connectors'], ['capabilities', 'Capabilities'], ['schedules', 'Scheduled tasks'], ['usage', 'Usage'], ['secrets', 'Secrets'], ['feedback', 'Feedback'], ['about', 'About DS Bot']]
-const PAGE_ICONS = { ...SETTINGS_ICONS, hub: PlugIcon, connectors: ConnectorIcon, capabilities: PlugIcon, schedules: ClockIcon, secrets: KeyIcon, feedback: FeedbackIcon, about: InfoIcon }
+const SETTINGS_PAGES = [['general', 'General'], ['bots', 'Bots'], ['groups', 'Group chats'], ['connectors', 'Connectors'], ['capabilities', 'Capabilities'], ['schedules', 'Scheduled tasks'], ['usage', 'Usage'], ['secrets', 'Secrets'], ['feedback', 'Feedback'], ['about', 'About DS Bot']]
+const PAGE_ICONS = { ...SETTINGS_ICONS, connectors: ConnectorIcon, capabilities: PlugIcon, schedules: ClockIcon, secrets: KeyIcon, feedback: FeedbackIcon, about: InfoIcon }
 
 function SetSection({ title, children }) {
   return h('section', { className: 'bt-set-section' }, h('h3', null, title), h('div', { className: 'bt-set-card' }, children))
@@ -152,154 +151,8 @@ function GroupsPage({ roster, actions, run, workgroups }) {
   ]
 }
 
-function HubPage({ hub, workgroupHub, sessions, actions }) {
-  const [url, setUrl] = useState(hub?.hubUrl ?? '')
-  const [userHandle, setUserHandle] = useState('')
-  const [displayName, setDisplayName] = useState('')
-  const [password, setPassword] = useState('')
-  const [bootstrapSecret, setBootstrapSecret] = useState('')
-  const [deviceLabel, setDeviceLabel] = useState('')
-  const [rooms, setRooms] = useState([])
-  const [invitations, setInvitations] = useState([])
-  const [busy, setBusy] = useState(false)
-  const [notice, setNotice] = useState('')
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    if (hub?.hubUrl !== undefined) setUrl(hub.hubUrl)
-  }, [hub?.hubUrl])
-
-  const refresh = useCallback(async () => {
-    if (hub?.signedIn !== true) {
-      setRooms([])
-      setInvitations([])
-      return
-    }
-    const [nextRooms, nextInvitations] = await Promise.all([
-      workgroupHub.rooms(),
-      workgroupHub.invitations(),
-    ])
-    setRooms(Array.isArray(nextRooms) ? nextRooms : [])
-    setInvitations(Array.isArray(nextInvitations) ? nextInvitations : nextInvitations?.invitations ?? [])
-  }, [hub?.signedIn, workgroupHub])
-
-  useEffect(() => {
-    void refresh().catch(failure => setError(failure?.message ?? String(failure)))
-  }, [refresh])
-
-  const invoke = async (task, success, refreshRooms = false) => {
-    if (busy) return
-    setBusy(true)
-    setError('')
-    setNotice('')
-    try {
-      await task()
-      setNotice(t(success))
-      if (refreshRooms) await refresh()
-    } catch (failure) {
-      setError(failure?.message ?? String(failure))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const copy = async (value) => {
-    if (!value || typeof navigator === 'undefined' || !navigator.clipboard) {
-      setError(t('Copy is unavailable'))
-      return
-    }
-    try {
-      await navigator.clipboard.writeText(value)
-      setNotice(t('Copied'))
-      setError('')
-    } catch (failure) {
-      setError(failure?.message ?? String(failure))
-    }
-  }
-
-  const openRoom = roomId => enterWorkgroup({
-    roomId,
-    sessions,
-    openSession: actions.openSession,
-    closeOverlay: actions.closeSettings,
-    watch: room => workgroupHub.watch(room),
-    report: failure => setError(failure?.message ?? String(failure)),
-  })
-
-  const configured = hub?.configured === true
-  const signedIn = hub?.signedIn === true
-  const status = !configured
-    ? t('Hub is not configured')
-    : signedIn
-      ? t('Signed in as {name}', { name: hub.userHandle ?? hub.userId ?? t('Unknown user') })
-      : t('Configured, signed out')
-
-  const submitRegistration = () => {
-    const payload = { userHandle: userHandle.trim(), displayName: displayName.trim(), password, deviceLabel: deviceLabel.trim() }
-    if (bootstrapSecret.trim() !== '') payload.bootstrapSecret = bootstrapSecret
-    return workgroupHub.register(payload)
-  }
-
-  return [
-    h(SetSection, { key: 'connection', title: t('Connection') },
-      h(SetRow, { label: t('Current status'), hint: hub?.state ?? 'unknown' }, h('span', { className: 'bt-tag' }, status)),
-      h(SetRow, { label: t('Hub URL'), wide: true, hint: t('The Host keeps this non-sensitive address on this machine.') },
-        h('input', { className: 'bt-input', type: 'url', value: url, placeholder: t('Enter a Hub URL'), autoComplete: 'url', onChange: event => setUrl(event.target.value) })),
-      h('div', { className: 'bt-actions' },
-        h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: busy || url.trim() === '', onClick: () => invoke(() => workgroupHub.configure({ url: url.trim() }), 'Hub configuration saved') }, t('Configure Hub')),
-        signedIn ? h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: busy, onClick: () => invoke(() => workgroupHub.signOut(), 'Signed out') }, t('Sign out')) : null,
-        configured && !signedIn ? h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: busy, onClick: () => invoke(() => workgroupHub.resume(), 'Sign-in restored') }, t('Resume')) : null)),
-    h(SetSection, { key: 'account', title: t('Hub account') },
-      h(SetRow, { label: t('Username'), wide: true, hint: t('Use this exact handle when a colleague invites you.') },
-        h('input', { className: 'bt-input', value: userHandle, autoComplete: 'username', onChange: event => setUserHandle(event.target.value), placeholder: t('Username') })),
-      h(SetRow, { label: t('Password'), wide: true },
-        h('input', { className: 'bt-input', type: 'password', value: password, autoComplete: 'current-password', onChange: event => setPassword(event.target.value), placeholder: t('Password') })),
-      h(SetRow, { label: t('Device label'), wide: true },
-        h('input', { className: 'bt-input', value: deviceLabel, autoComplete: 'off', onChange: event => setDeviceLabel(event.target.value), placeholder: t('Device label') })),
-      h('div', { className: 'bt-actions' },
-        h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: busy || userHandle.trim() === '' || password === '', onClick: () => invoke(() => workgroupHub.signIn({ userHandle: userHandle.trim(), password, label: deviceLabel.trim() }), 'Signed in') }, t('Sign in')),
-        h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: busy || !configured, onClick: () => invoke(() => workgroupHub.resume(), 'Sign-in restored') }, t('Resume'))),
-      signedIn && hub?.userId ? h(SetRow, { label: t('Your user ID'), hint: t('Copy this ID to let a colleague invite you.') },
-        h('span', { className: 'bt-tag' }, hub.userId),
-        h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => copy(hub.userId) }, t('Copy my ID'))) : null,
-      signedIn && hub?.userHandle ? h(SetRow, { label: t('Your username') },
-        h('span', { className: 'bt-tag' }, hub.userHandle),
-        h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => copy(hub.userHandle) }, t('Copy my username'))) : null,
-      signedIn && hub?.displayName ? h(SetRow, { label: t('Display name') }, h('span', { className: 'bt-tag' }, hub.displayName)) : null,
-      signedIn && hub?.deviceId ? h(SetRow, { label: t('Device ID') }, h('span', { className: 'bt-tag' }, hub.deviceId)) : null),
-    h(SetSection, { key: 'register', title: t('Register this account') },
-      h(SetRow, { label: t('Display name'), wide: true },
-        h('input', { className: 'bt-input', value: displayName, autoComplete: 'name', onChange: event => setDisplayName(event.target.value), placeholder: t('Display name') })),
-      h(SetRow, { label: t('Registration key'), wide: true, hint: t('Only sent to the Host for this request.') },
-        h('input', { className: 'bt-input', type: 'password', value: bootstrapSecret, autoComplete: 'off', onChange: event => setBootstrapSecret(event.target.value), placeholder: t('Registration key') })),
-      h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: busy || !configured || userHandle.trim() === '' || password === '', onClick: () => invoke(submitRegistration, 'Registration submitted') }, t('Register'))),
-    signedIn ? h(SetSection, { key: 'rooms', title: t('Rooms I belong to') },
-      rooms.length === 0
-        ? h(SetRow, { label: t('No workgroups yet.') })
-        : rooms.map(room => h('button', {
-          key: room.id,
-          type: 'button',
-          className: 'bt-set-row',
-          onClick: () => void openRoom(room.id),
-        },
-          h('span', { className: 'bt-row-title' }, room.name ?? room.id),
-          h('span', { className: 'bt-tag' }, t('Reopen')),
-          h('span', { className: 'bt-chevron' }, h(ChevronRightIcon)))),
-    ) : null,
-    signedIn ? h(SetSection, { key: 'invitations', title: t('Invitations') },
-      invitations.length === 0
-        ? h(SetRow, { label: t('No pending invitations') })
-        : invitations.map(invitation => h('div', { key: invitation.id, className: 'bt-set-row' },
-            h('span', { className: 'bt-row-title' }, invitation.roomName ?? invitation.room?.name ?? invitation.roomId),
-            h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: busy, onClick: () => invoke(() => workgroupHub.respondToInvitation(invitation.id, 'accept'), 'Invitation accepted', true) }, t('Accept')),
-            h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: busy, onClick: () => invoke(() => workgroupHub.respondToInvitation(invitation.id, 'decline'), 'Invitation rejected', true) }, t('Reject'))))) : null,
-    notice ? h('div', { key: 'notice', className: 'bt-success', role: 'status' }, notice) : null,
-    error ? h('div', { key: 'error', className: 'bt-error', role: 'alert' }, error) : null,
-  ]
-}
-
 // While `leaving`, the dialog plays its exit and takes no input.
-export function SettingsDialog({ page, id, roster, actions, useUpdate, hub, workgroupHub, workgroups, sessions, leaving = false }) {
+export function SettingsDialog({ page, id, roster, actions, useUpdate, workgroups, leaving = false }) {
   const [error, setError] = useState('')
   const close = useCallback(() => actions.closeSettings(), [])
   useEscape(close)
@@ -348,7 +201,6 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, hub, work
         shown === 'usage' ? null : h('div', { key: pageKey, className: 'bt-settings-scroll bt-settings-page', 'data-move': last.current.move },
           errorLine,
           shown === 'general' ? h(GeneralPage, { roster, actions, run }) : null,
-          shown === 'hub' ? h(HubPage, { hub, workgroupHub, sessions, actions }) : null,
           bot ? h('div', { className: 'bt-settings-form' }, h(BotSettingsForm, { key: bot.id, bot, roster, actions, run })) : null,
           shown === 'bots' && !bot ? h(BotsPage, { roster, actions, run }) : null,
           room ? h('div', { className: 'bt-settings-form' }, h(GroupSettingsForm, { key: room.id, room, roster, actions, run })) : null,

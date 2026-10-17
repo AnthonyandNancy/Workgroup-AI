@@ -751,11 +751,13 @@ export function apply(ctx) {
   const face = () => ({ actions, hooks: { roster, ui, activity, work, memoryNews, registry, turnClock, live, cards, browserPages, browserTabs, surface, update } })
 
   /**
-   * The workgroup entry the menu shows, or `undefined` when this install has no usable Hub.
+   * The action every "create workgroup chat" entry invokes.
    *
-   * Absent rather than disabled: a team with no Hub configured is the local-only case, and showing
-   * a greyed-out "创建工作群聊" would advertise a feature the employee cannot have. The entry appears
-   * exactly when the Host confirms there is somewhere for a workgroup to live.
+   * Always supplied rather than hidden until a Hub answers: an absent entry is indistinguishable
+   * from the feature not shipping, and the requirement puts the entry directly below local group
+   * creation on all three surfaces. The Host owns the Hub connection, so an unavailable Hub fails
+   * the call with a stable reason that the menu, the settings page, and the command palette already
+   * surface. Local chats, local groups, and private sessions never depend on this action.
    */
   const workgroupActions = {
     create: async () => {
@@ -786,13 +788,9 @@ export function apply(ctx) {
     leaveRoom: roomId => workgroupHub.leaveRoom(roomId),
     downloadArtifact: artifactId => workgroupHub.downloadArtifact(artifactId),
   }
-  const workgroupsNow = () => workgroupHub.available ? workgroupActions : undefined
-  // The answer arrives asynchronously and can change while the window is open, so it travels as a
-  // reactive source in the `hooks` compartment rather than as a prop captured once. A slot's
-  // injected props are cached per entry, so a plain value here would freeze the first answer and
-  // the entry could never appear after the Host confirmed a Hub.
-  const workgroups = createSource(workgroupsNow())
-  ctx.effect(() => hubBridge.view.subscribe(() => { workgroups.set(workgroupsNow()) }), 'ds-bot: workgroup availability')
+  // A source rather than a plain value because the overlay face is captured once; the action
+  // object itself is stable, so nothing has to be re-wired when the Hub view changes.
+  const workgroups = createSource(workgroupActions)
   // The Hub's connection state travels the same way, and for the same reason: it changes while the
   // window is open, and the pane has to say so. Kept separate from `workgroups` because the two
   // answer different questions — "is there somewhere for a workgroup to live" decides whether the

@@ -208,6 +208,59 @@ export function registerDevice(db, { userId, publicKey, fingerprint, label, plat
   return findDeviceById(db, id)
 }
 
+/**
+ * Create the non-interactive identity used by anonymous bootstrap.
+ *
+ * The password value is intentionally an unusable marker derived from fresh random material. The
+ * user row still fits the ordinary identity schema, while the generated guest cannot sign in through
+ * the password route. User, device, initial refresh token, and their audit records commit together.
+ */
+export function createGuestIdentity(db, { deviceLabel, platform, appVersion, refreshSecret, refreshTokenTtlSeconds, now = new Date() }) {
+  if (typeof refreshSecret !== 'string' || refreshSecret.length === 0) throw new IdentityError('A refresh token is required', 'INVALID_REFRESH_TOKEN')
+  if (!Number.isSafeInteger(refreshTokenTtlSeconds) || refreshTokenTtlSeconds < 1) throw new IdentityError('A refresh token lifetime is required', 'INVALID_REFRESH_TOKEN_TTL')
+
+  const userId = randomUUID()
+  const handleSuffix = userId.slice(0, 8)
+  const userHandle = `guest-${handleSuffix}`
+  const displayName = `Guest ${handleSuffix}`
+  const deviceId = randomUUID()
+  const createdAt = nowIso(now)
+  const passwordHash = `guest$${hashOpaqueSecret(randomUUID())}`
+  const publicKey = `bootstrap:${randomUUID()}`
+  const fingerprint = `bootstrap:${randomUUID()}`
+  const refreshId = randomUUID()
+  const refreshExpiresAt = isoPlusSeconds(now, refreshTokenTtlSeconds)
+
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    db.prepare('INSERT INTO users (id, user_handle, display_name, password_hash, status, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(userId, userHandle, displayName, passwordHash, 'active', createdAt)
+    db.prepare(`INSERT INTO devices (id, user_id, public_key, fingerprint, label, platform, app_version, last_seen_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(deviceId, userId, publicKey, fingerprint, deviceLabel, platform, appVersion, createdAt, createdAt)
+    db.prepare(`INSERT INTO refresh_tokens (id, lookup_id, user_id, device_id, secret_hash, issued_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(refreshId, secretLookupId(refreshSecret), userId, deviceId, hashOpaqueSecret(refreshSecret), createdAt, refreshExpiresAt)
+    audit(db, { actorUserId: userId, eventType: 'user.created', objectType: 'user', objectId: userId, outcome: 'success', details: { userHandle }, now })
+    audit(db, { actorUserId: userId, actorDeviceId: deviceId, eventType: 'device.registered', objectType: 'device', objectId: deviceId, outcome: 'success', details: { label: deviceLabel, platform }, now })
+    audit(db, { actorUserId: userId, actorDeviceId: deviceId, eventType: 'auth.bootstrap', objectType: 'user', objectId: userId, outcome: 'success', details: { userHandle }, now })
+    db.exec('COMMIT')
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK')
+    } catch {
+      // The original failure is what matters; a failing rollback must not replace it.
+    }
+    throw error
+  }
+
+  return {
+    user: findUserById(db, userId),
+    device: findDeviceById(db, deviceId),
+    refresh: { id: refreshId, expiresAt: refreshExpiresAt },
+  }
+}
+
 /** True only when the device exists, belongs to the user, and has not been revoked. */
 export function isDeviceActive(db, { deviceId, userId }) {
   const device = db.prepare('SELECT user_id, revoked_at FROM devices WHERE id = ?').get(deviceId)

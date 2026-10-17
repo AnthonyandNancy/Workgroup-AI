@@ -77,6 +77,15 @@ describe('the workgroup Hub provider', () => {
     expect(hub.available).toBe(false)
   })
 
+  it('keeps workgroup creation unavailable when the configured Hub is temporarily unavailable', async () => {
+    const { bridge } = bridgeOver({ 'hub-view': { configured: true, signedIn: false, state: 'unavailable' } })
+    const hub = createWorkgroupHub({ bridge })
+    await bridge.refresh()
+    expect(hub.configured).toBe(true)
+    expect(hub.state).toBe('unavailable')
+    expect(hub.available).toBe(false)
+  })
+
   it('routes Hub configuration, registration, and room discovery through the Host', async () => {
     const calls = []
     const bridge = createHubBridge({

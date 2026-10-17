@@ -96,7 +96,57 @@ paths:
       responses:
         '200': {description: Ready}
         '503': {description: Not ready}
-  /rooms:
+  /auth/bootstrap:
+    post:
+      security: []
+      summary: 创建匿名工作群 Hub 会话
+      description: >-
+        仅在 HUB_ANONYMOUS_BOOTSTRAP=true 时开放。Hub 生成 canonical guest user、device、access token
+        和 refresh token；客户端提交的 userId、handle、role、permissions 等字段不会被信任。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [installationId, deviceLabel, platform]
+              properties:
+                installationId: {type: string, format: uuid}
+                deviceLabel: {type: string, minLength: 1, maxLength: 120}
+                platform: {type: string, minLength: 1, maxLength: 64}
+                appVersion: {type: string, maxLength: 120}
+      responses:
+        '201':
+          description: Guest identity and Host-only session credentials
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user, device, accessToken, refreshToken, accessTokenExpiresAt, refreshTokenExpiresAt]
+                properties:
+                  user:
+                    type: object
+                    required: [id, userHandle, displayName, status]
+                    properties:
+                      id: {type: string, format: uuid}
+                      userHandle: {type: string, pattern: '^guest-[a-z0-9-]+$'}
+                      displayName: {type: string}
+                      status: {type: string, enum: [active]}
+                  device:
+                    type: object
+                    required: [id, label, platform, appVersion]
+                    properties:
+                      id: {type: string, format: uuid}
+                      label: {type: string}
+                      platform: {type: string}
+                      appVersion: {type: string, nullable: true}
+                  accessToken: {type: string}
+                  refreshToken: {type: string}
+                  accessTokenExpiresAt: {type: string, format: date-time}
+                  refreshTokenExpiresAt: {type: string, format: date-time}
+        '400': {description: Invalid bootstrap input}
+        '403': {description: Anonymous bootstrap is disabled}
+        '429': {description: Too many bootstrap attempts}
     get:
       summary: 我的工作群
       responses:

@@ -514,7 +514,6 @@ export function AccountLauncher({ seat = true, settingsOpen, openSettings, openO
       [t('Connectors'), ConnectorIcon, () => actions.openConnectors()],
       [t('Automation tasks'), ClockIcon, () => actions.selectPanel('schedules')],
       [t('Bot settings'), GearIcon, () => actions.openSettings('general')],
-      [t('Workgroup Hub'), PlugIcon, () => actions.openSettings('hub')],
     ],
     [
       [t('Switch to classic Agent mode'), SwitchIcon, () => actions.setSurface('agent')],

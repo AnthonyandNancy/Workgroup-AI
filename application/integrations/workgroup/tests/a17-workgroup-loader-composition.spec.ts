@@ -137,7 +137,7 @@ async function boot({ configuredHub = false, signedIn = false } = {}) {
         home: join(root, 'bot'),
         hubConfigPath: join(root, 'hub-config.json'),
         hubStatePath: join(root, 'hub-session.json'),
-        ...(configuredHub ? { hubUrl: 'https://hub.example' } : {}),
+        hubUrl: configuredHub ? 'https://hub.example' : '',
       },
     },
   ]
@@ -184,7 +184,7 @@ describe('the real Loader composition activates the Bot package', () => {
     const view = await apiBot(ctx, 'hub-view')
     expect(view.ok).toBe(true)
     expect(view.value.configured).toBe(false)
-    expect(view.value.state).toBe('signed-out')
+    expect(view.value.state).toBe('unavailable')
     // An approval attempt with no Hub is refused by name, which proves the request reached the
     // workgroup adapter instead of a generic 404.
     const decision = await apiBot(ctx, 'hub-approve-task', { taskId: 'task-1', decision: 'approve', expectedVersion: 0 })

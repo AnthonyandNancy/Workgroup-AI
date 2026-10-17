@@ -41,4 +41,22 @@ describe('workgroup creation entry wiring', () => {
     const source = readClientSource('settings.js')
     expect(source).toMatch(/export function SettingsDialog\(\{[^}]*workgroups[^}]*\}/s)
   })
+
+  it('always supplies the workgroup actions so the entries do not disappear without a Hub', () => {
+    const source = readClientSource('index.js')
+    expect(source).toMatch(/const workgroups = createSource\(workgroupActions\)/)
+    expect(source).not.toMatch(/workgroupHub\.available \? workgroupActions : undefined/)
+  })
+
+  it('wires the command palette entry below the local group command', () => {
+    const paletteSource = readClientSource('palette.js')
+    const overlaysSource = readClientSource('overlays.js')
+    expect(paletteSource).toMatch(/export function CommandPalette\(\{[^}]*workgroups[^}]*\}\)/s)
+    const groupIndex = paletteSource.indexOf("t('Create group chat')")
+    const workgroupIndex = paletteSource.indexOf("t('Create workgroup chat')")
+    expect(groupIndex, 'the original group command must still exist').toBeGreaterThanOrEqual(0)
+    expect(workgroupIndex, 'the workgroup command must exist').toBeGreaterThan(groupIndex)
+    expect(paletteSource).toMatch(/workgroups === undefined \? \[\] :[\s\S]*?key: 'cmd:workgroup'[\s\S]*?run: \(\) => workgroups\.create\(\)/)
+    expect(overlaysSource).toMatch(/h\(CommandPalette, \{[^}]*workgroups[^}]*\}\)/s)
+  })
 })

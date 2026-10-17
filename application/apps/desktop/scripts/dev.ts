@@ -120,7 +120,11 @@ async function main(): Promise<void> {
     release,
     target: resolveDesktopBuildTarget(),
   })
-  await preparePrimaryRuntime()
+  // The payload smoke run spawns the bundled Python, Node, and pnpm interpreters; on a
+  // machine where that first launch is slow it exceeds the 120s per-command budget and
+  // fails the whole launcher even though the payload is intact. Skipping it is a
+  // development-only escape hatch: packaging still runs the check.
+  await preparePrimaryRuntime({ deferSmoke: process.env.WORKGROUP_DESKTOP_DEFER_RUNTIME_SMOKE === '1' })
   await launchElectron()
 }
 

@@ -57,6 +57,12 @@ export async function createServer({ config, db, logger }) {
     windowSeconds: config.security.loginWindowSeconds,
     lockoutSeconds: config.security.loginLockoutSeconds,
   })
+  const bootstrapLimiter = new PersistentLimiter({
+    db,
+    maxAttempts: config.security.bootstrapMaxAttempts,
+    windowSeconds: config.security.bootstrapWindowSeconds,
+    lockoutSeconds: config.security.bootstrapWindowSeconds,
+  })
   // The remaining write endpoints, each in its own namespace so their budgets do not interfere: a
   // room busy enough to trip the message limit must not also refuse its members' logins. Separate
   // instances rather than shared keys, because the limits differ — a heartbeat is emitted on a timer
@@ -90,7 +96,7 @@ export async function createServer({ config, db, logger }) {
     authenticate: makeAuthenticator({ config, db }),
     log: server.log,
   })
-  server.decorate('hub', { config, db, version: hubVersion(), requireAuth, realtime, loginLimiter, registerLimiter, heartbeatLimiter, messageLimiter, signing })
+  server.decorate('hub', { config, db, version: hubVersion(), requireAuth, realtime, loginLimiter, registerLimiter, bootstrapLimiter, heartbeatLimiter, messageLimiter, signing })
 
   server.setErrorHandler((error, request, reply) => {
     const status = error.statusCode ?? 500
