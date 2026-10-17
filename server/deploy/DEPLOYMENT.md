@@ -98,6 +98,18 @@ openssl rand -base64 24     # → HUB_ADMIN_BOOTSTRAP_SECRET
   首次建号后应从环境文件移除并重启。
 - 不要把 `.env`、数据库或私钥提交进版本库。
 
+### 匿名工作群 bootstrap（演示开关）
+
+DS Bot 的 Host 可以在员工首次进入 Bot 时自动取得一个匿名 Hub 用户，不需要在 Bot 内填写 URL、密码或注册 key。该端点默认关闭，演示 Hub 需显式开启：
+
+```ini
+HUB_ANONYMOUS_BOOTSTRAP=true
+HUB_BOOTSTRAP_MAX_ATTEMPTS=5
+HUB_BOOTSTRAP_WINDOW_SECONDS=300
+```
+
+`HUB_BOOTSTRAP_MAX_ATTEMPTS` 与 `HUB_BOOTSTRAP_WINDOW_SECONDS` 控制每个来源在时间窗内允许的失败次数，默认 5 次 / 300 秒。关闭时端点返回 `ANONYMOUS_BOOTSTRAP_DISABLED`；application 将工作群显示为连接不可用，本地 Bot、普通群和本地 Session 不受影响。匿名用户与普通 active 用户使用同一套成员、ACL、审计和设备吊销规则；每次有效 bootstrap 都会创建一个新的 guest 用户和设备，Host 在本机保存会话并在后续启动时优先 refresh。清除 application 用户数据目录会产生新的匿名用户。
+
 ### 签名密钥轮换（用户无感）
 
 ```ini

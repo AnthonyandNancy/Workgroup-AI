@@ -116,7 +116,7 @@ installation state 只保存非敏感 installationId、Hub URL 关联信息和�
 
 - 从 `SETTINGS_PAGES` 移除 Hub 设置页及其 URL、注册、登录、退出和邀请管理入口。
 - 保留 `Create group chat` 的本地行为。
-- 保留 `Create workgroup chat`，其显示条件仍是 `workgroups !== undefined`，但 provider 的 available 状态由 Host 自动 bootstrap/refresh 驱动。
+- 保留 `Create workgroup chat`，并同时存在于新建聊天菜单、设置 → 群聊和命令面板；provider 始终提供 `workgroups` 动作对象，因此入口不因 Hub 暂时未连通而消失。点击时由 `workgroups.create` 调用 Host；Hub 未就绪时按现有错误路径显示稳定原因，本地 Bot、普通群和本地 Session 不受影响。
 - 工作群身份和成员信息继续由现有 Workgroup UI 展示；需要邀请时使用现有成员/目录能力，不新增 Hub 认证页面。
 - Hub 不可达时不影响本地 Bot、普通群和本地 Session。
 - renderer 只看到连接状态、匿名用户的公开 handle/display name 和工作群数据。

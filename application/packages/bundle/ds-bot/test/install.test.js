@@ -106,9 +106,11 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     // position here is the promise that no tool is registered behind its back. The earlier
     // `tools guard` belongs to the question-tool check; this second one is the task guard.
     'tools guard',
-    // The approval consumer (`src/host/task-dispatch.js`) is installed last, so its turn-end
-    // listener is the last registration: nothing may be added behind the task guard.
+    // The approval consumer (`src/host/task-dispatch.js`) is installed last. It registers its
+    // turn-end listener and then the approved-task reconciliation effect, so those are the final
+    // registrations: nothing may be added behind the task guard.
     'on session/event',
+    'effect ds-bot: approved task reconciliation',
   ])
 })
 

@@ -26,7 +26,7 @@
 
 | # | 原版能力（源码依据） | 工作群现状 | 结论 |
 |---|---|---|---|
-| 1 | **创建群聊入口**（`client/new-chat.js`） | 原入口未移动，其正下方新增「创建工作群聊」（`workgroup-entry.js`） | **已继承**（原入口逻辑未改；未配置 Hub 时菜单与上游完全一致） |
+| 1 | **创建群聊入口**（`client/new-chat.js`） | 原入口未移动，其正下方新增「创建工作群聊」（`workgroup-entry.js`）；设置→群聊和命令面板也各有一个入口 | **已继承**（原入口逻辑未改；三处入口共享动作，Hub 未就绪时保留入口并显示稳定错误） |
 | 2 | **群成员列表**（`client/index.js` 侧栏 + `roster.js`） | 工作群成员来自 Hub（`workgroup.js` 的 `WorkgroupMembers`），人类成员带在线点 | **有差异且已确认**：成员来源是 Hub 而非本地 roster（这正是两种实体的区别）；Bot 成员不加在线点，因为 Hub 的 presence 只描述真人连接，Bot 的在线是它自己心跳的 `state`——两套语义不混用 |
 | 3 | **群消息气泡与发送**（`groups.js` 的 `postToRoom`） | `workgroup.js` 复用原版气泡组件渲染；发送走 Hub（`client/index.mjs` 的 `sendMessage`） | **有差异且已确认**：持久化位置是 Hub 而非本地 store。视觉层复用同一批组件（`InlineText`/`RoomAvatar`） |
 | 4 | **`@` 提及成员**（`groups.js:10`、`mentionsIn`） | `workgroup-mentions.js`：按 **userId** 组装的 mention，输入区有选择器 | **有差异且已确认**：原版按气泡里的 `@Name` 文本识别（本地群，成员名唯一且稳定）；工作群按稳定 ID，因为跨用户场景下显示名可改，且文本 `@Name` 无法与正文里的同名字符串区分 |
