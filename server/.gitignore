@@ -18,3 +18,7 @@ data/**
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+
+# Hub 运行日志
+hub.log*
+.hub.log*
