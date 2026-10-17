@@ -22,8 +22,9 @@
 //
 // Credentials come from this process's environment, never from source.
 
+import { recycleTestPath } from './recycle.mjs'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -97,7 +98,7 @@ afterAll(async () => {
   for (const cleanup of [...cleanups].reverse()) await cleanup()
   for (const root of roots) {
     try {
-      rmSync(root, { recursive: true, force: true, maxRetries: 5 })
+      recycleTestPath(root)
     } catch {
       // A temp directory the operating system still holds open is residue, not a test result: the
       // cases above have already run and reported. Failing here would turn leftover files into a

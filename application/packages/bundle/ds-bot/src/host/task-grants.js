@@ -122,8 +122,11 @@ export function install(rt) {
       expiresAt: expiresAt ?? null,
       // The version the Hub had when this was approved. A cancellation on the Hub raises it, and
       // the next call here sees the difference — that is how a cancellation reaches a machine
-      // nobody can send a command to.
+      // nobody can send a command to. `currentRevocationVersion` is the newest version this Host has
+      // observed from the Hub; the guard compares it on every call, so learning about a cancellation
+      // stops the work even before the revocation event is delivered.
       revocationVersion: Number(revocationVersion),
+      currentRevocationVersion: Number(revocationVersion),
       mintedAt: Date.now(),
       revokedAt: null,
       revokedReason: null,
@@ -131,6 +134,31 @@ export function install(rt) {
     state.taskGrants[taskId] = grant
     await rt.save()
     rebuildIndex()
+    return grant
+  }
+
+  /**
+   * Record the newest revocation version this Host has seen for a task.
+   *
+   * The Hub bumps this version when a task is cancelled. Events can be missed while the Host is
+   * offline or the room is not subscribed, so every owner-scoped read of the task is also a chance
+   * to learn the current version. The per-call guard compares this value with the version the grant
+   * was minted at and refuses when it has moved; the grant's own expiry remains the bound when the
+   * Host never learns the new version at all.
+   *
+   * @param taskId - the task whose version was observed.
+   * @param version - the revocation version from a Hub answer.
+   * @returns the updated grant, or undefined when this task has no local grant.
+   */
+  async function recordRevocationVersion(taskId, version) {
+    const grant = byTask.get(taskId)
+    if (grant === undefined) return undefined
+    const numeric = Number(version)
+    if (!Number.isSafeInteger(numeric) || numeric < 0) return grant
+    if (numeric <= Number(grant.currentRevocationVersion ?? grant.revocationVersion)) return grant
+    grant.currentRevocationVersion = numeric
+    state.taskGrants[taskId] = grant
+    await rt.save()
     return grant
   }
 
@@ -174,6 +202,12 @@ export function install(rt) {
 
     if (grant.revokedAt !== null) {
       return `This task's approval was withdrawn (${grant.revokedReason}), so ${exec.name} will not run. Report what you have and stop.`
+    }
+    // The Hub raises the revocation version when a task is cancelled. This comparison is the second
+    // way that reaches the guard: even if the cancellation event was missed, a version this Host
+    // learned from any owner-scoped read refuses the call before the grant's own expiry would.
+    if (Number(grant.currentRevocationVersion ?? grant.revocationVersion) > Number(grant.revocationVersion)) {
+      return `This task was cancelled after its grant was issued, so ${exec.name} will not run. Report what you have and stop.`
     }
     if (grant.expiresAt !== null && Date.parse(grant.expiresAt) <= Date.now()) {
       return `This task's approval expired at ${grant.expiresAt}, so ${exec.name} will not run. Report what you have and stop.`
@@ -237,7 +271,7 @@ export function install(rt) {
   ctx.tools.guard(exec => checkToolCall(exec))
 
   Object.assign(rt, {
-    mintGrant, revokeGrant, grantForSession, taskGrantOf: taskId => byTask.get(taskId),
+    mintGrant, revokeGrant, recordRevocationVersion, grantForSession, taskGrantOf: taskId => byTask.get(taskId),
     indexTaskGrants: rebuildIndex,
     // The guard itself, reachable so a caller can ask what it would decide without running a
     // turn. That is how the refusal cases are proven rather than inferred from a missing reply.

@@ -15,9 +15,10 @@
 // membership that justified reading it would be the worst kind of leak — silent, and about decisions
 // rather than messages.
 
+import { recycleTestPath } from './recycle.mjs'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -72,7 +73,7 @@ async function startRealHub() {
       child.kill('SIGTERM')
       await Promise.race([exited, new Promise(resume => setTimeout(resume, 5000))])
       if (child.exitCode === null) child.kill('SIGKILL')
-      rmSync(root, { recursive: true, force: true, maxRetries: 10 })
+      recycleTestPath(root)
     },
   }
 }

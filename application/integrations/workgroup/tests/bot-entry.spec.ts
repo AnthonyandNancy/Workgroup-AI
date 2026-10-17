@@ -153,7 +153,7 @@ it('A-04: the workgroup entry appears only when a Hub is configured', () => {
   // that it can change while a window is open — is covered by a11-hub-provider.spec.ts. What is
   // checked here is only that this module reads that reactive flag rather than freezing a value.
   const indexSource = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'index.js'), 'utf8')
-  expect(indexSource).toMatch(/const workgroupsNow = \(\) => \(workgroupHub\.available \? \{/)
+  expect(indexSource).toMatch(/const workgroupsNow = \(\) => workgroupHub\.available \? workgroupActions : undefined/)
   expect(indexSource).toMatch(/hubBridge\.view\.subscribe\(\(\) => \{ workgroups\.set\(workgroupsNow\(\)\) \}\)/)
   // And the original group entry is not behind any Hub gate.
   const groupLine = source.split(String.fromCharCode(10)).find(line => line.includes("t('Create group chat')"))
@@ -173,13 +173,19 @@ it('A-04: both menu labels are in the shipped bundle, with their Chinese copy', 
 
 it('A-03: a workgroup is rendered through the team’s own room components', () => {
   const source = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'workgroup.js'), 'utf8')
-  // Reuse is the requirement, so the module must mount the team's own settings form and avatar
-  // rather than define a second version of either.
-  expect(source).toMatch(/import \{ GroupSettingsForm \} from '\.\/group-settings\.js'/)
+  const settings = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'workgroup-settings.js'), 'utf8')
+  // Reuse is the requirement. The room chrome and the settings primitives are the team's own; the
+  // settings *form* is workgroup-specific because a local group form edits a local room through
+  // `updateRoom`/`deleteRoom`, which a Hub room does not have. The shared pieces it does mount are
+  // asserted here, and the Hub-only action path is asserted below and in a16.
   expect(source).toMatch(/import \{ RoomAvatar \} from '\.\/mark\.js'/)
-  expect(source, 'the settings view must be the group settings form').toMatch(/h\(GroupSettingsForm, \{/)
+  expect(source).toMatch(/import \{ Card, Row, InlineText \} from '\.\/bot-settings\.js'/)
+  expect(settings).toMatch(/import \{ Card, Row \} from '\.\/bot-settings\.js'/)
+  expect(source, 'the settings view must be the workgroup settings form').toMatch(/h\(WorkgroupSettings, \{/)
   // And it must not carry the local-group affordances, which would imply a workgroup is local.
   expect(source.includes('createRoom('), 'the view must not create local rooms').toBe(false)
+  expect(settings.includes('updateRoom('), 'workgroup settings must not edit a local room').toBe(false)
+  expect(settings.includes('deleteRoom('), 'workgroup settings must not delete a local room').toBe(false)
   expect(source.includes("call('"), 'the view must not call the host: everything arrives through props').toBe(false)
 })
 

@@ -1,6 +1,7 @@
 // E1: what the Hub signs must be exactly what the executor verifies.
 //
-// The two halves live in projects that cannot import each other — `server/` must deploy alone, and the
+// The two halves live in projects that cannot import { recycleTestPath } from './recycle.mjs'
+import each other — `server/` must deploy alone, and the
 // application must not reach into it — so the encoding rule exists twice. Two copies of a rule that
 // must agree byte for byte is the case where silent drift is most expensive: the Hub keeps signing
 // happily, every executor refuses every real dispatch, and neither project's own suite fails, because
@@ -16,7 +17,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { createPublicKey, generateKeyPairSync, sign as signBytes } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -30,7 +31,7 @@ const scratch = []
 afterAll(() => {
   for (const dir of scratch) {
     try {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 5 })
+      recycleTestPath(dir)
     } catch {
       // A temp directory the OS still holds open is residue, not a test result.
     }

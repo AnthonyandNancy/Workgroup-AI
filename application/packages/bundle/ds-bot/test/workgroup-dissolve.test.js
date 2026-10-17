@@ -28,7 +28,12 @@ test('the pane dissolves through the Hub, not through the local room store', () 
   // local store — the host refuses a Hub room there with `Unknown group chat`. The pane is where the
   // Hub client is available, so this is where the action is decided.
   assert.match(PANE, /workgroups\.dissolve\(value\.dissolve\)/, 'the pane must call the Hub dissolve endpoint')
-  assert.match(VIEW, /deleteRoom:\s*\(roomId\)\s*=>\s*onDissolve/, 'the form action is redirected to the Hub action')
+  // The settings surface is Hub-specific (`WorkgroupSettings`), so it calls the dissolve the pane
+  // handed it and never the local room store. `GroupSettingsForm` is not mounted for a workgroup:
+  // its destructive action edits a local room the Host does not have.
+  const WORKGROUP_SETTINGS = readFileSync(new URL('../src/client/workgroup-settings.js', import.meta.url), 'utf8')
+  assert.match(WORKGROUP_SETTINGS, /onDissolve\(room\.id\)/, 'the form action is the Hub dissolve')
+  assert.equal(/deleteRoom\(/.test(VIEW + WORKGROUP_SETTINGS), false, 'no local delete is wired')
 })
 
 test('dissolving is labelled as dissolving rather than as deleting', () => {

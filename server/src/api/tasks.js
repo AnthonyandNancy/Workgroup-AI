@@ -18,7 +18,7 @@
 import {
   TaskError,
   createTask, decideTask, cancelTask, transition, findTask, findApprovalForTask, listTaskEvents,
-  listTasksForRoom, listPendingForOwner, publicTask, publicTaskEvent,
+  listTasksForRoom, listPendingForOwner, listApprovedForOwner, latestProgressReason, publicTask, publicTaskEvent,
 } from '../modules/tasks/store.js'
 import { RoomError, requireMember, listMembers } from '../modules/rooms/store.js'
 import { revokeGrantsForTask } from '../modules/tasks/grants.js'
@@ -178,7 +178,10 @@ export function makeTaskRoutes({ requireAuth }) {
       try {
         requireMember(db, { roomId: request.params.roomId, userId: request.auth.user.id })
         return reply.code(200).send({
-          tasks: listTasksForRoom(db, request.params.roomId).map(task => publicTask(task)),
+          tasks: listTasksForRoom(db, request.params.roomId).map((task) => {
+            const lastReason = latestProgressReason(db, task.id)
+            return { ...publicTask(task), ...(lastReason === undefined ? {} : { lastReason }) }
+          }),
         })
       } catch (error) {
         return taskFailure(reply, error)
@@ -200,6 +203,11 @@ export function makeTaskRoutes({ requireAuth }) {
      */
     fastify.post('/api/v1/tasks/:taskId/progress', { preHandler: requireAuth }, async (request, reply) => {
       const body = request.body ?? {}
+      // A failure reason is a category the room may read, never free-form text from the owner's
+      // machine: an error message can carry a path, a command, or a tool's output.
+      if (body.reason !== undefined && (typeof body.reason !== 'string' || !/^[A-Z][A-Z0-9_]{1,63}$/.test(body.reason))) {
+        return reply.code(400).send({ error: { code: 'INVALID_REASON', message: 'A progress reason must be an upper-case category code' } })
+      }
       try {
         const task = findTask(db, request.params.taskId)
         if (task === undefined) return reply.code(404).send({ error: { code: 'NO_SUCH_TASK', message: 'No such task' } })
@@ -208,6 +216,12 @@ export function makeTaskRoutes({ requireAuth }) {
           // requester could forge would let them claim work the owner never did.
           return reply.code(403).send({ error: { code: 'NOT_TASK_OWNER', message: 'Only the task owner reports its progress' } })
         }
+        const publicPayload = {
+          stage: body.stage,
+          ...(body.reason === undefined ? {} : { reason: body.reason }),
+        }
+        // An absent stage is a state-only report; an absent state is a stage-only one. The public
+        // payload is built once so a state report and a bare event carry the same fields.
         if (body.state !== undefined) {
           const updated = transition(db, {
             taskId: task.id,
@@ -216,13 +230,13 @@ export function makeTaskRoutes({ requireAuth }) {
             actorUserId: request.auth.user.id,
             actorDeviceId: request.auth.deviceId,
             eventType: 'task.progress',
-            payload: { stage: body.stage },
+            payload: publicPayload,
           })
-          publishTaskEvent(fastify, updated, 'task.progress', { stage: body.stage })
+          publishTaskEvent(fastify, updated, 'task.progress', publicPayload)
           return reply.code(200).send({ task: publicTask(updated, { includeMachine: true }) })
         }
         // A stage-only report changes no state, so it is a bare event.
-        publishTaskEvent(fastify, task, 'task.progress', { stage: body.stage })
+        publishTaskEvent(fastify, task, 'task.progress', publicPayload)
         return reply.code(200).send({ task: publicTask(task, { includeMachine: true }) })
       } catch (error) {
         return taskFailure(reply, error)
@@ -305,6 +319,20 @@ export function makeTaskRoutes({ requireAuth }) {
 
     fastify.get('/api/v1/tasks/pending', { preHandler: requireAuth }, async (request) => ({
       tasks: listPendingForOwner(db, request.auth.user.id).map(task => publicTask(task)),
+    }))
+
+    /**
+     * The owner's approved execution queue.
+     *
+     * Addressed to the authenticated owner like the pending queue, and answered with the scope they
+     * themselves approved: this is the read a Host uses to find work that was approved while it was
+     * offline or not watching the room. It is not a room read, and no other member may call it.
+     */
+    fastify.get('/api/v1/tasks/approved', { preHandler: requireAuth }, async (request) => ({
+      tasks: listApprovedForOwner(db, request.auth.user.id).map((task) => {
+        const approval = findApprovalForTask(db, task.id)
+        return publicTask(task, { includeScope: true, includeMachine: true, ...(approval === undefined ? {} : { approval }) })
+      }),
     }))
   }
 }

@@ -124,6 +124,21 @@ export function findApprovalForTask(db, taskId) {
   return db.prepare('SELECT * FROM approvals WHERE task_id = ?').get(taskId)
 }
 
+/**
+ * The last failure category a task published to its room, if any.
+ *
+ * The room's task list is drawn from `tasks`, which carries no event history; this is the one
+ * redacted fact from that history the list needs so a failed task can say why without opening the
+ * detail. It reads the stored public payload, which the progress route already restricted to an
+ * upper-case category.
+ */
+export function latestProgressReason(db, taskId) {
+  const row = db.prepare(`SELECT json_extract(public_payload_json, '$.reason') AS reason
+    FROM task_events WHERE task_id = ? AND event_type = 'task.progress'
+    ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(taskId)
+  return typeof row?.reason === 'string' && row.reason !== '' ? row.reason : undefined
+}
+
 export function listTaskEvents(db, taskId) {
   return db.prepare('SELECT * FROM task_events WHERE task_id = ? ORDER BY created_at, rowid').all(taskId)
 }
@@ -136,6 +151,18 @@ export function listTasksForRoom(db, roomId) {
 /** Tasks awaiting one owner's decision, which is what their client shows as a queue. */
 export function listPendingForOwner(db, ownerUserId) {
   return db.prepare(`SELECT * FROM tasks WHERE owner_user_id = ? AND state = 'PENDING_APPROVAL' ORDER BY created_at`).all(ownerUserId)
+}
+
+/**
+ * Approved tasks that still have to start on this owner's Host.
+ *
+ * This is the owner's execution queue, not the room's task list: it exists so a Host that was
+ * offline (or simply not watching the room) when the approval happened can still find the work.
+ * Only `APPROVED` is listed — a task already moved to `QUEUED` had its grant consumed by some
+ * Host, and re-listing it would invite a second Host to consume another grant for the same work.
+ */
+export function listApprovedForOwner(db, ownerUserId) {
+  return db.prepare(`SELECT * FROM tasks WHERE owner_user_id = ? AND state = 'APPROVED' ORDER BY created_at`).all(ownerUserId)
 }
 
 // ---------------------------------------------------------------- creation

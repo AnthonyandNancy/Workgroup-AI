@@ -73,6 +73,10 @@ components:
           type: string
           enum: [PENDING_APPROVAL, APPROVED, QUEUED, RUNNING, REVIEW_REQUIRED, COMPLETED, SHARED, REJECTED, CANCELLING, CANCELLED, EXPIRED, FAILED]
         version: {type: integer, minimum: 0}
+        lastReason:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]{1,63}$'
+          description: 最近一次失败/拒绝的分类码；只出现在房间任务列表，不含自由文本
     Error:
       type: object
       required: [code, message]
@@ -250,6 +254,50 @@ paths:
               schema: {$ref: '#/components/schemas/Task'}
         '403': {description: Approval forbidden}
         '409': {description: State/version conflict}
+  /tasks/{taskId}/progress:
+    parameters: [{name: taskId, in: path, required: true, schema: {type: string, format: uuid}}]
+    post:
+      summary: owner 本人回写脱敏进度
+      description: 只有任务所有者可调用；公共事件只包含 state、stage 与 reason 分类码，不含路径、工具参数或日志。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                state: {type: string, enum: [QUEUED, RUNNING, REVIEW_REQUIRED, COMPLETED, FAILED, CANCELLED]}
+                expectedVersion: {type: integer, minimum: 0}
+                stage: {type: string}
+                reason:
+                  type: string
+                  pattern: '^[A-Z][A-Z0-9_]{1,63}$'
+                  description: 失败/拒绝的分类码；自由文本会被拒绝（INVALID_REASON）
+      responses:
+        '200':
+          description: Progress recorded
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Task'}
+        '400': {description: Invalid reason category}
+        '403': {description: Not the task owner}
+        '409': {description: State/version conflict}
+  /tasks/approved:
+    get:
+      summary: 任务所有者的已批准待执行队列（owner-only）
+      description: 只返回调用者本人拥有的 APPROVED 任务，并携带 owner 自己批准的 scope。用于 owner Host 在离线或未订阅房间时发现待执行工作；不是房间读接口。
+      responses:
+        '200':
+          description: Owner's approved tasks
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tasks]
+                properties:
+                  tasks:
+                    type: array
+                    items: {$ref: '#/components/schemas/Task'}
   /tasks/{taskId}/cancel:
     parameters: [{name: taskId, in: path, required: true, schema: {type: string, format: uuid}}]
     post:

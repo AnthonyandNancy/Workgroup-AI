@@ -129,61 +129,15 @@ export function install(rt) {
         case 'duplicate-bot':
           await rt.load()
           return ok(await rt.duplicateBot(body.id))
-        // Workgroup AI fork: the two calls the browser half needs to run an approved cross-user
-        // task in an isolated Session. They are ordinary endpoints rather than a private path so
-        // the composition stays inspectable and the same read-only and lock rules apply.
-        case 'task-session-open': {
-          await rt.load()
-          const binding = await rt.openTaskSession({
-            taskId: String(body.taskId ?? ''),
-            botId: String(body.botId ?? ''),
-            ...(typeof body.workDir === 'string' && body.workDir.length > 0 ? { workDir: body.workDir } : {}),
-            ...(typeof body.title === 'string' && body.title.length > 0 ? { title: body.title } : {}),
-          })
-          // The binding is persisted here, after the Session exists, so a failure to write cannot
-          // leave a Session the team file does not know about. `taskBinding` tells whether an
-          // earlier call already recorded it, which is the case a retry hits.
-          if (rt.taskBinding?.(binding.taskId) === undefined) {
-            await rt.rememberTaskSession(binding)
-          }
-          // The team view is rebuilt so the browser half sees the new binding in the same reply.
-          await rt.refresh()
-          const bot = rt.botOf(binding.botId)
-          return ok({
-            taskId: binding.taskId,
-            botId: binding.botId,
-            sessionId: binding.sessionId,
-            workDir: binding.workDir,
-            identityName: bot?.name ?? null,
-            identityRole: bot?.role ?? null,
-          })
-        }
+        // Workgroup AI fork: a task Session is opened by the approval consumer in this Host
+        // (`task-dispatch.js`), never by a browser request. An endpoint that took a task id and a
+        // Bot id would be a second way to start work, one that never consulted the Hub, the task's
+        // state, or the owner's decision — so it is deliberately absent. The endpoints that remain
+        // only stop work or report it, which is the direction that cannot widen authority.
         case 'task-session-close': {
           await rt.load()
           const binding = await rt.closeTaskSession(String(body.taskId ?? ''))
           return ok({ taskId: body.taskId ?? null, closed: binding !== undefined, sessionId: binding?.sessionId ?? null })
-        }
-        // Workgroup AI fork: opening a task Session and granting it its approved limits are two
-        // steps, because the grant names the Session it applies to. A caller that stops after the
-        // first step has an isolated Session with no tool allowance, which is the safe direction.
-        case 'task-grant-set': {
-          await rt.load()
-          const binding = rt.taskBinding(String(body.taskId ?? ''))
-          if (binding === undefined) return fail('No task Session for that task; open it first', 'bot/task-grant')
-          const grant = await rt.mintGrant({
-            taskId: binding.taskId,
-            sessionId: binding.sessionId,
-            botId: binding.botId,
-            allowedTools: Array.isArray(body.allowedTools) ? body.allowedTools : [],
-            // Hosts the approval named. Omitted reads as none, which the guard treats as "this task
-            // opens no socket" — the same statement an empty list makes, and the safe direction for
-            // a caller that does not yet send the field.
-            allowedHosts: Array.isArray(body.allowedHosts) ? body.allowedHosts : [],
-            workDir: typeof body.workDir === 'string' && body.workDir.length > 0 ? body.workDir : binding.workDir,
-            expiresAt: typeof body.expiresAt === 'string' && body.expiresAt.length > 0 ? body.expiresAt : null,
-            revocationVersion: Number.isSafeInteger(Number(body.revocationVersion)) ? Number(body.revocationVersion) : 0,
-          })
-          return ok({ taskId: grant.taskId, allowedTools: grant.allowedTools, allowedHosts: grant.allowedHosts, workDir: grant.workDir, expiresAt: grant.expiresAt, revocationVersion: grant.revocationVersion })
         }
         case 'task-grant-revoke': {
           await rt.load()
@@ -310,6 +264,8 @@ export function install(rt) {
         case 'hub-directory':
         case 'hub-tasks':
         case 'hub-approve-task':
+        case 'hub-review-task':
+        case 'hub-cancel-task':
         case 'hub-memory':
         case 'hub-me':
         case 'hub-devices':
@@ -412,6 +368,12 @@ export function install(rt) {
           // A Bot id or an earlier part of its own chat means the current part.
           const past = rt.pastOwners.get(body.sessionId)
           const sessionId = rt.botOf(body.sessionId) ? rt.chatOf(body.sessionId) : past && past.roomId === undefined ? rt.chatOf(past.botId) : body.sessionId
+          // A task Session belongs to the approved task: its turn is started by the approval, not by
+          // the team chat. Injecting a message here would run work nobody approved in the Session
+          // the owner is trusting to hold only that task's instructions.
+          if (rt.isTaskSession?.(sessionId)) {
+            return fail('A task Session is driven by its approved task, not by the team chat', 'bot/refused')
+          }
           await rt.ensureCapabilities(sessionId)
           await ctx.sessionController.prompt({
             requestId: randomUUID(),

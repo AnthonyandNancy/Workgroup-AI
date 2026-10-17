@@ -8,7 +8,7 @@
 
 ## 一、WP-F：真实模型链路（最高优先级，只差凭据）
 
-**现状（实测）：** `GET http://127.0.0.1:8317/v1/models` 返回 **HTTP 401**；`DEEPSEEK_API_KEY` 与 `DEEPSEEK_BASE_URL` 均为未设置。因此所有"真实模型调用"的验证都是 BLOCKED，**不是**"已通过"。
+**现状（2026-10-17 续接更新）：** 不带凭据时 `GET http://127.0.0.1:8317/v1/models` 仍返回 **HTTP 401**；shell 与 `.env` 中也没有 `DEEPSEEK_API_KEY`。但**历史环境记录中存在可用凭据**：`application/apps/desktop/.desktop-build/development/home/.credentials.yaml` 里的 `LOCATION_API_KEY`。以环境变量把它传给测试后，同一端点返回 **40 个模型**（含 `deepseek-v4.1-flash`），`POST /v1/responses` 返回 `pong`；`a19-workgroup-real-model-execution.host.spec.ts` 已用真实 Hub 进程 + 真实 Loader Host + 真实模型跑通执行链（2/2）。密钥只经环境变量传递，未写入任何文件、日志或文档。**仍未做**：真实浏览器 UI 下的审批/复核/取消视觉与 `conversation` 面板。
 
 **需要准备：**
 

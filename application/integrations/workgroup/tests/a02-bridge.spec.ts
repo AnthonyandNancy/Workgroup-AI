@@ -16,11 +16,12 @@
 //     to deliver* (killing the socket) while a second client writes to the same room, then letting
 //     the Bridge reconnect and counting what it received.
 
+import { recycleTestPath } from './recycle.mjs'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -92,7 +93,7 @@ async function startRealHub() {
       child.kill('SIGTERM')
       await Promise.race([exited, new Promise(resume => setTimeout(resume, 5000))])
       if (child.exitCode === null) child.kill('SIGKILL')
-      rmSync(root, { recursive: true, force: true, maxRetries: 10 })
+      recycleTestPath(root)
     },
   }
 }

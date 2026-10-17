@@ -12,9 +12,10 @@ const MEMBERS = [
   { userId: 'u-alice', displayName: 'Alice', userHandle: 'alice' },
   { userId: 'u-bob', displayName: 'Bob', userHandle: 'bob' },
 ]
+// The shape the Hub's `/bots/directory` and a room snapshot actually carry: `botId`, not `id`.
 const BOTS = [
-  { id: 'writer', ownerUserId: 'u-bob', displayName: 'Writer' },
-  { id: 'ghost', ownerUserId: 'u-ghost', displayName: 'Ghost' },
+  { botId: 'writer', ownerUserId: 'u-bob', displayName: 'Writer' },
+  { botId: 'ghost', ownerUserId: 'u-ghost', displayName: 'Ghost' },
 ]
 
 test('the trigger is the character someone would type', () => {

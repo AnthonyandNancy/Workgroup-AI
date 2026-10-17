@@ -10,6 +10,7 @@
     "./protocol/hub-client": "./protocol/hub-client.mjs",
     "./bridge": "./bridge/index.mjs",
     "./client": "./client/index.mjs",
+    "./client/approvals": "./client/approvals.mjs",
     "./policy": "./policy/dispatch.mjs",
     "./bot-adapter/flows": "./bot-adapter/flows.mjs",
     "./bot-adapter/cancellation": "./bot-adapter/cancellation.mjs",

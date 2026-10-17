@@ -12,10 +12,11 @@
 // Every case is a refusal. A suite of positives says "the feature works"; this one says "the ways in
 // are shut", which is the only useful form for a release gate.
 
+import { recycleTestPath } from './recycle.mjs'
 import assert from 'node:assert/strict'
 import { generateKeyPairSync } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -76,7 +77,7 @@ async function startRealHub() {
       child.kill('SIGTERM')
       await Promise.race([exited, new Promise(resume => setTimeout(resume, 5000))])
       if (child.exitCode === null) child.kill('SIGKILL')
-      rmSync(root, { recursive: true, force: true, maxRetries: 10 })
+      recycleTestPath(root)
     },
   }
 }
@@ -121,7 +122,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await hub?.stop()
-  for (const path of scratch) rmSync(path, { recursive: true, force: true, maxRetries: 10 })
+  for (const path of scratch) recycleTestPath(path)
 }, 30_000)
 
 // ---------------------------------------------------------------------------

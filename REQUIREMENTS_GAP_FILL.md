@@ -572,3 +572,18 @@ RUNNING / QUEUED / REVIEW_REQUIRED → CANCELLING → CANCELLED / FAILED
 - 8 字符 key → `loadConfig` 抛 `HUB_ADMIN_BOOTSTRAP_SECRET must be at least 16 characters`（Hub 拒绝启动）
 - `NODE_ENV=production` 且未设 `HUB_TOKEN_SIGNING_KEY` → 抛 `HUB_TOKEN_SIGNING_KEY is required when NODE_ENV=production`
 - 本地模型端点 `http://127.0.0.1:8317/v1/models` 返回 42 个模型含 `deepseek-v4.1-flash`；`/v1/chat/completions` 返回 `pong`
+
+## 2026-10-17 W3/W4 执行结果（增量更新，不覆盖历史）
+
+本轮交付"审批 → owner 原生 Bot 隔离执行 → 脱敏进度 / 取消 / 复核 / 受控分享"的代码与 **M 级**证据；**未执行 L/N/P**，见 `docs/superpowers/plans/2026-10-17-workgroup-w3-w4-execution-evidence.md`。
+
+| 需求 | 本轮状态 | 证据 | 仍缺 |
+|---|---|---|---|
+| A2 mention 只产生 `PENDING_APPROVAL`、无执行副作用 | M 级通过 | `e-attachments.host` 7/7：owner grant 列表为空，任务事件无 `task.approved`/`task.progress`；`a18` 覆盖消费器对 pending 详情不发放 grant、不建 Session | L 级真实模型副作用证明 |
+| A5/A6 审批表单完整 scope | M 级通过 | `a16` 16/16：owner only；mode/Bot/目录/工具/有效期/recipients/version 缺一不发请求；`approvedScope.expiresAt` 为唯一 expiry | 真实浏览器交互与视觉 |
+| A6 批准后 owner Host 原生执行 | M 级通过（`existing_bot`/`create_bot`） | `a18` 17/17：真实验签、单次 consume、QUEUED→RUNNING、隔离 Session、持久绑定、本机 grant、真实 prompt；`a17` 3/3 真实 Loader 组合 | L 级真实模型；`chief_auto` 无 Host 决策器 |
+| A6 进度 / 取消 | M 级通过 | `a18`：进度只发 stage/state；取消先 revoke 再 close，记录 `processTree: 'unconfirmed'`，取消后工具调用被拒 | 真实 OS 子进程确认；owner 离线时的取消对账 |
+| A9 复核 / 受控分享 | M 级通过 | `a09` 21/21（服务端 keep/reject 不发布、share 收件人校验、DLP）；`a16` 16/16（owner 控件、share 必须指名 recipient） | L 级真实分享与真实浏览器 |
+| 工作群端到端 | **NO-GO** | 以上均为 M 级 | 真实浏览器 + 独立 Hub + owner Host + 真实模型 + 双机/打包 |
+
+修正：A-03 旧记录中的"复用原版 `GroupSettingsForm`"不再成立（改为 Hub 专用设置表单 + 复用 `RoomAvatar`/`Card`/`Row`）；A-04 的模块列表断言改为"已挂载"语义。两处修正后 W1 门禁 36/36。

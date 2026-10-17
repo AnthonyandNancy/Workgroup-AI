@@ -757,13 +757,13 @@ export function apply(ctx) {
    * a greyed-out "创建工作群聊" would advertise a feature the employee cannot have. The entry appears
    * exactly when the Host confirms there is somewhere for a workgroup to live.
    */
-  const workgroupsNow = () => (workgroupHub.available ? {
+  const workgroupActions = {
     create: async () => {
       // The Hub owns the room: this asks it to create one and shows the result. Nothing local is
       // written here, which is why a workgroup exists on every machine the member signs in from and
       // a local group exists on exactly one.
       const created = await workgroupHub.createRoom(newWorkgroupName(), { kind: 'workgroup' })
-      await enterWorkgroup({
+      return enterWorkgroup({
         roomId: created.id,
         sessions: ctx.sessions,
         openSession: actions.openSession,
@@ -772,7 +772,21 @@ export function apply(ctx) {
         report: error => actions.reportError(error, 'workgroup'),
       })
     },
-  } : undefined)
+    openRoom: roomId => workgroupHub.openRoom(roomId),
+    dissolve: roomId => workgroupHub.dissolve(roomId),
+    sendMessage: (roomId, text, options) => workgroupHub.sendMessage(roomId, text, options),
+    uploadArtifact: (roomId, payload) => workgroupHub.uploadArtifact(roomId, payload),
+    answerTask: (taskId, decision, options) => workgroupHub.answerTask(taskId, decision, options),
+    get identity() { return workgroupHub.identity },
+    renameRoom: (roomId, patch) => workgroupHub.renameRoom(roomId, patch),
+    invite: (roomId, payload) => workgroupHub.invite(roomId, payload),
+    revokeInvitation: invitationId => workgroupHub.revokeInvitation(invitationId),
+    setRole: (roomId, userId, role) => workgroupHub.setRole(roomId, userId, role),
+    removeMember: (roomId, userId) => workgroupHub.removeMember(roomId, userId),
+    leaveRoom: roomId => workgroupHub.leaveRoom(roomId),
+    downloadArtifact: artifactId => workgroupHub.downloadArtifact(artifactId),
+  }
+  const workgroupsNow = () => workgroupHub.available ? workgroupActions : undefined
   // The answer arrives asynchronously and can change while the window is open, so it travels as a
   // reactive source in the `hooks` compartment rather than as a prop captured once. A slot's
   // injected props are cached per entry, so a plain value here would freeze the first answer and
@@ -788,7 +802,7 @@ export function apply(ctx) {
   // The overlay's own inject face: `face()` plus the workgroup source under `hooks`, which is what
   // makes the menu see changes. Injected props are cached per slot entry, so a plain value in the
   // returned object would freeze the first answer.
-  const overlayFace = () => ({ ...face(), sessions: ctx.sessions, workgroupHub, hooks: { ...face().hooks, workgroups, hub } })
+  const overlayFace = () => ({ ...face(), sessions: ctx.sessions, workgroupHub, hooks: { ...face().hooks, workgroups, hub }, keyedHooks: { workgroupRoom: roomId => workgroupHub.roomState(roomId) } })
 
   /**
    * Register the fork's single first-level `Bot` navigation entry and its panel.
@@ -885,6 +899,12 @@ export function apply(ctx) {
     if (controller === undefined || span === undefined) return
     controller.toggleSource(CHATS_SOURCE, { trigger: '@', query: '', quoted: false, position: 'inline', span })
   }
+
+  const remote = ctx.get('remote')
+  ctx.effect(() => {
+    if (remote?.$on === undefined) return () => {}
+    return remote.$on('workgroup/event', event => { workgroupHub.applyEvent?.(event) })
+  }, 'ds-bot: workgroup events')
 
   // The shell group paints the team surface around the session; the conversation
   // group re-skins the session itself. Every disposer comes from slots.inject, so a

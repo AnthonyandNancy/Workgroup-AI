@@ -14,9 +14,10 @@
 // The redaction is a **positive** field list, so this file also asserts that a field nobody
 // anticipated is absent — which a negative list could not do.
 
+import { recycleTestPath } from './recycle.mjs'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -83,7 +84,7 @@ async function startRealHub() {
       child.kill('SIGTERM')
       await Promise.race([exited, new Promise(resume => setTimeout(resume, 5000))])
       if (child.exitCode === null) child.kill('SIGKILL')
-      rmSync(root, { recursive: true, force: true, maxRetries: 10 })
+      recycleTestPath(root)
     },
   }
 }

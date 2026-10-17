@@ -87,8 +87,14 @@ export function approvalChoices(task, publishedBots = []) {
  * that found no directory in the scope must refuse, and a client that filled in a default would
  * turn that refusal into a silent fallback to the team directory — the exact behaviour the
  * requirement forbids.
+ *
+ * `expiresAt` is the one expiry the scope records, as an absolute ISO timestamp rather than a
+ * duration: the executor compares it with its own clock, and the moment an approval was made is not
+ * something a later reader can reconstruct from "one hour" alone. The Hub records the scope
+ * verbatim, so this field and the Hub's own `expires_at` are read side by side; a lifetime that has
+ * already passed is refused here rather than recorded as a grant nobody can use.
  */
-export function approvalScope({ mode, botId, workDir, tools, recipients, expiresInSeconds } = {}) {
+export function approvalScope({ mode, botId, workDir, tools, recipients, expiresAt, now = new Date() } = {}) {
   if (!ASSIGNMENT_MODES.includes(mode)) {
     throw new ApprovalError(`An assignment mode must be one of ${ASSIGNMENT_MODES.join(', ')}`, 'INVALID_ASSIGNMENT_MODE')
   }
@@ -97,12 +103,20 @@ export function approvalScope({ mode, botId, workDir, tools, recipients, expires
     // costs a round trip less.
     throw new ApprovalError('Choosing an existing Bot requires picking one', 'MISSING_ASSIGNED_BOT')
   }
+  if (expiresAt !== undefined && expiresAt !== null && expiresAt !== '') {
+    // `Number.isFinite` rather than a truthiness test: `Date.parse` answers `NaN` for malformed
+    // text, and `NaN > now` is false, but a non-string would otherwise be coerced silently.
+    const deadline = typeof expiresAt === 'string' ? Date.parse(expiresAt) : Number.NaN
+    if (!Number.isFinite(deadline) || deadline <= now.getTime()) {
+      throw new ApprovalError('The task lifetime must end at a future timestamp', 'INVALID_EXPIRY')
+    }
+  }
   const scope = { mode }
   if (mode === 'existing_bot') scope.assignedBotId = botId
   if (workDir !== undefined && workDir !== null && workDir !== '') scope.workDir = workDir
   if (Array.isArray(tools) && tools.length > 0) scope.tools = [...tools]
   if (Array.isArray(recipients) && recipients.length > 0) scope.recipients = [...recipients]
-  if (typeof expiresInSeconds === 'number') scope.expiresInSeconds = expiresInSeconds
+  if (expiresAt !== undefined && expiresAt !== null && expiresAt !== '') scope.expiresAt = expiresAt
   return scope
 }
 
@@ -123,7 +137,7 @@ export function createApprovalClient({ client, bridge, selfUserId } = {}) {
    * `this.decide` breaks the moment a caller destructures the returned object, which is how a UI
    * would naturally use it.
    */
-  const decide = async ({ taskId, decision, expectedVersion, mode, botId, workDir, tools, recipients }) => {
+  const decide = async ({ taskId, decision, expectedVersion, mode, botId, workDir, tools, recipients, expiresAt }) => {
     if (decision !== 'approve' && decision !== 'reject') {
       throw new ApprovalError(`A decision must be approve or reject, got ${JSON.stringify(decision)}`, 'INVALID_DECISION')
     }
@@ -132,7 +146,7 @@ export function createApprovalClient({ client, bridge, selfUserId } = {}) {
     }
     const body = { decision, expectedVersion }
     if (decision === 'approve') {
-      const scope = approvalScope({ mode, botId, workDir, tools, recipients })
+      const scope = approvalScope({ mode, botId, workDir, tools, recipients, expiresAt })
       body.assignmentMode = scope.mode
       if (scope.assignedBotId !== undefined) body.assignedBotId = scope.assignedBotId
       body.approvedScope = scope
@@ -145,6 +159,18 @@ export function createApprovalClient({ client, bridge, selfUserId } = {}) {
     /** The tasks waiting on this user, and only this user. */
     async pending() {
       const listed = await client.request('GET', '/tasks/pending')
+      return listed.tasks
+    },
+
+    /**
+     * The approved tasks this owner still has to start.
+     *
+     * The owner's execution queue, not the room's list: it is how a Host that was offline, or was
+     * not watching the room, finds work that was approved without it. Only owner-owned tasks are
+     * answered, and the scope comes with them because the owner approved it.
+     */
+    async approvedQueue() {
+      const listed = await client.request('GET', '/tasks/approved')
       return listed.tasks
     },
 
@@ -173,9 +199,12 @@ export function createApprovalClient({ client, bridge, selfUserId } = {}) {
      * The Hub refuses this from anybody but the owner: a progress line the requester could write
      * would let them claim work the owner never did.
      */
-    reportProgress: (taskId, { state, expectedVersion, stage }) => client.request('POST', `/tasks/${taskId}/progress`, {
+    reportProgress: (taskId, { state, expectedVersion, stage, reason }) => client.request('POST', `/tasks/${taskId}/progress`, {
       body: {
         ...(stage === undefined ? {} : { stage }),
+        // A reason is a category the room may read (the Hub rejects free-form text); it is never a
+        // message from this machine.
+        ...(reason === undefined ? {} : { reason }),
         ...(state === undefined ? {} : { state, expectedVersion }),
       },
     // The route answers `{ task }`; the task is what a caller wants, so the wrapper is dropped here
@@ -208,7 +237,7 @@ export function createApprovalClient({ client, bridge, selfUserId } = {}) {
      * The version is required, not optional: a decision without one would overwrite whatever the
      * task had become, and the two-device case is exactly when that matters.
      *
-     * @param {{ taskId: string, decision: 'approve'|'reject', expectedVersion: number, mode?: string, botId?: string, workDir?: string, tools?: string[], recipients?: string[] }} input
+     * @param {{ taskId: string, decision: 'approve'|'reject', expectedVersion: number, mode?: string, botId?: string, workDir?: string, tools?: string[], recipients?: string[], expiresAt?: string }} input
      */
     decide,
 

@@ -15,9 +15,10 @@
 // process still holds, and an upgrade has to reason about a schema it did not build. A mock would
 // let all three pass while none of them worked.
 
+import { recycleTestPath } from './recycle.mjs'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -111,7 +112,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await hub?.stop()
-  rmSync(root, { recursive: true, force: true, maxRetries: 10 })
+  recycleTestPath(root)
 }, 60_000)
 
 // ---------------------------------------------------------------------------
@@ -289,9 +290,9 @@ describe('a restore puts back everything a group depends on', () => {
 
     // Destroy the database **and** the attachment bytes, and stop the Hub so the restore is legal.
     await hub.stop()
-    rmSync(join(dataDir, 'hub.sqlite'), { force: true })
-    for (const sidecar of ['-wal', '-shm']) rmSync(`${join(dataDir, 'hub.sqlite')}${sidecar}`, { force: true })
-    rmSync(join(dataDir, 'artifacts'), { recursive: true, force: true })
+    recycleTestPath(join(dataDir, 'hub.sqlite'))
+    for (const sidecar of ['-wal', '-shm']) recycleTestPath(`${join(dataDir, 'hub.sqlite')}${sidecar}`)
+    recycleTestPath(join(dataDir, 'artifacts'))
 
     const restored = spawnSync(process.execPath, [CLI, 'restore', snapshotPath], { cwd: SERVER_ROOT, env: { ...process.env, ...env }, encoding: 'utf8' })
     assert.equal(restored.status, 0, restored.stderr)

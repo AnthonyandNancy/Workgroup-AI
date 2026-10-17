@@ -20,10 +20,10 @@
 // kind of thing a later change might quietly "improve".
 
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync, spawn } from 'node:child_process'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createHubClient } from '../protocol/hub-client.mjs'
@@ -77,7 +77,14 @@ async function startRealHub() {
       child.kill('SIGTERM')
       await Promise.race([exited, new Promise(resume => setTimeout(resume, 5000))])
       if (child.exitCode === null) child.kill('SIGKILL')
-      rmSync(root, { recursive: true, force: true, maxRetries: 10 })
+      const absoluteRoot = resolve(root)
+      const withinTemp = relative(resolve(tmpdir()), absoluteRoot)
+      assert.ok(withinTemp.startsWith('workgroup-a05-') && !withinTemp.includes(sep))
+      if (process.platform === 'win32') {
+        execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+          'Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($env:WORKGROUP_TEST_RECYCLE, [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs, [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)',
+        ], { env: { ...process.env, WORKGROUP_TEST_RECYCLE: absoluteRoot } })
+      }
     },
   }
 }

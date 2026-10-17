@@ -11,12 +11,13 @@
 //     an unreachable Hub, a closed registration, a revoked device, and a stale token each get a
 //     case, because each one is a distinct thing for the person at the keyboard to do.
 //
-// The client is imported as the application will import it, through its own entry point, so a
+// The client is imported as the application will import { recycleTestPath } from './recycle.mjs'
+import it, through its own entry point, so a
 // change to how the module is shaped breaks this test rather than only breaking at runtime.
 
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -88,7 +89,7 @@ async function startRealHub({ registration = 'admin_secret', env = {} } = {}) {
       child.kill('SIGTERM')
       await Promise.race([exited, new Promise(resume => setTimeout(resume, 5000))])
       if (child.exitCode === null) child.kill('SIGKILL')
-      rmSync(root, { recursive: true, force: true, maxRetries: 10 })
+      recycleTestPath(root)
     },
     root,
   }
@@ -109,7 +110,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await hub?.stop()
-  for (const path of temporaryDirs) rmSync(path, { recursive: true, force: true, maxRetries: 10 })
+  for (const path of temporaryDirs) recycleTestPath(path)
 }, 30_000)
 
 function client(options = {}) {

@@ -25,7 +25,8 @@
 // relative path that leaves `src/host` would resolve to a different depth once published under
 // `lib/src/host`. A package name is the same string in both trees.
 import { clearHubSession, createHubClient, hubConfigPath, hubStatePath, loadHubConfig, resolveHubUrl, saveHubConfig } from '@deepseek-ai/dsh-workgroup/protocol/hub-client'
-import { createWorkgroupClient } from '@deepseek-ai/dsh-workgroup/client'
+import { createWorkgroupClient, reduceWorkgroup } from '@deepseek-ai/dsh-workgroup/client'
+import { createApprovalClient } from '@deepseek-ai/dsh-workgroup/client/approvals'
 import { createBridge } from '@deepseek-ai/dsh-workgroup/bridge'
 
 export function install(rt) {
@@ -51,12 +52,25 @@ export function install(rt) {
   let client
   let workgroup
   let bridge
+  let bridgeStarting
   /** 'signed-out' before sign-in, then the Bridge's own states. Surfaced to the browser. */
   let connectionState = 'signed-out'
   let connectionDetail
   // The rooms this process is watching. Kept so a reconnect after a sign-in re-subscribes to
   // everything the user had open, rather than only the room they last touched.
   const watched = new Set()
+  const roomStates = new Map()
+
+  const publishWorkgroupEvent = event => {
+    const roomId = event?.roomId
+    const current = typeof roomId === 'string' ? roomStates.get(roomId) : undefined
+    if (current !== undefined) {
+      const next = reduceWorkgroup(current, event)
+      if (next !== current) roomStates.set(roomId, next)
+    }
+    rt.ctx?.emit?.('workgroup/event', event)
+    rt.onWorkgroupEvent?.(event)
+  }
 
   const ensureClient = () => {
     if (configError !== undefined) throw configError
@@ -64,7 +78,10 @@ export function install(rt) {
       client = createHubClient({ hubUrl, statePath, appVersion: rt.version ?? '0.0.0' })
       workgroup = createWorkgroupClient({
         client,
-        bridge: { watch: async (roomId) => { watched.add(roomId); await bridge?.watch(roomId) } },
+        bridge: {
+          watch: async (roomId) => { watched.add(roomId); await bridge?.watch(roomId) },
+          unwatch: roomId => { watched.delete(roomId); roomStates.delete(roomId); bridge?.unwatch(roomId) },
+        },
       })
     }
     return client
@@ -105,7 +122,7 @@ export function install(rt) {
         // `WebSocket` is global in modern Node; `globalThis.WebSocket` is passed explicitly so a
         // runtime without it fails at construction with a clear message instead of at first use.
         WebSocketImpl: globalThis.WebSocket,
-        onEvent: event => { rt.onWorkgroupEvent?.(event) },
+        onEvent: publishWorkgroupEvent,
         onStateChange: (next, detail) => {
           connectionState = next
           connectionDetail = detail === undefined ? undefined : String(detail?.message ?? detail?.reason ?? detail ?? '')
@@ -114,7 +131,13 @@ export function install(rt) {
         logger: { warn: (...args) => rt.warn?.(...args), info: (...args) => rt.warn?.(...args) },
       })
     }
-    await bridge.start([...watched])
+    if (bridgeStarting !== undefined) return await bridgeStarting
+    if (!['idle', 'closed', 'fatal'].includes(bridge.state)) return
+    const starting = bridge.start([...watched]).finally(() => {
+      if (bridgeStarting === starting) bridgeStarting = undefined
+    })
+    bridgeStarting = starting
+    await starting
   }
 
   /**
@@ -127,6 +150,9 @@ export function install(rt) {
     ensureClient()
     await client.login({ userHandle, password, label })
     await startBridge()
+    // Signing in is the first moment this Host can hear about approvals that happened while it was
+    // away, so the approved queue is reconciled here rather than waiting for a room event.
+    void rt.taskDispatchReconcile?.().catch(error => rt.warn?.('ds-bot: approved tasks were not reconciled: %s', error?.message ?? error))
     return hubView()
   }
 
@@ -141,6 +167,7 @@ export function install(rt) {
       connectionState = 'signed-out'
       connectionDetail = undefined
       watched.clear()
+      roomStates.clear()
     }
     return hubView()
   }
@@ -150,6 +177,7 @@ export function install(rt) {
     ensureClient()
     if (!client.signedIn) return hubView()
     await startBridge()
+    void rt.taskDispatchReconcile?.().catch(error => rt.warn?.('ds-bot: approved tasks were not reconciled: %s', error?.message ?? error))
     return hubView()
   }
 
@@ -166,6 +194,7 @@ export function install(rt) {
       client = undefined
       workgroup = undefined
       watched.clear()
+      roomStates.clear()
       hubUrl = nextHubUrl
       configError = undefined
       connectionState = 'signed-out'
@@ -194,6 +223,29 @@ export function install(rt) {
     ensureClient()
     const result = await client.request('GET', '/rooms')
     return result?.rooms ?? []
+  }
+
+  /**
+   * The folder an approval may work in, as this machine sees it.
+   *
+   * The Hub records the approved scope verbatim and the executor re-checks it, but neither can
+   * resolve a path on this machine. `cleanWorkDir` is the only guard that knows this disk: it
+   * expands `~`, resolves symbolic links, and refuses a file, a filesystem root, a missing folder,
+   * and DSH's own data roots. A path it turns into `undefined` is the team workspace — the default
+   * an approval must never fall back to — so that answer is refused rather than recorded as a grant
+   * that names no directory.
+   */
+  const approvedWorkDir = async (workDir) => {
+    if (rt.cleanWorkDir === undefined) {
+      // Without the folder guard an approval cannot be checked here; approving anyway would put an
+      // unverified path into the scope the executor is told to enforce.
+      throw Object.assign(new Error('The folder guard is unavailable, so this approval cannot be validated'), { code: 'bot/unavailable' })
+    }
+    const cleaned = await rt.cleanWorkDir(workDir ?? '')
+    if (cleaned === undefined) {
+      throw Object.assign(new Error('Approve a task in a specific folder; the team workspace is the default this approval must not fall back to'), { code: 'bot/invalid' })
+    }
+    return cleaned
   }
 
   /**
@@ -235,7 +287,11 @@ export function install(rt) {
         watched.add(body.roomId)
         await startBridge()
         await bridge.watch(body.roomId)
-        return await workgroup.openRoom(body.roomId)
+        const state = await workgroup.openRoom(body.roomId)
+        roomStates.set(body.roomId, state)
+        // Opening a room is also a chance to notice an approval this Host missed.
+        void rt.taskDispatchReconcile?.().catch(error => rt.warn?.('ds-bot: approved tasks were not reconciled: %s', error?.message ?? error))
+        return state
       }
       case 'hub-create-room': {
         const created = await client.request('POST', '/rooms', { body: { name: body.name, kind: 'workgroup' } })
@@ -252,6 +308,12 @@ export function install(rt) {
         return await workgroup.respondToInvitation(body.invitationId, body.decision)
       case 'hub-revoke-invitation':
         return await workgroup.revokeInvitation(body.invitationId)
+      case 'hub-rename-room':
+        return await client.request('PATCH', `/rooms/${body.roomId}`, { body: { name: body.name } })
+      case 'hub-download-artifact': {
+        const file = await workgroup.downloadArtifact(body.artifactId)
+        return { bytes: Array.from(file.bytes), contentType: file.headers?.['content-type'] ?? 'application/octet-stream' }
+      }
       case 'hub-members':
         return await workgroup.members(body.roomId)
       case 'hub-set-role':
@@ -265,12 +327,15 @@ export function install(rt) {
       case 'hub-kick':
         return await workgroup.removeMember(body.roomId, body.userId)
       case 'hub-upload-artifact': {
+        if (!Array.isArray(body.bytes) || !body.bytes.every(byte => Number.isInteger(byte) && byte >= 0 && byte <= 255)) {
+          throw Object.assign(new Error('An attachment needs valid bytes'), { code: 'bot/invalid' })
+        }
         // The bytes arrive already read by the host (a file picker gives a path, not a buffer), and are
         // forwarded as bytes: wrapping them in base64 would make the Hub's upload limit mean three
         // quarters of itself.
         return await workgroup.uploadArtifact(body.roomId, {
           fileName: body.fileName,
-          bytes: body.bytes,
+          bytes: Uint8Array.from(body.bytes),
           contentType: body.contentType,
           recipients: Array.isArray(body.recipients) ? body.recipients : [],
         })
@@ -303,8 +368,42 @@ export function install(rt) {
         return await workgroup.publishedBots({ ownerUserId: body.ownerUserId, query: body.query })
       case 'hub-tasks':
         return await client.request('GET', `/rooms/${body.roomId}/tasks`)
-      case 'hub-approve-task':
-        return await client.request('POST', `/tasks/${body.taskId}/approve`, { body: { decision: body.decision } })
+      case 'hub-approve-task': {
+        // One mapping for the owner's decision. The Host calls the same client a programmatic
+        // caller uses, so the Browser, Host, and integration layers cannot drift on field names.
+        // The scope is built once, inside `decide`, from the values the owner confirmed.
+        const approvals = createApprovalClient({ client, selfUserId: client.identity?.userId })
+        const workDir = body.decision === 'approve' ? await approvedWorkDir(body.workDir) : undefined
+        return await approvals.decide({
+          taskId: body.taskId,
+          decision: body.decision,
+          expectedVersion: body.expectedVersion,
+          ...(body.decision === 'approve' ? {
+            mode: body.mode,
+            botId: body.botId,
+            workDir,
+            tools: body.tools,
+            recipients: body.recipients,
+            expiresAt: body.expiresAt,
+          } : {}),
+        })
+      }
+      case 'hub-cancel-task': {
+        // Cancelling is the requester's, the owner's, or a room admin's act; the Hub checks which.
+        // It revokes the grants, and the owner Host stops its Session when the event arrives.
+        const approvals = createApprovalClient({ client, selfUserId: client.identity?.userId })
+        return await approvals.cancel(body.taskId)
+      }
+      case 'hub-review-task': {
+        // Review is the owner's judgement on a finished result, so it goes through the same client
+        // as the decision: `keep`, `share`, and `reject` are three Hub routes, and only `share`
+        // carries recipients.
+        const approvals = createApprovalClient({ client, selfUserId: client.identity?.userId })
+        return await approvals.review(body.taskId, body.decision, {
+          ...(body.expectedVersion === undefined ? {} : { expectedVersion: body.expectedVersion }),
+          ...(Array.isArray(body.recipients) ? { recipients: body.recipients } : {}),
+        })
+      }
       case 'hub-memory':
         return await client.request('GET', `/rooms/${body.roomId}/memories`)
       case 'hub-me':
@@ -321,6 +420,10 @@ export function install(rt) {
   Object.assign(rt, {
     hubEndpoint,
     hubView,
+    // The authenticated client itself, for the one consumer that needs to read owner-scoped task
+    // detail and mint/consume a grant: the approval is a Host-side act, and routing it through the
+    // browser endpoint table would put the owner's scope on a renderer's wire.
+    hubClient: () => ensureClient(),
     get hubConfigured() { return configError === undefined },
     get hubSignedIn() { return client?.signedIn ?? false },
   })

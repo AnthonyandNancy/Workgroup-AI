@@ -106,6 +106,9 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     // position here is the promise that no tool is registered behind its back. The earlier
     // `tools guard` belongs to the question-tool check; this second one is the task guard.
     'tools guard',
+    // The approval consumer (`src/host/task-dispatch.js`) is installed last, so its turn-end
+    // listener is the last registration: nothing may be added behind the task guard.
+    'on session/event',
   ])
 })
 
@@ -137,6 +140,32 @@ test('the client channel answers from the saved state', async (t) => {
   assert.deepEqual((await call('exchange', { a: 'b2', b: 'm1' })).value.map(entry => entry.id), ['x'])
   assert.deepEqual(await call('room-progress', { roomId: 'r' }), { ok: true, value: [] })
   assert.deepEqual(await call('send', { text: ' ' }), { ok: false, error: { code: 'bot/invalid', message: 'Nothing to send', details: {} } })
+  // A task Session is not a team conversation: its turn comes from the approved task, so a browser
+  // send into it is refused rather than run as chat.
+  const taskState = {
+    version: 1,
+    mainBotIds: ['m1'],
+    bots: { m1: { id: 'm1', name: 'Writer', role: 'Worker', sessionId: 'chat-m1', instructions: '' } },
+    rooms: {},
+    agents: {},
+    capabilities: { items: {} },
+    exchanges: [],
+    exchangeTurns: {},
+    questions: {},
+    prefs: {},
+    taskSessions: { 'task-1': { taskId: 'task-1', botId: 'm1', sessionId: 'task-session-1', workDir: null, openedAt: Date.now(), closedAt: null } },
+    taskGrants: {},
+    revision: 0,
+  }
+  const taskRoom = start(taskState)
+  try {
+    const refused = await taskRoom.call('send', { sessionId: 'task-session-1', text: 'do something else' })
+    assert.equal(refused.ok, false)
+    assert.equal(refused.error.code, 'bot/refused')
+    assert.match(refused.error.message, /approved task/)
+  } finally {
+    await taskRoom.stop()
+  }
   assert.deepEqual(await call('nope'), { ok: false, error: { code: 'bot/not-found', message: 'Unknown endpoint nope', details: {} } })
   assert.deepEqual(await call('set-prefs', { accent: 'red' }), { ok: false, error: { code: 'bot/invalid', message: 'Accent must be a #rrggbb color', details: {} } })
   // The motion level is kept unless it is the default, and only the three levels pass.

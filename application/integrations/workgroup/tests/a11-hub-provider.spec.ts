@@ -201,7 +201,10 @@ describe('the host-side workgroup module', () => {
     // Registering the module is what puts `rt.hubEndpoint` on the runtime. Without this line every
     // `hub-*` call answers `bot/invalid`, which the browser would surface as a failed create.
     expect(source).toMatch(/workgroupHub/)
-    expect(source).toMatch(/const MODULES = \[[^\]]*workgroupHub\]/)
+    expect(source).toMatch(/const MODULES = \[[^\]]*workgroupHub[^\]]*\]/)
+    // The approval consumer is mounted for the same reason: without it an approved task is only a
+    // row on the Hub and no Host ever reads it.
+    expect(source).toMatch(/const MODULES = \[[^\]]*taskDispatch[^\]]*\]/)
   })
 
   it('routes the hub endpoints through the channel, and keeps the local team load out of them', async () => {
@@ -215,5 +218,34 @@ describe('the host-side workgroup module', () => {
     // `rt.load()` would mean signing in required a local team file to exist first.
     const hubBlock = source.slice(source.indexOf("case 'hub-view':"), source.indexOf("return ok(await rt.hubEndpoint"))
     expect(hubBlock.includes('rt.load()')).toBe(false)
+  })
+})
+
+
+describe('Browser RPC payloads', () => {
+  it('forwards task versions through the decision endpoint bridge call', async () => {
+    const { bridge, calls } = bridgeOver({ 'hub-approve-task': { task: { id: 'task-1', state: 'REJECTED' } } })
+    const hub = createWorkgroupHub({ bridge })
+
+    await hub.answerTask('task-1', 'reject', { expectedVersion: 4 })
+
+    expect(calls[0]).toEqual({
+      endpoint: 'hub-approve-task',
+      payload: { taskId: 'task-1', decision: 'reject', expectedVersion: 4 },
+    })
+  })
+
+  it('serializes file bytes for JSON RPC and forwards Hub settings operations', async () => {
+    const { bridge, calls } = bridgeOver({
+      'hub-view': { configured: true, signedIn: true, state: 'open' },
+      'hub-upload-artifact': { artifact: { id: 'a1' } }, 'hub-rename-room': { room: { id: 'r1' } },
+    })
+    const hub = createWorkgroupHub({ bridge })
+    await hub.uploadArtifact('r1', { fileName: 'note.txt', bytes: new Uint8Array([1, 2]), recipients: ['u2'] })
+    await hub.renameRoom('r1', { name: 'New name' })
+    expect(calls.filter(call => call.endpoint !== 'hub-view')).toEqual([
+      { endpoint: 'hub-upload-artifact', payload: { roomId: 'r1', fileName: 'note.txt', bytes: [1, 2], recipients: ['u2'] } },
+      { endpoint: 'hub-rename-room', payload: { roomId: 'r1', name: 'New name' } },
+    ])
   })
 })

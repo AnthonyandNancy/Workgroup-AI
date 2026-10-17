@@ -18,11 +18,12 @@
 // The directory cases build real directories, real symlinks, and a real sibling whose name shares a
 // prefix with the root (`work-other` beside `work`) — the case a naive `startsWith` check passes.
 
+import { recycleTestPath } from './recycle.mjs'
 import assert from 'node:assert/strict'
 import { createPublicKey, generateKeyPairSync } from 'node:crypto'
 import { verifyGrantSignature } from '../policy/grant-signature.mjs'
 import { spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -74,7 +75,7 @@ async function startRealHub() {
       child.kill('SIGTERM')
       await Promise.race([exited, new Promise(resume => setTimeout(resume, 5000))])
       if (child.exitCode === null) child.kill('SIGKILL')
-      rmSync(root, { recursive: true, force: true, maxRetries: 10 })
+      recycleTestPath(root)
     },
   }
 }
@@ -160,8 +161,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await hub?.stop()
-  for (const path of scratch) rmSync(path, { recursive: true, force: true, maxRetries: 10 })
-}, 30_000)
+  // The recycle runs PowerShell per scratch tree on Windows; under a fully loaded gate lane the
+  // whole set can exceed the default hook window even though every case passed.
+  for (const path of scratch) recycleTestPath(path)
+}, 120_000)
 
 // ---------------------------------------------------------------------------
 // The directory rule

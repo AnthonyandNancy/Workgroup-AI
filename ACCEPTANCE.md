@@ -92,7 +92,7 @@ S = 文档/静态源码核对；M = mock/单测；L = 单电脑真实端到端�
 
 | 项 | 状态 | 所需条件 |
 |---|---|---|
-| WP-F 真实模型链路（L 级） | **BLOCKED** | `GET http://127.0.0.1:8317/v1/models` 实测返回 **HTTP 401**；`DEEPSEEK_API_KEY`/`DEEPSEEK_BASE_URL` 均未设置。需可用凭据与端点授权；**无凭据时不得以 mock 记作真实调用成功** |
+| WP-F 真实模型链路（L 级） | **部分关闭（L-exec 通过，浏览器 UI 仍 BLOCKED）** | 历史记录 `application/apps/desktop/.desktop-build/development/home/.credentials.yaml` 中有 `LOCATION_API_KEY`；以环境变量传给 `a19-workgroup-real-model-execution.host.spec.ts` 后，真实 Hub 进程 + 真实 Loader Host + `deepseek-v4.1-flash` 跑通"提交 → 本人审批 → 隔离执行 → 脱敏进度 → 复核 → 受控分享"（2/2）。**仍未做**：真实浏览器下的审批/复核/取消视觉与 `conversation` 面板（需构建产物 + Chromium）。**未打印密钥**；无凭据时不得以 mock 记作真实调用成功 |
 | B 本人真实审批端到端 | **BLOCKED** | 需真实 B 用户在其认证客户端亲自批准。开发阶段可用模拟，但必须标注；**不得由 A 冒充 B，不得由脚本伪造 B 的人工确认** |
 | Windows 安装包实测 | **BLOCKED** | 独立环境；**不得用 Linux 构建证明 Windows 成功** |
 | macOS 签名与公证 | **BLOCKED** | 独立环境 |

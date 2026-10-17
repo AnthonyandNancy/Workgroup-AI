@@ -25,8 +25,9 @@
 // The shell binding is per host and both are exercised where they exist: PowerShell ships with
 // Windows and a POSIX shell does not, and the reverse holds in CI's Linux lane.
 
+import { recycleTestPath } from './recycle.mjs'
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -126,7 +127,7 @@ async function bench(): Promise<Bench> {
   const home = mkdtempSync(join(tmpdir(), 'wg-f13-child-'))
   const ctx = new Context()
   cleanups.push(() => { void ctx.fiber.dispose() })
-  cleanups.push(() => { rmSync(home, { recursive: true, force: true, maxRetries: 5 }) })
+  cleanups.push(() => { recycleTestPath(home) })
   vi.stubEnv('DEEPSEEK_API_KEY', 'mock-key')
   const server = await startMockLlmServer({
     sequence: ['tool_call_success', 'success'],

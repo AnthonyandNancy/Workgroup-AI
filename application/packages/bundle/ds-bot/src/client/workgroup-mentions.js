@@ -36,11 +36,11 @@ export function mentionCandidates({ members = [], bots = [] } = {}) {
   const owned = bots
     // A Bot whose owner is not in the roster is dropped: its mention would name somebody who cannot
     // approve the task, so there is nothing useful to offer.
-    .filter(bot => typeof bot?.id === 'string' && byOwner.has(bot.ownerUserId))
+    .filter(bot => typeof bot?.botId === 'string' && byOwner.has(bot.ownerUserId))
     .map(bot => ({
       userId: bot.ownerUserId,
-      botId: bot.id,
-      label: bot.displayName ?? bot.id,
+      botId: bot.botId,
+      label: bot.displayName ?? bot.botId,
       kind: 'bot',
       detail: byOwner.get(bot.ownerUserId).label,
     }))

@@ -44,6 +44,13 @@ export const WORKGROUP_CSS = `
 .bt-wg-member-offline .bt-wg-member-dot{background:var(--bt-line-2)}
 .bt-wg-member-owner{color:var(--bt-ink-3)}
 .bt-wg-tasks{flex:none;display:flex;flex-direction:column;gap:8px;padding:0 16px}
+/* The approval form and the review controls are the owner's private surface. They reuse the same
+   task strip, so the card does not jump between "approve" and "review"; only the fields change. */
+.bt-wg-approval,.bt-wg-review{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.bt-wg-approval-note{font-size:12px;color:var(--bt-ink-3);line-height:16px}
+.bt-wg-approval-error{font-size:12px}
+.bt-wg-approval-recipients{display:flex;flex-wrap:wrap;gap:6px 12px}
+.bt-wg-approval-recipient{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--bt-ink-2)}
 .bt-wg-task-actions{display:flex;gap:8px;margin-top:6px}
 .bt-wg-approve,.bt-wg-reject{height:28px;border-radius:999px;border:0;font-size:12px;padding:0 12px;cursor:pointer}
 .bt-wg-approve{background:var(--bt-accent);color:var(--bt-accent-ink,#fff)}

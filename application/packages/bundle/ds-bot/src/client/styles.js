@@ -375,6 +375,7 @@ button.bt-q-opt:active{background:var(--bt-active)}
 .bt-swatch[aria-pressed=true]{border-color:var(--bt-ink)}
 .bt-textarea{width:100%;box-sizing:border-box;min-height:120px;border:1px solid var(--bt-line);border-radius:8px;padding:8px;background:var(--bt-card);color:var(--bt-ink);font:inherit;resize:vertical}
 .bt-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.bt-groups-create-actions{flex-direction:column;align-items:flex-start}
 .bt-kv{display:flex;justify-content:space-between;gap:8px;font-size:12px;line-height:20px;color:var(--bt-ink-2)}
 .bt-kv span:last-child{color:var(--bt-ink);font-variant-numeric:tabular-nums}
 .bt-danger{color:#e02135}

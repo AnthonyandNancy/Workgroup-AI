@@ -16,8 +16,9 @@
 // POSIX keeps its byte comparison: case-sensitivity is the *correct* semantic there, so folding case
 // on Linux would be a new bug rather than a fix.
 
+import { recycleTestPath } from './recycle.mjs'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -27,7 +28,7 @@ const cleanup = []
 afterAll(() => {
   for (const dir of cleanup) {
     try {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 5 })
+      recycleTestPath(dir)
     } catch {
       // A temporary directory the OS still holds open is residue, not a test result.
     }

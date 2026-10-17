@@ -19,7 +19,7 @@
 // full-surface view, and it is where the team's other panes (new chat, exchange, voice) already
 // live.
 
-import { createElement as h, useEffect, useRef, useState } from 'react'
+import { createElement as h, useEffect, useMemo, useRef, useState } from 'react'
 import { usePaneLeft } from './overlay-hooks.js'
 import { mainSessionId, mainWorkgroupSession, needsHomeFallback } from '../shared/workgroup-session.js'
 import { roomIdOfSession, WorkgroupView } from './workgroup.js'
@@ -40,13 +40,18 @@ export { mainSessionId, mainWorkgroupSession, needsHomeFallback }
  *
  * @param props - the registered inject face; both sources render reactively through `hooks`.
  */
-export function WorkgroupPane({ useSessions, useWorkgroups, useHub, actions }) {
+export function WorkgroupPane({ useSessions, useWorkgroups, useHub, useWorkgroupRoom, actions }) {
   const sessionId = useSessions(mainWorkgroupSession)
+  const workgroups = useWorkgroups(value => value)
+  const hub = useHub(value => value)
+  const roomSnapshot = useWorkgroupRoom?.(roomIdOfSession(sessionId) ?? '')
   if (sessionId === undefined) return null
   return h(WorkgroupSurface, {
+    key: sessionId,
     sessionId,
-    workgroups: useWorkgroups(value => value),
-    hub: useHub?.(value => value),
+    workgroups,
+    hub,
+    roomSnapshot,
     actions,
   })
 }
@@ -60,10 +65,11 @@ export function WorkgroupPane({ useSessions, useWorkgroups, useHub, actions }) {
  * @param props - `sessionId` (`wg:<roomId>`), the Hub adapter, the Hub connection state, and the
  *   team actions.
  */
-export function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
+export function WorkgroupSurface({ sessionId, workgroups, hub, actions, roomSnapshot }) {
   const roomId = roomIdOfSession(sessionId)
   const paneLeft = usePaneLeft()
-  const [state, setState] = useState({ phase: 'loading' })
+  const [loaded, setState] = useState({ phase: 'loading' })
+  const state = roomSnapshot === undefined ? loaded : { ...loaded, ...roomSnapshot }
   const [settingsOpen, setSettingsOpen] = useState(false)
   const view = useRef(null)
 
@@ -74,6 +80,7 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
     let stopped = false
     let timer
     const load = async () => {
+      clearTimeout(timer)
       try {
         const answer = await workgroups.openRoom(roomId)
         if (stopped) return
@@ -104,6 +111,51 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
           return false
         }
       }
+      const requestedDecision = value?.decide
+      if (requestedDecision !== undefined) {
+        try {
+          // The scope the owner confirmed travels as the fields the Host and the integration client
+          // both name, so no layer renames or drops one of them on the way to the Hub. A rejection
+          // carries only the version: it grants nothing, so there is nothing to scope.
+          await workgroups.answerTask(requestedDecision.task.id, requestedDecision.decision, {
+            ...(requestedDecision.task.version === undefined ? {} : { expectedVersion: requestedDecision.task.version }),
+            ...(requestedDecision.scope ?? {}),
+          })
+          await load()
+          return true
+        } catch (error) {
+          setState(previous => ({ ...previous, message: error?.message ?? String(error) }))
+          return false
+        }
+      }
+      const requestedReview = value?.review
+      if (requestedReview !== undefined) {
+        try {
+          // A review is the owner's answer on a finished result. The version the card showed travels
+          // with it, so a result that moved on (already kept or shared on another device) is refused
+          // rather than decided twice; only `share` carries recipients.
+          await workgroups.reviewTask(requestedReview.task.id, requestedReview.decision, {
+            ...(requestedReview.task.version === undefined ? {} : { expectedVersion: requestedReview.task.version }),
+            ...(requestedReview.payload ?? {}),
+          })
+          await load()
+          return true
+        } catch (error) {
+          setState(previous => ({ ...previous, message: error?.message ?? String(error) }))
+          return false
+        }
+      }
+      const requestedCancel = value?.cancel
+      if (requestedCancel !== undefined) {
+        try {
+          await workgroups.cancelTask(requestedCancel.id)
+          await load()
+          return true
+        } catch (error) {
+          setState(previous => ({ ...previous, message: error?.message ?? String(error) }))
+          return false
+        }
+      }
       const message = value?.send
       if (message === undefined) return true
       try {
@@ -111,6 +163,7 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
         // the quoted text the sender saw is never sent as if it were their own words. Mentions travel
         // as ids for the same reason: a name in the text is for reading, the id is what the Hub acts on.
         await workgroups.sendMessage(roomId, message, {
+          ...(value.clientMessageId === undefined ? {} : { clientMessageId: value.clientMessageId }),
           ...(value.replyToMessageId === undefined ? {} : { replyToMessageId: value.replyToMessageId }),
           ...(Array.isArray(value.mentions) && value.mentions.length > 0 ? { mentions: value.mentions } : {}),
           ...(Array.isArray(value.attachments) && value.attachments.length > 0 ? { attachments: value.attachments } : {}),
@@ -135,7 +188,47 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
     const uploaded = await workgroups.uploadArtifact(roomId, { ...file, recipients: [] })
     return { artifactId: uploaded.artifact.id, fileName: uploaded.artifact.fileName }
   }
-  const onDecision = (taskId, decision) => { void workgroups?.answerTask?.(taskId, decision).then(() => run(null)) }
+  const onRoomAction = async (operation, payload) => {
+    let result
+    switch (operation) {
+      case 'renameRoom': result = await workgroups.renameRoom(roomId, payload); break
+      case 'invite': result = await workgroups.invite(roomId, payload); break
+      case 'setRole': result = await workgroups.setRole(roomId, payload.userId, payload.role); break
+      case 'removeMember': result = await workgroups.removeMember(roomId, payload.userId); break
+      case 'revokeInvitation': result = await workgroups.revokeInvitation(payload.invitationId); break
+      case 'leaveRoom': result = await workgroups.leaveRoom(roomId); break
+      default: throw new Error(t('Unknown workgroup action'))
+    }
+    if (operation !== 'leaveRoom') {
+      const answer = await workgroups.openRoom(roomId)
+      setState({ phase: 'ready', ...answer })
+    }
+    return result
+  }
+  const onDownload = async (entry) => {
+    const file = await workgroups.downloadArtifact(entry.artifactId)
+    const url = URL.createObjectURL(new Blob([new Uint8Array(file.bytes)], { type: file.contentType }))
+    try {
+      const link = document.createElement('a')
+      link.href = url
+      link.download = entry.fileName ?? entry.artifactId
+      link.click()
+    } finally { URL.revokeObjectURL(url) }
+  }
+  const onDecision = (task, decision, scope) => view.current?.({
+    decide: { task, decision, ...(scope === undefined ? {} : { scope }) },
+  })
+  const onReview = (task, decision, payload) => view.current?.({ review: { task, decision, payload } })
+  const onCancel = task => view.current?.({ cancel: task })
+  // The owner's own published Bots, for the approval form's target list. Room-visible Bots are a
+  // different fact — a colleague's Bot is in the room because it is a member, not because this
+  // owner may dispatch to it — so the form never reads the room roster for this.
+  const loadOwnerBots = useMemo(
+    () => (typeof workgroups?.directory === 'function'
+      ? () => workgroups.directory({ ownerUserId: workgroups.identity?.userId })
+      : undefined),
+    [workgroups],
+  )
   // `unknown` is not a fault to report: it is the state before the Host has answered, and the pane
   // shows the room it already has rather than a warning about a connection nobody has asked after.
   const status = hubStatusOf(hub)
@@ -150,6 +243,7 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
     // conversation area; a screenshot check and a reader both need to know what is on screen.
     'data-conversation-region': 'workgroup',
   },
+  state.message === undefined ? null : h('div', { role: 'alert', className: 'bt-danger' }, state.message),
   copy !== undefined
     // A `wg:` Session outlives the Hub that issued it, so "no Hub" is a state this pane must render
     // rather than a blank conversation: the room stays in the sidebar when work moves off network.
@@ -168,9 +262,14 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
       identity: workgroups.identity,
       actions,
       run,
+      loadOwnerBots,
       onSend,
       onAttach,
+      onDownload,
+      onRoomAction,
       onDecision,
+      onReview,
+      onCancel,
       settingsOpen,
       onCloseSettings: () => setSettingsOpen(false),
       // The owner's dissolve reaches the Hub through the same control the rest of this pane uses, so it

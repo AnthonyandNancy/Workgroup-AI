@@ -38,7 +38,18 @@ export class WorkgroupClientError extends Error {
 export function createWorkgroupClient({ client, bridge, onBotsFromDirectory } = {}) {
   if (client === undefined) throw new WorkgroupClientError('A Hub client is required', 'NO_HUB_CLIENT')
 
-  /** Read a room, its members, and the Bot directory entries that act in it. */
+  const publishedBots = async ({ ownerUserId, query } = {}) => {
+    const params = new URLSearchParams()
+    if (ownerUserId !== undefined) params.set('ownerUserId', ownerUserId)
+    if (query !== undefined) params.set('q', query)
+    const suffix = params.toString() === '' ? '' : `?${params}`
+    const listed = await client.request('GET', `/bots/directory${suffix}`)
+    const entries = listed.bots ?? []
+    onBotsFromDirectory?.(entries)
+    return entries
+  }
+
+  /** Read a room and its members' visible published Bots; private execution fields stay on the Host. */
   const openRoom = async (roomId) => {
     const [room, messages, tasks] = await Promise.all([
       client.request('GET', `/rooms/${roomId}`),
@@ -52,9 +63,15 @@ export function createWorkgroupClient({ client, bridge, onBotsFromDirectory } = 
         throw error
       }),
     ])
+    const owners = new Set(room.members.map(member => member.userId))
+    const directories = await Promise.all([...owners].map(ownerUserId => publishedBots({ ownerUserId })))
+    const bots = directories.flat()
+      .filter(bot => owners.has(bot.ownerUserId) && ['public', 'room'].includes(bot.visibility))
+      .map(({ botId, ownerUserId, displayName, visibility, state }) => ({ botId, ownerUserId, displayName, visibility, state }))
     return {
       room: room.room,
       members: room.members,
+      bots,
       messages: messages.messages,
       tasks: tasks.tasks ?? [],
       head: messages.nextAfterSeq ?? 0,
@@ -244,16 +261,7 @@ export function createWorkgroupClient({ client, bridge, onBotsFromDirectory } = 
      * a restriction while doing nothing. Which entries may act in a given task is decided at task
      * creation, by the Hub, against the room's membership.
      */
-    async publishedBots({ ownerUserId, query } = {}) {
-      const params = new URLSearchParams()
-      if (ownerUserId !== undefined) params.set('ownerUserId', ownerUserId)
-      if (query !== undefined) params.set('q', query)
-      const suffix = params.toString() === '' ? '' : `?${params}`
-      const listed = await client.request('GET', `/bots/directory${suffix}`)
-      const entries = listed.bots ?? []
-      onBotsFromDirectory?.(entries)
-      return entries
-    },
+    publishedBots,
 
     /** This user's own id, which the view needs to mark their own messages. */
     get selfUserId() {
@@ -278,6 +286,8 @@ export function createWorkgroupClient({ client, bridge, onBotsFromDirectory } = 
  */
 export function reduceWorkgroup(state, event) {
   if (event === null || typeof event !== 'object') return state
+  const eventRoomId = event.roomId ?? event.payload?.roomId
+  if (eventRoomId !== undefined && eventRoomId !== state.room?.id) return state
   switch (event.type) {
     case 'message.created': {
       const message = event.payload?.message
@@ -291,6 +301,16 @@ export function reduceWorkgroup(state, event) {
         messages: [...state.messages, message].sort((left, right) => left.roomSeq - right.roomSeq),
         head: Math.max(state.head ?? 0, message.roomSeq),
       }
+    }
+    case 'presence.changed': {
+      const presence = event.payload ?? {}
+      const index = state.members.findIndex(member => member.userId === presence.userId)
+      if (index < 0) return state
+      const online = presence.online === true
+      if (state.members[index].online === online) return state
+      const members = [...state.members]
+      members[index] = { ...members[index], online }
+      return { ...state, members }
     }
     case 'member.changed': {
       const change = event.payload ?? {}

@@ -19,10 +19,11 @@
 // The dispatch modes are asserted to be the Hub's own three names, because a client with its own
 // vocabulary would produce requests the Hub rejects with a message nobody can act on.
 
+import { recycleTestPath } from './recycle.mjs'
 import assert from 'node:assert/strict'
 import { generateKeyPairSync } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -94,7 +95,7 @@ async function startRealHub() {
       child.kill('SIGTERM')
       await Promise.race([exited, new Promise(resume => setTimeout(resume, 5000))])
       if (child.exitCode === null) child.kill('SIGKILL')
-      rmSync(root, { recursive: true, force: true, maxRetries: 10 })
+      recycleTestPath(root)
     },
   }
 }
@@ -253,10 +254,11 @@ describe('the three dispatch modes', () => {
     const roomId = await roomWith(alice, bob)
     const task = await ask(alice, roomId, bob, 'Analyse the numbers')
 
+    const expiresAt = new Date(Date.now() + 3_600_000).toISOString()
     const decided = await bob.approvals.decide({
       taskId: task.id, decision: 'approve', expectedVersion: task.version,
       mode: 'existing_bot', botId: 'analyst',
-      workDir: '/tmp/workgroup-a06', tools: ['read', 'write'],
+      workDir: '/tmp/workgroup-a06', tools: ['read', 'write'], expiresAt,
     })
     assert.equal(decided.state, 'APPROVED')
     // The scope is the owner's statement, and it comes back verbatim so the two ends agree.
@@ -265,6 +267,10 @@ describe('the three dispatch modes', () => {
     assert.equal(scope.assignedBotId, 'analyst')
     assert.equal(scope.workDir, '/tmp/workgroup-a06')
     assert.deepEqual(scope.tools, ['read', 'write'])
+    // The expiry the owner chose travels with the scope, and only as one absolute deadline: a
+    // duration would tell a later reader nothing about when the grant was meant to end.
+    assert.equal(scope.expiresAt, expiresAt)
+    assert.equal('expiresInSeconds' in scope, false)
     // And it names the task, room, and both people, so a grant cannot be replayed onto another task.
     assert.equal(scope.taskId, task.id)
     assert.equal(scope.roomId, roomId)
@@ -339,6 +345,32 @@ describe('the three dispatch modes', () => {
     })).rejects.toThrow(/assignment mode/i)
   })
 
+  it('records the owner expiry with the scope, and refuses a lifetime that already ended', async () => {
+    // Refused before a request is sent, because an approval whose window closed grants nothing the
+    // executor could honour; the Hub would record it as a decided task either way.
+    const past = new Date(Date.now() - 60_000).toISOString()
+    expect(() => approvalScope({ mode: 'chief_auto', expiresAt: past })).toThrow(/future/)
+    expect(() => approvalScope({ mode: 'chief_auto', expiresAt: 'not-a-date' })).toThrow(/future/)
+    // No expiry named is absent, not defaulted: the executor decides what an open-ended scope means,
+    // and the Hub's own approval window still caps any grant minted from it.
+    assert.equal('expiresAt' in approvalScope({ mode: 'chief_auto' }), false)
+
+    const alice = await newPerson('alice')
+    const bob = await newPerson('bob', { publishBot: 'writer' })
+    const roomId = await roomWith(alice, bob)
+    const task = await ask(alice, roomId, bob, 'This one has a deadline')
+    const expiresAt = new Date(Date.now() + 1_800_000).toISOString()
+    await bob.approvals.decide({
+      taskId: task.id, decision: 'approve', expectedVersion: task.version,
+      mode: 'existing_bot', botId: 'writer', workDir: '/tmp/workgroup-a06', tools: ['read'], expiresAt,
+    })
+    assert.equal((await bob.approvals.approvedScope(task.id)).expiresAt, expiresAt)
+    // The approval window itself is the Hub's, derived server-side; the owner's scope does not
+    // replace it. Recording both keeps the executor's cap and the owner's deadline distinguishable.
+    const detail = await bob.approvals.task(task.id)
+    assert.equal(typeof detail.task.approval.expiresAt, 'string')
+  })
+
   it('a scope keeps the owner\u2019s own boundaries and invents no defaults', () => {
     // A directory the owner named is carried through.
     assert.equal(approvalScope({ mode: 'chief_auto', workDir: '/home/bob/project' }).workDir, '/home/bob/project')
@@ -399,6 +431,68 @@ describe('a decision cannot be made twice', () => {
     const detail = await bob.approvals.task(task.id)
     assert.equal(detail.task.approval?.decision, 'reject')
     assert.equal(detail.task.state, 'REJECTED')
+  })
+
+  it('the approved queue lists only the owner approved work, with the scope', async () => {
+    const alice = await newPerson('alice')
+    const bob = await newPerson('bob', { publishBot: 'writer' })
+    const roomId = await roomWith(alice, bob)
+    const task = await ask(alice, roomId, bob, 'Queued for later')
+    await bob.approvals.decide({
+      taskId: task.id, decision: 'approve', expectedVersion: task.version,
+      mode: 'existing_bot', botId: 'writer', workDir: '/tmp/workgroup-a06', tools: ['read'],
+    })
+    const queue = await bob.approvals.approvedQueue()
+    assert.deepEqual(queue.map(entry => entry.id), [task.id])
+    assert.equal(queue[0].approval.scope.workDir, '/tmp/workgroup-a06')
+    // Owner-scoped: the requester is not answered with somebody else's execution queue.
+    assert.deepEqual(await alice.approvals.approvedQueue(), [])
+    assert.deepEqual((await bob.approvals.approvedQueue()).map(entry => entry.id), [task.id])
+  })
+
+  it('a failure category reaches the room, while free-form text is refused', async () => {
+    const alice = await newPerson('alice')
+    const bob = await newPerson('bob', { publishBot: 'writer' })
+    const roomId = await roomWith(alice, bob)
+    const task = await ask(alice, roomId, bob, 'This will fail')
+    const approved = await bob.approvals.decide({
+      taskId: task.id, decision: 'approve', expectedVersion: task.version,
+      mode: 'existing_bot', botId: 'writer', workDir: '/tmp/workgroup-a06', tools: ['read'],
+    })
+    await bob.approvals.reportProgress(task.id, { state: 'FAILED', expectedVersion: approved.version, stage: 'failed', reason: 'MODEL_UNAVAILABLE' })
+    const events = (await alice.approvals.task(task.id)).events
+    const progress = events.filter(event => event.eventType === 'task.progress').at(-1)
+    assert.equal(progress.payload.reason, 'MODEL_UNAVAILABLE')
+    // A message carrying a path or a command is not a reason the room may store.
+    const next = await ask(alice, roomId, bob, 'Second failure')
+    const nextApproved = await bob.approvals.decide({
+      taskId: next.id, decision: 'approve', expectedVersion: next.version,
+      mode: 'existing_bot', botId: 'writer', workDir: '/tmp/workgroup-a06', tools: ['read'],
+    })
+    await expect(bob.client.request('POST', `/tasks/${next.id}/progress`, {
+      body: { state: 'FAILED', expectedVersion: nextApproved.version, stage: 'failed', reason: 'the model said: /home/bob/secret' },
+    })).rejects.toThrow(/category/)
+    // The refused report did not move the task.
+    assert.equal((await bob.approvals.task(next.id)).task.state, 'APPROVED')
+  })
+
+  it('the room task list carries the last failure category, never the report text', async () => {
+    const alice = await newPerson('alice')
+    const bob = await newPerson('bob', { publishBot: 'writer' })
+    const roomId = await roomWith(alice, bob)
+    const task = await ask(alice, roomId, bob, 'Fails for the room to see')
+    const approved = await bob.approvals.decide({
+      taskId: task.id, decision: 'approve', expectedVersion: task.version,
+      mode: 'existing_bot', botId: 'writer', workDir: '/tmp/workgroup-a06', tools: ['read'],
+    })
+    await bob.approvals.reportProgress(task.id, { state: 'FAILED', expectedVersion: approved.version, stage: 'failed', reason: 'MODEL_UNAVAILABLE' })
+    const listed = (await alice.client.request('GET', `/rooms/${roomId}/tasks`)).tasks
+    const failed = listed.find(entry => entry.id === task.id)
+    assert.equal(failed.state, 'FAILED')
+    assert.equal(failed.lastReason, 'MODEL_UNAVAILABLE')
+    // The category is the only reason field; the scope and the machine stay private.
+    assert.equal(failed.approval, undefined)
+    assert.equal(failed.assignedBotId, undefined)
   })
 
   it('a rejected task leaves the owner\u2019s pending list', async () => {

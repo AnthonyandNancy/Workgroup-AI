@@ -49,5 +49,6 @@ export const API_REMOTE_FORWARDED_EVENTS = [
   { event: 'plugin-manager/install-state', mode: 'emit' },
   { event: 'settings/document-updated', mode: 'emit' },
   { event: 'schedule/changed', mode: 'emit' },
+  { event: 'workgroup/event', mode: 'emit' },
   { event: 'user-questions/request', mode: 'waterfall' },
 ] as const satisfies readonly TypertForwardableEventEntry[]

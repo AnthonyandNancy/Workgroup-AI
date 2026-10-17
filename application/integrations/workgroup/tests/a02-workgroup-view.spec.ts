@@ -101,6 +101,8 @@ describe('the client plugin mounts the pane', () => {
     // "no Hub" or show the room, and a Hub that dropped mid-session would look like a quiet one.
     expect(props?.hooks?.hub, 'the pane reads the Hub connection state through a reactive source').toBeDefined()
     expect(typeof props.hooks.hub.subscribe).toBe('function')
+    expect(typeof props?.keyedHooks?.workgroupRoom, 'the pane has a room-keyed snapshot source').toBe('function')
+    expect(props.keyedHooks.workgroupRoom('room-1')).toBeDefined()
   })
 
   it('does not register a second main.conversation, which ui-conversation owns', () => {

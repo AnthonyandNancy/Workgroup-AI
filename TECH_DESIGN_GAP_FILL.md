@@ -869,3 +869,19 @@ Hub 离线             → 离线/受限状态（由 Bridge onStateChange 驱动
 - 8 字符 key → `loadConfig` 抛 `must be at least 16 characters`
 - 生产缺 `HUB_TOKEN_SIGNING_KEY` → 抛错
 - `http://127.0.0.1:8317/v1/models` → 42 个模型含 `deepseek-v4.1-flash`；`/v1/chat/completions` → `pong`
+
+## 2026-10-17 W3 实现事实（增量，覆盖此前"缺生产消费者"的描述）
+
+- 新增 `application/packages/bundle/ds-bot/src/host/task-dispatch.js`：当前唯一的 approved-task 生产消费者。它订阅 Host Bridge 事件（`rt.onWorkgroupEvent`），并且只把事件当通知：owner、状态、版本、scope、Bot 与期限全部从 owner-scoped `GET /tasks/:taskId` 重新读取。
+- 执行链复用既有实现：`policy/dispatch.mjs` 的 realpath/root/单次 nonce/撤销版本/强制验签，`bot-adapter/flows.mjs` 的三模式与三 id 绑定，`task-sessions.js` 的隔离 Session，`task-grants.js` 的逐次工具/路径/出站检查。没有新增执行进程，没有改写 DSH Agent Loop，没有用普通 Agent 冒充 Bot。
+- Host `hub-approve-task` 统一经 `createApprovalClient().decide()` 组包（Browser/Host/integration 单点字段映射），并在转发前调用 `rt.cleanWorkDir` 校验工作目录；缺失、团队默认目录、不可解析或守卫不可用一律拒绝。
+- `hub-review-task` 与浏览器 `reviewTask` 新增：`keep`/`reject`/`share` 与 Hub 三个既有路由一一对应，只有 `share` 携带 recipients。
+- 删除 `task-session-open` 与 `task-grant-set` 两个 `/api/bot` 端点：它们能在没有 Hub 审批的情况下创建 Task Session 或按调用方给定参数签发本地 grant，与"先审批再执行"冲突。保留停止方向端点（`task-session-close`、`task-grant-revoke`）与只读探针。
+- Host workgroup adapter 额外暴露 `rt.hubClient`，供审批消费器在 Host 内读取任务与 grant；浏览器仍只能经 `/api/bot` 的既有端点表，`server/contracts/` 未改。
+- 组合验证：`a17-workgroup-loader-composition.spec.ts` 用 test-only `cordis.yml` + 真实 Loader + 25 个真实服务行加载真实 `@deepseek-ai/dsh-bot`，断言全部行激活、Bot 工具注册、`/api/bot` 的 `hub-view`/`hub-approve-task` 可达，并经真实 Bridge 投递 `task.approved`；Hub 详情为 `PENDING_APPROVAL` 时不产生 grant/consume/Session。
+- 已验证的限制（未解决，不是 PASS）：
+  - `task.approved` 仅送达已订阅该房间的 socket，owner 未打开工作群或重启后不会自动执行；Hub 没有 approved 待执行队列端点，新增它属于协议变更。
+  - `chief_auto` 在 Host 没有 Chief 决策器，按 fail-closed 拒绝。
+  - 取消事件在 owner Host 离线期间会丢失，只能靠 grant 到期兜底；无 Hub 侧对账。
+  - 进度端点只发布 stage/state，失败原因留在 owner 本机。
+  - 真实浏览器 `conversation` 面板与真实模型闭环属 L 级，本轮未执行。

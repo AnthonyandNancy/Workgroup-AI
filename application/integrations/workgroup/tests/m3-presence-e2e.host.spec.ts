@@ -12,8 +12,9 @@
 // does and for the same reason: `server/` is a separate deployable that `application/` must not
 // import, and a test that imported it would skip the configuration and migration path.
 
+import { recycleTestPath } from './recycle.mjs'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -77,7 +78,7 @@ afterAll(async () => {
   for (const cleanup of [...cleanups].reverse()) await cleanup()
   for (const root of roots) {
     try {
-      rmSync(root, { recursive: true, force: true, maxRetries: 5 })
+      recycleTestPath(root)
     } catch {
       // A temp directory the operating system still holds open is residue, not a test result.
     }

@@ -19,6 +19,7 @@
 // live — without freezing the answer at mount time.
 import { call } from './api.js'
 import { createSource } from './sources.js'
+import { reduceWorkgroup } from '@deepseek-ai/dsh-workgroup/client'
 
 /**
  * Ask the Host what it knows about the Hub, and keep the answer current.
@@ -89,6 +90,38 @@ export function createHubBridge({ pollMs = 4000, callImpl = call } = {}) {
  */
 export function createWorkgroupHub({ bridge }) {
   const invoke = (endpoint, payload) => bridge.send(endpoint, payload)
+  const pending = new Map()
+  const roomSources = new Map()
+  const roomSource = roomId => {
+    let source = roomSources.get(roomId)
+    if (source === undefined) {
+      source = createSource(undefined)
+      roomSources.set(roomId, source)
+    }
+    return source
+  }
+  const openRoom = roomId => {
+    const active = pending.get(roomId)
+    if (active !== undefined) return active.promise
+    const loading = { events: [] }
+    pending.set(roomId, loading)
+    loading.promise = invoke('hub-open-room', { roomId }).then(state => {
+      const next = loading.events.reduce(reduceWorkgroup, state)
+      roomSource(roomId).set(next)
+      return next
+    }).finally(() => { pending.delete(roomId) })
+    return loading.promise
+  }
+  const applyEvent = event => {
+    const roomId = event?.roomId
+    if (typeof roomId !== 'string') return
+    pending.get(roomId)?.events.push(event)
+    const source = roomSources.get(roomId)
+    const current = source?.getSnapshot()
+    if (current === undefined) return
+    const next = reduceWorkgroup(current, event)
+    if (next !== current) source.set(next)
+  }
   return {
     get configured() {
       return bridge.view.getSnapshot().configured === true
@@ -121,10 +154,14 @@ export function createWorkgroupHub({ bridge }) {
     resume: () => invoke('hub-resume', {}),
     rooms: () => invoke('hub-rooms', {}).then(result => result?.rooms ?? result),
     createRoom: (name, options = {}) => invoke('hub-create-room', { name, ...options }),
-    openRoom: roomId => invoke('hub-open-room', { roomId }),
+    openRoom,
+    roomState: roomSource,
+    applyEvent,
     watch: roomId => invoke('hub-open-room', { roomId }),
     dissolve: roomId => invoke('hub-dissolve', { roomId }),
-    uploadArtifact: (roomId, payload) => invoke('hub-upload-artifact', { roomId, ...payload }),
+    renameRoom: (roomId, patch) => invoke('hub-rename-room', { roomId, name: patch.name }),
+    downloadArtifact: artifactId => invoke('hub-download-artifact', { artifactId }),
+    uploadArtifact: (roomId, payload) => invoke('hub-upload-artifact', { roomId, ...payload, bytes: Array.from(payload.bytes) }),
     invite: (roomId, options) => invoke('hub-invite', { roomId, ...options }),
     invitations: () => invoke('hub-invitations', {}),
     respondToInvitation: (invitationId, decision) => invoke('hub-respond-invitation', { invitationId, decision }),
@@ -138,7 +175,13 @@ export function createWorkgroupHub({ bridge }) {
     head: roomId => invoke('hub-head', { roomId }),
     directory: options => invoke('hub-directory', options ?? {}),
     tasks: roomId => invoke('hub-tasks', { roomId }),
-    answerTask: (taskId, decision) => invoke('hub-approve-task', { taskId, decision }),
+    answerTask: (taskId, decision, options = {}) => invoke('hub-approve-task', { taskId, decision, ...options }),
+    // Keep, share, or reject a finished result. Sharing names recipients; the other two publish
+    // nothing, which is why they need no recipient list.
+    reviewTask: (taskId, decision, options = {}) => invoke('hub-review-task', { taskId, decision, ...options }),
+    // Stop a task this user may cancel (the requester, the owner, or a room admin). The Hub decides
+    // who that is; the pane only offers the control to those it can already identify.
+    cancelTask: taskId => invoke('hub-cancel-task', { taskId }),
     memory: roomId => invoke('hub-memory', { roomId }),
     me: () => invoke('hub-me', {}),
     devices: () => invoke('hub-devices', {}),

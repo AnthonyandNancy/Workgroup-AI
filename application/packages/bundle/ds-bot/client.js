@@ -87,6 +87,12 @@ var ZH = {
   "Create group chat": "新建群聊",
   "Delete group": "删除群聊",
   "Dissolve workgroup": "解散工作群",
+  "Leave workgroup": "退出工作群",
+  "Role for {name}": "{name} 的角色",
+  Member: "成员",
+  Invite: "邀请",
+  "Revoke invitation": "撤销邀请",
+  "Unknown workgroup action": "未知的工作群操作",
   "Mention someone": "提及某人",
   "Nobody in this workgroup matches.": "本工作群中没有匹配的人。",
   "Bot of {owner}": "{owner} 的 Bot",
@@ -757,8 +763,48 @@ var ZH = {
   "Not delivered": "未送达",
   "Approval needed": "需要你审批",
   "Requested by": "发起人",
+  "Requested Bot": "请求指定的 Bot",
   What: "内容",
   Approve: "批准",
+  // The approval form names what the owner is granting. None of these has a default value, so the
+  // copy states the choice rather than offering one.
+  "Assignment mode": "派发方式",
+  "Use one of my Bots": "使用我的一个 Bot",
+  "Let my Chief choose": "让我的主 Bot 选择",
+  "Create a new Bot for this task": "为这个任务新建 Bot",
+  "Choose…": "请选择…",
+  "Allowed tools": "允许的工具",
+  "Allowed tools, for example read, summarize": "允许的工具，例如 read、summarize",
+  "Lifetime (seconds)": "有效期（秒）",
+  "This task has no version to decide against. Reload it.": "这个任务没有可用的版本号，请刷新后重试。",
+  "Choose how this task should be assigned.": "请选择这个任务的派发方式。",
+  "Choose one of your published Bots.": "请选择你已发布的 Bot。",
+  "Choose the folder this task may work in.": "请选择这个任务可以使用的文件夹。",
+  "Name at least one tool this task may use.": "请至少填写一个这个任务可以使用的工具。",
+  "Give the task a lifetime in whole seconds.": "请填写任务的有效期（整数秒）。",
+  "Choose who may receive the result.": "请选择可以接收结果的人。",
+  "Folder choices are unavailable on this machine.": "这台主机无法选择文件夹。",
+  "Your published Bots are unavailable, so this approval cannot name one.": "无法读取你已发布的 Bot，因此不能指定执行 Bot。",
+  "The task lifetime must end at a future timestamp": "任务有效期必须晚于当前时间",
+  // A task's lifecycle, as the room sees it. The labels are the Hub's own state names, so one
+  // vocabulary describes a task whether it is read here, in an event, or on the Hub.
+  "Waiting for approval": "等待审批",
+  Approved: "已批准",
+  Queued: "已排队",
+  Running: "执行中",
+  "Waiting for review": "等待复核",
+  Completed: "已完成",
+  Shared: "已分享",
+  Rejected: "已拒绝",
+  Cancelling: "正在取消",
+  Cancelled: "已取消",
+  Expired: "已过期",
+  Failed: "已失败",
+  "Cancel task": "取消任务",
+  "Last failure": "最近失败",
+  "Keep result": "保留结果",
+  "Reject result": "拒绝结果",
+  "Share result": "分享结果",
   "A workgroup lives on the Hub and its members are real people. Messages are shared with them.": "工作群保存在 Hub 上，成员是真实的同事，消息会共享给他们。",
   // A workgroup without a Hub is a room this client cannot read or post to at all, so the copy
   // names what is missing and what would fix it instead of showing an empty room that reads like
@@ -786,6 +832,8 @@ var ZH = {
   "Your user ID": "你的用户 ID",
   "Your username": "你的用户名",
   "Copy my ID": "复制我的 ID",
+  "Copy this ID to let a colleague invite you.": "把这个 ID 交给要邀请你的同事。",
+  "User ID": "用户 ID",
   "Tell this to the colleague who will invite you.": "把它告诉要邀请你的同事。",
   "Signed in as {name}": "已登录为 {name}",
   "Own chat": "单聊",
@@ -1297,8 +1345,8 @@ function bodyOf(def, paint, flat = false) {
     return "";
   }
 }
-var eyeMarkup = ([cx, cy, w, h38, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><rect class="bt-eye" x="${-w / 2}" y="${-h38 / 2}" width="${w}" height="${h38}" rx="${w / 2}"/></g>`;
-var happyEyeMarkup = ([cx, cy, w, h38, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><path class="bt-eye-happy" opacity="0" d="M${-w * 0.62} ${h38 * 0.14}Q0 ${-h38 * 0.42} ${w * 0.62} ${h38 * 0.14}" fill="none" stroke="#000" stroke-width="${w * 0.5}" stroke-linecap="round"/></g>`;
+var eyeMarkup = ([cx, cy, w, h39, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><rect class="bt-eye" x="${-w / 2}" y="${-h39 / 2}" width="${w}" height="${h39}" rx="${w / 2}"/></g>`;
+var happyEyeMarkup = ([cx, cy, w, h39, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><path class="bt-eye-happy" opacity="0" d="M${-w * 0.62} ${h39 * 0.14}Q0 ${-h39 * 0.42} ${w * 0.62} ${h39 * 0.14}" fill="none" stroke="#000" stroke-width="${w * 0.5}" stroke-linecap="round"/></g>`;
 var maskBox = (size) => `maskUnits="userSpaceOnUse" x="${-size}" y="${-size}" width="${size * 3}" height="${size * 3}"`;
 var holes = (def, eyes) => `<rect x="${-def.size}" y="${-def.size}" width="${def.size * 3}" height="${def.size * 3}" fill="#fff"/>${eyes}`;
 var MASK_ID = "%MASK%";
@@ -1750,12 +1798,12 @@ function liveSprings(apply2) {
     const dt = Math.min(0.5, Math.max(1e-3, (now - last) / 1e3));
     last = now;
     const steps = Math.ceil(dt * 240);
-    const h38 = dt / steps;
+    const h39 = dt / steps;
     let moving = false;
     for (const value of values.values()) {
       for (let index = 0; index < steps; index += 1) {
-        value.v += (-value.k * (value.x - value.to) - value.c * value.v) * h38;
-        value.x += value.v * h38;
+        value.v += (-value.k * (value.x - value.to) - value.c * value.v) * h39;
+        value.x += value.v * h39;
       }
       if (Math.abs(value.x - value.to) < 0.05 && Math.abs(value.v) < 1) {
         value.x = value.to;
@@ -2284,6 +2332,7 @@ button.bt-q-opt:active{background:var(--bt-active)}
 .bt-swatch[aria-pressed=true]{border-color:var(--bt-ink)}
 .bt-textarea{width:100%;box-sizing:border-box;min-height:120px;border:1px solid var(--bt-line);border-radius:8px;padding:8px;background:var(--bt-card);color:var(--bt-ink);font:inherit;resize:vertical}
 .bt-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.bt-groups-create-actions{flex-direction:column;align-items:flex-start}
 .bt-kv{display:flex;justify-content:space-between;gap:8px;font-size:12px;line-height:20px;color:var(--bt-ink-2)}
 .bt-kv span:last-child{color:var(--bt-ink);font-variant-numeric:tabular-nums}
 .bt-danger{color:#e02135}
@@ -10977,13 +11026,17 @@ function BotsPage({ roster, actions, run }) {
     )
   ];
 }
-function GroupsPage({ roster, actions, run }) {
+function GroupsPage({ roster, actions, run, workgroups }) {
   const [creating, setCreating] = (0, import_react29.useState)(false);
   return [
     creating ? (0, import_react29.createElement)(NewGroupForm, { key: "create", roster, actions, run, onCancel: () => setCreating(false), onCreated: (room2) => actions.openSettings("groups", room2.id) }) : (0, import_react29.createElement)(
       "div",
-      { key: "new", className: "bt-actions" },
-      (0, import_react29.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm bt-with-icon", disabled: roster.bots.length < 2, title: roster.bots.length < 2 ? t("A group chat needs at least two Bots") : void 0, onClick: () => setCreating(true) }, (0, import_react29.createElement)(PlusIcon), t("Create group chat"))
+      { key: "new", className: "bt-actions bt-groups-create-actions" },
+      (0, import_react29.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm bt-with-icon", disabled: roster.bots.length < 2, title: roster.bots.length < 2 ? t("A group chat needs at least two Bots") : void 0, onClick: () => setCreating(true) }, (0, import_react29.createElement)(PlusIcon), t("Create group chat")),
+      workgroups !== void 0 ? (0, import_react29.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm bt-with-icon", onClick: () => void run(workgroups.create().then((sessionId) => {
+        if (sessionId !== void 0) actions.closeSettings();
+        return sessionId;
+      })) }, (0, import_react29.createElement)(PlusIcon), t("Create workgroup chat")) : null
     ),
     (0, import_react29.createElement)(
       SetSection,
@@ -11186,7 +11239,7 @@ function HubPage({ hub, workgroupHub, sessions, actions }) {
     error ? (0, import_react29.createElement)("div", { key: "error", className: "bt-error", role: "alert" }, error) : null
   ];
 }
-function SettingsDialog({ page, id, roster, actions, useUpdate, hub, workgroupHub, sessions, leaving = false }) {
+function SettingsDialog({ page, id, roster, actions, useUpdate, hub, workgroupHub, workgroups, sessions, leaving = false }) {
   const [error, setError] = (0, import_react29.useState)("");
   const close = (0, import_react29.useCallback)(() => actions.closeSettings(), []);
   useEscape(close);
@@ -11259,7 +11312,7 @@ function SettingsDialog({ page, id, roster, actions, useUpdate, hub, workgroupHu
           bot ? (0, import_react29.createElement)("div", { className: "bt-settings-form" }, (0, import_react29.createElement)(BotSettingsForm, { key: bot.id, bot, roster, actions, run })) : null,
           shown === "bots" && !bot ? (0, import_react29.createElement)(BotsPage, { roster, actions, run }) : null,
           room2 ? (0, import_react29.createElement)("div", { className: "bt-settings-form" }, (0, import_react29.createElement)(GroupSettingsForm, { key: room2.id, room: room2, roster, actions, run })) : null,
-          shown === "groups" && !room2 ? (0, import_react29.createElement)(GroupsPage, { roster, actions, run }) : null,
+          shown === "groups" && !room2 ? (0, import_react29.createElement)(GroupsPage, { roster, actions, run, workgroups }) : null,
           shown === "connectors" ? (0, import_react29.createElement)(ConnectorsPage, { roster, actions }) : null,
           shown === "capabilities" ? (0, import_react29.createElement)(CapabilitiesPage, { roster, actions, run }) : null,
           shown === "schedules" ? (0, import_react29.createElement)(SchedulesPage, { roster, actions, start: id ?? void 0 }) : null,
@@ -12692,7 +12745,7 @@ function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity
     ui2.exchange ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(ExchangeDialog, { pair: ui2.exchange, roster, actions }), document.body) : null,
     ui2.voice ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(VoiceMode, { key: ui2.voice, sessionId: ui2.voice, roster, actions, useSessions, useSessionStatus }), document.body) : null,
     menu ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(ContextMenu, { key: `${menu.kind ?? ""}:${menu.id}:${menu.x}:${menu.y}`, menu, roster, actions, leaving: menuLeaving }), document.body) : null,
-    settings ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(SettingsDialog, { page: settings.page, id: settings.id, roster, actions, useUpdate, hub, workgroupHub, sessions, leaving: settingsLeaving }), document.body) : null,
+    settings ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(SettingsDialog, { page: settings.page, id: settings.id, roster, actions, useUpdate, hub, workgroupHub, workgroups, sessions, leaving: settingsLeaving }), document.body) : null,
     memory && roster.byId[memory] ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(MemoryDialog, { key: memory, bot: roster.byId[memory], actions, leaving: memoryLeaving }), document.body) : null
   );
 }
@@ -13488,6 +13541,141 @@ function serveBrowserReads({ browsers, post, clientId = globalThis.crypto.random
   };
 }
 
+// src/client/workgroup-settings.js
+var import_react35 = require("react");
+function WorkgroupSettings({ room: room2, members = [], selfUserId, onAction, onDissolve, onClose }) {
+  const [name, setName] = (0, import_react35.useState)(room2.name);
+  const [target, setTarget] = (0, import_react35.useState)("");
+  const [invitation, setInvitation] = (0, import_react35.useState)(void 0);
+  const [confirming, setConfirming] = (0, import_react35.useState)(false);
+  const [busy, setBusy] = (0, import_react35.useState)(false);
+  const [error, setError] = (0, import_react35.useState)(void 0);
+  const role = members.find((member) => member.userId === selfUserId)?.role;
+  const owner = role === "owner";
+  const manage = (owner || role === "admin") && !room2.dissolvedAt;
+  const act = async (operation) => {
+    if (busy) return;
+    setBusy(true);
+    setError(void 0);
+    try {
+      return await operation();
+    } catch (failure) {
+      setError(failure?.message ?? String(failure));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (0, import_react35.createElement)(
+    "div",
+    { className: "bt-bs" },
+    (0, import_react35.createElement)(
+      Card,
+      { title: t("Profile") },
+      manage ? (0, import_react35.createElement)(
+        "div",
+        { className: "bt-set-row bt-bs-row" },
+        (0, import_react35.createElement)("input", { className: "bt-bs-input", "aria-label": t("Group name"), value: name, maxLength: 60, onChange: (event) => setName(event.target.value) }),
+        (0, import_react35.createElement)("button", {
+          type: "button",
+          className: "bt-soft",
+          disabled: busy || name.trim() === "",
+          "data-wg-action": "rename",
+          onClick: () => act(() => onAction("renameRoom", { name: name.trim() }))
+        }, t("Save changes"))
+      ) : (0, import_react35.createElement)(Row, { label: t("Name"), value: room2.name })
+    ),
+    (0, import_react35.createElement)(
+      Card,
+      { title: t("Members · {count}", { count: members.length }) },
+      members.map((member) => (0, import_react35.createElement)(
+        "div",
+        { key: member.userId, className: "bt-set-row bt-bs-row" },
+        (0, import_react35.createElement)("span", { className: "bt-set-copy" }, member.displayName ?? member.userHandle ?? member.userId),
+        manage && member.role !== "owner" && member.userId !== selfUserId ? (0, import_react35.createElement)(
+          "select",
+          {
+            "data-wg-role": member.userId,
+            "aria-label": t("Role for {name}", { name: member.displayName ?? member.userId }),
+            value: member.role,
+            disabled: busy,
+            onChange: (event) => {
+              void act(() => onAction("setRole", { userId: member.userId, role: event.target.value }));
+            }
+          },
+          (0, import_react35.createElement)("option", { value: "member" }, t("Member")),
+          (0, import_react35.createElement)("option", { value: "admin" }, t("Admin"))
+        ) : (0, import_react35.createElement)("span", { className: "bt-tag" }, member.role === "owner" ? t("Owner") : member.role === "admin" ? t("Admin") : t("Member")),
+        manage && member.role !== "owner" && member.userId !== selfUserId ? (0, import_react35.createElement)("button", {
+          type: "button",
+          className: "bt-soft",
+          disabled: busy,
+          "data-wg-remove": member.userId,
+          onClick: () => act(() => onAction("removeMember", { userId: member.userId }))
+        }, t("Remove")) : null
+      )),
+      manage ? (0, import_react35.createElement)(
+        "div",
+        { className: "bt-set-row bt-bs-row" },
+        (0, import_react35.createElement)("input", { className: "bt-bs-input", "aria-label": t("User ID"), value: target, onChange: (event) => setTarget(event.target.value) }),
+        (0, import_react35.createElement)("button", {
+          type: "button",
+          className: "bt-soft",
+          disabled: busy || target.trim() === "",
+          "data-wg-action": "invite",
+          onClick: () => act(async () => {
+            setInvitation(await onAction("invite", { targetUserId: target.trim() }));
+            setTarget("");
+          })
+        }, t("Invite"))
+      ) : null,
+      invitation ? (0, import_react35.createElement)("button", {
+        type: "button",
+        className: "bt-soft",
+        disabled: busy,
+        "data-wg-action": "revoke",
+        onClick: () => act(async () => {
+          await onAction("revokeInvitation", { invitationId: invitation.id });
+          setInvitation(void 0);
+        })
+      }, t("Revoke invitation")) : null
+    ),
+    (0, import_react35.createElement)(
+      Card,
+      { title: t("Manage") },
+      owner && !room2.dissolvedAt ? (0, import_react35.createElement)(
+        "button",
+        {
+          type: "button",
+          className: "bt-set-row bt-bs-row bt-bs-danger",
+          disabled: busy,
+          "data-group-action": "dissolve",
+          "data-confirm": confirming || void 0,
+          onClick: () => {
+            if (!confirming) {
+              setConfirming(true);
+              return;
+            }
+            void act(() => onDissolve(room2.id));
+          }
+        },
+        confirming ? t("Dissolve {name}?", { name: room2.name }) : t("Dissolve workgroup")
+      ) : null,
+      !owner && role !== void 0 && !room2.dissolvedAt ? (0, import_react35.createElement)("button", {
+        type: "button",
+        className: "bt-soft",
+        disabled: busy,
+        "data-wg-action": "leave",
+        onClick: () => act(async () => {
+          await onAction("leaveRoom", {});
+          onClose();
+        })
+      }, t("Leave workgroup")) : null,
+      (0, import_react35.createElement)("button", { type: "button", className: "bt-soft", onClick: onClose }, t("Close"))
+    ),
+    error === void 0 ? null : (0, import_react35.createElement)("div", { role: "alert", className: "bt-danger" }, error)
+  );
+}
+
 // src/client/workgroup-reply.js
 var PREVIEW_MAX = 140;
 function replyPreview(message) {
@@ -13547,10 +13735,10 @@ function mentionCandidates({ members = [], bots = [] } = {}) {
     ...member.userHandle === void 0 ? {} : { detail: member.userHandle }
   }));
   const byOwner = new Map(people.map((person) => [person.userId, person]));
-  const owned = bots.filter((bot) => typeof bot?.id === "string" && byOwner.has(bot.ownerUserId)).map((bot) => ({
+  const owned = bots.filter((bot) => typeof bot?.botId === "string" && byOwner.has(bot.ownerUserId)).map((bot) => ({
     userId: bot.ownerUserId,
-    botId: bot.id,
-    label: bot.displayName ?? bot.id,
+    botId: bot.botId,
+    label: bot.displayName ?? bot.botId,
     kind: "bot",
     detail: byOwner.get(bot.ownerUserId).label
   }));
@@ -13568,8 +13756,536 @@ function composeMessage(text, picked = []) {
   };
 }
 
+// ../../../integrations/workgroup/client/index.mjs
+var MEMBER_ROLES = Object.freeze(["owner", "admin", "member"]);
+var WorkgroupClientError = class extends Error {
+  constructor(message, code, detail) {
+    super(message);
+    this.name = "WorkgroupClientError";
+    this.code = code;
+    this.detail = detail;
+  }
+};
+function createWorkgroupClient({ client, bridge, onBotsFromDirectory } = {}) {
+  if (client === void 0) throw new WorkgroupClientError("A Hub client is required", "NO_HUB_CLIENT");
+  const publishedBots = async ({ ownerUserId, query } = {}) => {
+    const params = new URLSearchParams();
+    if (ownerUserId !== void 0) params.set("ownerUserId", ownerUserId);
+    if (query !== void 0) params.set("q", query);
+    const suffix = params.toString() === "" ? "" : `?${params}`;
+    const listed = await client.request("GET", `/bots/directory${suffix}`);
+    const entries2 = listed.bots ?? [];
+    onBotsFromDirectory?.(entries2);
+    return entries2;
+  };
+  const openRoom = async (roomId) => {
+    const [room2, messages, tasks] = await Promise.all([
+      client.request("GET", `/rooms/${roomId}`),
+      client.request("GET", `/rooms/${roomId}/messages?limit=200`),
+      // A task list read is scoped to this caller by the Hub, so a member never receives another
+      // person's approvals to display.
+      client.request("GET", `/rooms/${roomId}/tasks`).catch((error) => {
+        if (error.status === 404) return { tasks: [] };
+        throw error;
+      })
+    ]);
+    const owners = new Set(room2.members.map((member) => member.userId));
+    const directories = await Promise.all([...owners].map((ownerUserId) => publishedBots({ ownerUserId })));
+    const bots = directories.flat().filter((bot) => owners.has(bot.ownerUserId) && ["public", "room"].includes(bot.visibility)).map(({ botId, ownerUserId, displayName, visibility, state }) => ({ botId, ownerUserId, displayName, visibility, state }));
+    return {
+      room: room2.room,
+      members: room2.members,
+      bots,
+      messages: messages.messages,
+      tasks: tasks.tasks ?? [],
+      head: messages.nextAfterSeq ?? 0
+    };
+  };
+  return {
+    openRoom,
+    /**
+     * Upload one file into a room.
+     *
+     * The bytes go as the request body, so the Hub's upload limit bounds the file itself rather than a
+     * base64 expansion of it. `recipients` names the people who may download it: uploading does **not**
+     * publish to the room, and attaching the file to a message does not widen its ACL either — that is
+     * the requirement's "non-recipients cannot download", and `shareArtifact` is the explicit way to
+     * widen it.
+     *
+     * @param {string} roomId
+     * @param {{ fileName: string, bytes: Uint8Array, contentType?: string, recipients?: string[], taskId?: string }} file
+     * @returns {Promise<{ artifact: object }>}
+     * @throws {WorkgroupClientError} before any request when the name or the bytes are missing, so a
+     *   malformed upload is not answered by the network.
+     */
+    uploadArtifact: (roomId, { fileName, bytes, contentType, recipients = [], taskId } = {}) => {
+      const name = String(fileName ?? "").trim();
+      if (name === "") throw new WorkgroupClientError("An attachment needs a file name", "INVALID_ATTACHMENT");
+      if (!(bytes instanceof Uint8Array)) throw new WorkgroupClientError("An attachment needs its bytes", "INVALID_ATTACHMENT");
+      if (bytes.byteLength === 0) throw new WorkgroupClientError("An attachment must not be empty", "INVALID_ATTACHMENT");
+      const query = new URLSearchParams({ fileName: name });
+      if (recipients.length > 0) query.set("recipients", recipients.join(","));
+      if (taskId !== void 0) query.set("taskId", taskId);
+      return client.request("POST", `/rooms/${roomId}/artifacts?${query.toString()}`, {
+        binary: { bytes, contentType }
+      });
+    },
+    /**
+     * Download one artifact's bytes.
+     *
+     * The Hub refuses a viewer its ACL excludes, and answers as if the artifact did not exist, so this
+     * throws rather than returning an empty result.
+     *
+     * @returns {Promise<{ bytes: Buffer, headers: object }>}
+     */
+    downloadArtifact: (artifactId) => client.request("GET", `/artifacts/${artifactId}/content`, { raw: true }),
+    /** The artifacts this caller may read in one room. */
+    listArtifacts: (roomId) => client.request("GET", `/rooms/${roomId}/artifacts`),
+    /**
+     * End the workgroup. Owner only; the Hub enforces that, not this call.
+     *
+     * Distinct from `leave` and `removeMember` on purpose — the requirement separates them, and a
+     * client that offered one button for all three would let a member end a workgroup for everyone.
+     */
+    dissolve: (roomId) => client.request("POST", `/rooms/${roomId}/dissolve`, { body: {} }),
+    /**
+     * Invite a person by their Hub user id.
+     *
+     * By id because the Hub has no directory of people to search: an employee knows their
+     * colleague's id out of band (it is shown in their own profile), and a search endpoint would be
+     * a way to enumerate a company's accounts.
+     */
+    async invite(roomId, { targetUserId, role = "member" }) {
+      if (typeof targetUserId !== "string" || targetUserId.trim() === "") {
+        throw new WorkgroupClientError("Enter the user id of the colleague to invite", "MISSING_TARGET_USER");
+      }
+      const created = await client.request("POST", `/rooms/${roomId}/invitations`, {
+        body: { targetUserId: targetUserId.trim(), role }
+      });
+      return created.invitation;
+    },
+    /** The invitations addressed to this device's user. */
+    async incomingInvitations() {
+      const listed = await client.request("GET", "/invitations");
+      return listed.invitations;
+    },
+    /** Accept or decline an invitation addressed to this user. */
+    async respondToInvitation(invitationId, decision) {
+      if (decision !== "accept" && decision !== "decline") {
+        throw new WorkgroupClientError(`A decision must be accept or decline, got ${JSON.stringify(decision)}`, "INVALID_DECISION");
+      }
+      const answered = await client.request("POST", `/invitations/${invitationId}/${decision}`, { body: {} });
+      if (decision === "accept") await bridge?.watch?.(answered.room.id);
+      return answered;
+    },
+    /** Revoke an invitation this user sent. */
+    revokeInvitation: (invitationId) => client.request("POST", `/invitations/${invitationId}/revoke`, { body: {} }),
+    /**
+     * The room's members, straight from the Hub.
+     *
+     * Never merged with a local list: a removed member must disappear the moment the Hub says so,
+     * and a local list would keep showing them until a reload.
+     */
+    async members(roomId) {
+      const listed = await client.request("GET", `/rooms/${roomId}/members`);
+      return listed.members;
+    },
+    /** Change a member's role. The Hub refuses this for a non-admin. */
+    setRole: (roomId, userId, role) => {
+      if (!MEMBER_ROLES.includes(role)) {
+        throw new WorkgroupClientError(`A role must be one of ${MEMBER_ROLES.join(", ")}, got ${JSON.stringify(role)}`, "INVALID_ROLE");
+      }
+      return client.request("POST", `/rooms/${roomId}/members/${userId}/role`, { body: { role } });
+    },
+    /**
+     * Remove a member.
+     *
+     * The Hub closes their live sockets as part of this, so a removed member stops receiving events
+     * rather than continuing until their token expires. This client does not try to do that itself:
+     * a client-side "stop showing messages" would be a courtesy, not a boundary.
+     */
+    removeMember: (roomId, userId) => client.request("POST", `/rooms/${roomId}/members/${userId}/remove`, { body: {} }),
+    /** Leave a room. The Hub treats leaving like being removed, including the socket teardown. */
+    leave: async (roomId) => {
+      const result = await client.request("POST", `/rooms/${roomId}/leave`, { body: {} });
+      bridge?.unwatch?.(roomId);
+      return result;
+    },
+    /**
+     * Send a human message.
+     *
+     * `clientMessageId` is generated here, once per send, because it is what makes the Hub's
+     * handling idempotent: a retry after a timeout with the same id is the same message, not a
+     * second one. Generating it per attempt would make a retried send appear twice in the room.
+     */
+    sendMessage: (roomId, body, { clientMessageId = globalThis.crypto.randomUUID(), replyToMessageId, mentions, attachments } = {}) => {
+      const text = String(body ?? "").trim();
+      if (text === "") throw new WorkgroupClientError("A message needs some text", "EMPTY_MESSAGE");
+      return client.request("POST", `/rooms/${roomId}/messages`, {
+        body: {
+          clientMessageId,
+          body: text,
+          ...replyToMessageId === void 0 ? {} : { replyToMessageId },
+          // Mentions travel as ids, and attachments as artifact ids. The Hub validates both against
+          // this room, so a client cannot mention an outsider or attach another room's file.
+          ...Array.isArray(mentions) && mentions.length > 0 ? { mentions } : {},
+          ...Array.isArray(attachments) && attachments.length > 0 ? { attachments: attachments.map((entry) => typeof entry === "string" ? { artifactId: entry } : entry) } : {}
+        }
+      });
+    },
+    /**
+     * Messages after a sequence, for the Bridge's catch-up or a scroll-back.
+     *
+     * The cursor is a sequence number, never a timestamp: two messages in one millisecond would
+     * make a timestamp cursor skip one.
+     */
+    messagesAfter: (roomId, afterSeq, limit = 200) => client.request("GET", `/rooms/${roomId}/messages?afterSeq=${afterSeq}&limit=${limit}`),
+    /** The room's high-water sequence, so a fresh client knows whether it is behind. */
+    head: (roomId) => client.request("GET", `/rooms/${roomId}/messages/head`),
+    /**
+     * The Bots whose owners have published them.
+     *
+     * The Hub decides visibility per caller, and its answer is the whole truth: a Bot whose owner
+     * has not published it is simply absent, and this client does not try to work out which Bots
+     * "should" be usable in a workgroup. That is what keeps a private Bot from ever appearing as a
+     * candidate to delegate to.
+     *
+     * There is deliberately no room filter. The Hub scopes the directory to the *caller*, not to a
+     * room — `browseDirectory` takes `viewerUserId`, not a room id — so passing one would look like
+     * a restriction while doing nothing. Which entries may act in a given task is decided at task
+     * creation, by the Hub, against the room's membership.
+     */
+    publishedBots,
+    /** This user's own id, which the view needs to mark their own messages. */
+    get selfUserId() {
+      return client.identity?.userId;
+    }
+  };
+}
+function reduceWorkgroup(state, event) {
+  if (event === null || typeof event !== "object") return state;
+  const eventRoomId = event.roomId ?? event.payload?.roomId;
+  if (eventRoomId !== void 0 && eventRoomId !== state.room?.id) return state;
+  switch (event.type) {
+    case "message.created": {
+      const message = event.payload?.message;
+      if (message === void 0 || message.roomId !== state.room?.id) return state;
+      const known = state.messages.some((existing) => existing.id === message.id || existing.roomSeq === message.roomSeq);
+      if (known) return state;
+      return {
+        ...state,
+        messages: [...state.messages, message].sort((left, right) => left.roomSeq - right.roomSeq),
+        head: Math.max(state.head ?? 0, message.roomSeq)
+      };
+    }
+    case "presence.changed": {
+      const presence = event.payload ?? {};
+      const index = state.members.findIndex((member) => member.userId === presence.userId);
+      if (index < 0) return state;
+      const online = presence.online === true;
+      if (state.members[index].online === online) return state;
+      const members = [...state.members];
+      members[index] = { ...members[index], online };
+      return { ...state, members };
+    }
+    case "member.changed": {
+      const change = event.payload ?? {};
+      if (change.roomId !== void 0 && change.roomId !== state.room?.id) return state;
+      return { ...state, membersStale: true };
+    }
+    case "invitation.created":
+      return { ...state, invitationsStale: true };
+    case "task.approval_requested":
+    case "task.approved":
+    case "task.cancelled":
+    case "task.progress":
+    case "task.shared": {
+      const task = event.payload?.task;
+      if (task === void 0) return { ...state, tasksStale: true };
+      const others = state.tasks.filter((existing) => existing.id !== task.id);
+      return { ...state, tasks: [...others, task] };
+    }
+    default:
+      return state;
+  }
+}
+function emptyWorkgroupState(roomId) {
+  return { room: { id: roomId, name: "" }, members: [], messages: [], tasks: [], head: 0, loading: true };
+}
+
+// ../../../integrations/workgroup/client/approvals.mjs
+var ASSIGNMENT_MODES = Object.freeze(["existing_bot", "chief_auto", "create_bot"]);
+var ASSIGNMENT_MODE_LABELS = Object.freeze({
+  existing_bot: "Use one of my Bots",
+  chief_auto: "Let my Chief choose",
+  create_bot: "Create a new Bot for this task"
+});
+var ApprovalError = class extends Error {
+  constructor(message, code) {
+    super(message);
+    this.name = "ApprovalError";
+    this.code = code;
+  }
+};
+function isMineToDecide(task, userId) {
+  return task?.state === "PENDING_APPROVAL" && task?.ownerUserId === userId;
+}
+function approvalChoices(task, publishedBots = []) {
+  if (task === void 0 || task === null) return { modes: [], bots: [] };
+  const bots = publishedBots.map((entry) => ({ botId: entry.botId, displayName: entry.displayName, role: entry.role }));
+  const modes = [];
+  if (bots.length > 0) modes.push("existing_bot");
+  if (bots.length > 0) modes.push("chief_auto");
+  modes.push("create_bot");
+  const suggestedMode = task.targetBotId === void 0 || task.targetBotId === null ? void 0 : "existing_bot";
+  return { modes, bots, ...suggestedMode === void 0 ? {} : { suggestedMode, suggestedBotId: task.targetBotId } };
+}
+function approvalScope({ mode, botId, workDir, tools, recipients, expiresAt, now = /* @__PURE__ */ new Date() } = {}) {
+  if (!ASSIGNMENT_MODES.includes(mode)) {
+    throw new ApprovalError(`An assignment mode must be one of ${ASSIGNMENT_MODES.join(", ")}`, "INVALID_ASSIGNMENT_MODE");
+  }
+  if (mode === "existing_bot" && (botId === void 0 || botId === null || botId === "")) {
+    throw new ApprovalError("Choosing an existing Bot requires picking one", "MISSING_ASSIGNED_BOT");
+  }
+  if (expiresAt !== void 0 && expiresAt !== null && expiresAt !== "") {
+    const deadline = typeof expiresAt === "string" ? Date.parse(expiresAt) : Number.NaN;
+    if (!Number.isFinite(deadline) || deadline <= now.getTime()) {
+      throw new ApprovalError("The task lifetime must end at a future timestamp", "INVALID_EXPIRY");
+    }
+  }
+  const scope = { mode };
+  if (mode === "existing_bot") scope.assignedBotId = botId;
+  if (workDir !== void 0 && workDir !== null && workDir !== "") scope.workDir = workDir;
+  if (Array.isArray(tools) && tools.length > 0) scope.tools = [...tools];
+  if (Array.isArray(recipients) && recipients.length > 0) scope.recipients = [...recipients];
+  if (expiresAt !== void 0 && expiresAt !== null && expiresAt !== "") scope.expiresAt = expiresAt;
+  return scope;
+}
+function createApprovalClient({ client, bridge, selfUserId } = {}) {
+  if (client === void 0) throw new ApprovalError("A Hub client is required", "NO_HUB_CLIENT");
+  const me = () => selfUserId ?? client.identity?.userId;
+  const decide = async ({ taskId, decision, expectedVersion, mode, botId, workDir, tools, recipients, expiresAt }) => {
+    if (decision !== "approve" && decision !== "reject") {
+      throw new ApprovalError(`A decision must be approve or reject, got ${JSON.stringify(decision)}`, "INVALID_DECISION");
+    }
+    if (!Number.isInteger(expectedVersion)) {
+      throw new ApprovalError("A decision must name the version it was made against", "MISSING_VERSION");
+    }
+    const body = { decision, expectedVersion };
+    if (decision === "approve") {
+      const scope = approvalScope({ mode, botId, workDir, tools, recipients, expiresAt });
+      body.assignmentMode = scope.mode;
+      if (scope.assignedBotId !== void 0) body.assignedBotId = scope.assignedBotId;
+      body.approvedScope = scope;
+    }
+    const answered = await client.request("POST", `/tasks/${taskId}/decision`, { body });
+    return answered.task;
+  };
+  return {
+    /** The tasks waiting on this user, and only this user. */
+    async pending() {
+      const listed = await client.request("GET", "/tasks/pending");
+      return listed.tasks;
+    },
+    /**
+     * The approved tasks this owner still has to start.
+     *
+     * The owner's execution queue, not the room's list: it is how a Host that was offline, or was
+     * not watching the room, finds work that was approved without it. Only owner-owned tasks are
+     * answered, and the scope comes with them because the owner approved it.
+     */
+    async approvedQueue() {
+      const listed = await client.request("GET", "/tasks/approved");
+      return listed.tasks;
+    },
+    /**
+     * One task, including the scope an approval granted.
+     *
+     * `includeScope` is asked for explicitly: the scope names a directory and a tool list, and a
+     * response that carried it by default would put the owner's private paths into every reader's
+     * view of the task.
+     */
+    task: (taskId) => client.request("GET", `/tasks/${taskId}`),
+    /** The task's event history, which is the redacted progress stream (A-09 owns its contents). */
+    async progress(taskId) {
+      const detail = await client.request("GET", `/tasks/${taskId}`);
+      return detail.events ?? detail.task?.events ?? [];
+    },
+    /**
+     * Report progress, as the task's owner.
+     *
+     * `state` moves the task and requires the version the reporter holds, so two reports cannot
+     * both win. A stage-only report changes nothing and needs no version: it says the work is
+     * still going, which is not a transition.
+     *
+     * The Hub refuses this from anybody but the owner: a progress line the requester could write
+     * would let them claim work the owner never did.
+     */
+    reportProgress: (taskId, { state, expectedVersion, stage, reason }) => client.request("POST", `/tasks/${taskId}/progress`, {
+      body: {
+        ...stage === void 0 ? {} : { stage },
+        // A reason is a category the room may read (the Hub rejects free-form text); it is never a
+        // message from this machine.
+        ...reason === void 0 ? {} : { reason },
+        ...state === void 0 ? {} : { state, expectedVersion }
+      }
+      // The route answers `{ task }`; the task is what a caller wants, so the wrapper is dropped here
+      // rather than at every call site.
+    }).then((answered) => answered.task),
+    /**
+     * Review a finished result.
+     *
+     * Three outcomes, and only one of them publishes anything: `keep` completes the task and
+     * publishes nothing, `reject` fails it and publishes nothing, and `share` names who receives it.
+     */
+    review: (taskId, decision, { expectedVersion, recipients } = {}) => {
+      if (!["keep", "reject", "share"].includes(decision)) {
+        throw new ApprovalError(`A review decision must be keep, share, or reject, got ${JSON.stringify(decision)}`, "INVALID_DECISION");
+      }
+      if (decision === "share" && (!Array.isArray(recipients) || recipients.length === 0)) {
+        throw new ApprovalError("Sharing a result needs at least one named recipient. Choose who receives it.", "NO_RECIPIENTS");
+      }
+      return client.request("POST", `/tasks/${taskId}/${decision}`, {
+        body: { expectedVersion, ...decision === "share" ? { recipients } : {} }
+      }).then((answered) => answered.task);
+    },
+    /**
+     * Approve or reject.
+     *
+     * The version is required, not optional: a decision without one would overwrite whatever the
+     * task had become, and the two-device case is exactly when that matters.
+     *
+     * @param {{ taskId: string, decision: 'approve'|'reject', expectedVersion: number, mode?: string, botId?: string, workDir?: string, tools?: string[], recipients?: string[], expiresAt?: string }} input
+     */
+    decide,
+    /**
+     * Reject without naming a dispatch: a rejection grants nothing, so there is nothing to scope.
+     *
+     * Defined after `decide` and called through it directly rather than via `this`, because a
+     * destructured `const { reject } = approvals` would otherwise lose `this` and throw at the
+     * moment the user clicks the button.
+     */
+    reject: (taskId, expectedVersion) => decide({ taskId, decision: "reject", expectedVersion }),
+    /**
+     * Cancel a task this user asked for, or owns.
+     *
+     * Cancelling is separate from rejecting: a rejection answers a request that has not run, a
+     * cancellation stops work that has. The Hub decides who may do which.
+     */
+    cancel: (taskId) => client.request("POST", `/tasks/${taskId}/cancel`, { body: {} }),
+    /**
+     * Mint one grant for a task the owner has approved.
+     *
+     * Minting is a **separate step from approving**, and that separation is deliberate: the approval
+     * is the owner's standing answer, while a grant is one short-lived, single-use credential bound
+     * to a botId and to this device. Approving once and handing out grants on demand is what lets
+     * the owner stop authorizing by revoking, without re-deciding the task.
+     *
+     * The nonce comes back exactly once and is never stored in readable form, so this returns it to
+     * the caller that will present it — and nothing caches it.
+     */
+    mintGrant: (taskId, { botId, ttlSeconds } = {}) => client.request("POST", `/tasks/${taskId}/grant`, {
+      body: { botId, ...ttlSeconds === void 0 ? {} : { ttlSeconds } }
+    }),
+    /**
+     * Present a grant to start work.
+     *
+     * The body is `{ nonce, taskId }`: the Hub looks the grant up by the nonce's hash, not by id,
+     * because the nonce is the secret and the id is not. The **device** is taken from the
+     * authenticated session and never from the body, so a grant captured from one machine cannot be
+     * presented from another.
+     *
+     * The answer names the approved scope, which is what the local executor must enforce; the Hub's
+     * consumption is a record, not an enforcement of the scope.
+     */
+    consumeGrant: (nonce, taskId, proof = {}) => client.request("POST", "/dispatch/consume", {
+      // The signature travels with the nonce: the Hub refuses a presentation that carries only a
+      // nonce (E1), because a valid nonce proves the caller saw a grant but not that the Hub issued
+      // it. `proof` is where an executor that already read the signature off its frame passes it.
+      body: { nonce, taskId, ...proof.signature === void 0 ? {} : { signature: proof.signature }, ...proof.keyId === void 0 ? {} : { keyId: proof.keyId } }
+    }),
+    /**
+     * The grants this task has handed out, so the owner can see what is currently authorized.
+     *
+     * Only the task's owner may read this: the fact that a grant was minted is about the owner's
+     * machine, not the room's business.
+     */
+    grants: (taskId) => client.request("GET", `/tasks/${taskId}/grants`),
+    /**
+     * The scope an approval granted, from the task detail.
+     *
+     * The Hub nests it as `task.approval.scope` and only includes it for the owner or once the task
+     * is past the approval state. Reading it through one helper means a caller cannot accidentally
+     * treat "the field is absent" as "no scope was granted" — those are different, and the second
+     * would authorize everything.
+     */
+    async approvedScope(taskId) {
+      const detail = await client.request("GET", `/tasks/${taskId}`);
+      const scope = detail.task?.approval?.scope;
+      if (scope === void 0) {
+        throw new ApprovalError(
+          "This task has no recorded approval scope. Either it has not been decided, or this caller may not read it.",
+          "NO_APPROVED_SCOPE"
+        );
+      }
+      return scope;
+    },
+    /**
+     * Revoke every outstanding grant for a task.
+     *
+     * There is deliberately no single-grant revoke. The Hub's route revokes all of a task's grants
+     * and bumps the task's revocation version, because a partial revocation is not a state the
+     * executor can honour: it would have to decide which of several grants authorized the call it
+     * is about to make, and the answer changes while it runs.
+     */
+    revokeGrants: (taskId) => client.request("POST", `/tasks/${taskId}/grants/revoke`, { body: {} }),
+    /** Fix this client's notion of who it is, when the host knows better than the token. */
+    get selfUserId() {
+      return me();
+    }
+  };
+}
+function reducePending(pending, event, { selfUserId } = {}) {
+  if (!Array.isArray(pending) || event === null || typeof event !== "object") return pending;
+  const task = event.payload?.task;
+  if (task === void 0) return pending;
+  const without = pending.filter((entry) => entry.id !== task.id);
+  if (!isMineToDecide(task, selfUserId)) return without;
+  return [...without, task];
+}
+function taskStateLabel(state) {
+  switch (state) {
+    case "PENDING_APPROVAL":
+      return "Waiting for approval";
+    case "APPROVED":
+      return "Approved";
+    case "QUEUED":
+      return "Queued";
+    case "RUNNING":
+      return "Running";
+    case "REVIEW_REQUIRED":
+      return "Waiting for review";
+    case "COMPLETED":
+      return "Completed";
+    case "SHARED":
+      return "Shared";
+    case "REJECTED":
+      return "Rejected";
+    case "CANCELLING":
+      return "Cancelling";
+    case "CANCELLED":
+      return "Cancelled";
+    case "EXPIRED":
+      return "Expired";
+    case "FAILED":
+      return "Failed";
+    default:
+      return `Unknown state (${String(state)})`;
+  }
+}
+
 // src/client/workgroup.js
-var import_react35 = require("react");
+var import_react36 = require("react");
 var WORKGROUP_KIND = "workgroup";
 var ORDINARY_KIND = "ordinary";
 function isWorkgroup(room2) {
@@ -13583,20 +14299,20 @@ function unreadCount(messages, watermark) {
   if (!Array.isArray(messages)) return 0;
   return messages.filter((message) => typeof message.roomSeq === "number" && message.roomSeq > (watermark ?? 0)).length;
 }
-function WorkgroupThread({ messages, selfUserId, empty, onReply }) {
-  const ordered = (0, import_react35.useMemo)(
+function WorkgroupThread({ messages, selfUserId, empty, onReply, onDownload }) {
+  const ordered = (0, import_react36.useMemo)(
     () => [...messages ?? []].sort((left, right) => (left.roomSeq ?? 0) - (right.roomSeq ?? 0)),
     [messages]
   );
   if (ordered.length === 0) {
-    return (0, import_react35.createElement)("div", { className: "bt-wg-empty", "data-wg-thread": "empty" }, empty ?? t("No messages yet"));
+    return (0, import_react36.createElement)("div", { className: "bt-wg-empty", "data-wg-thread": "empty" }, empty ?? t("No messages yet"));
   }
-  return (0, import_react35.createElement)(
+  return (0, import_react36.createElement)(
     "div",
     { className: "bt-wg-thread", "data-wg-thread": "list" },
     ordered.map((message) => {
       const quoted = replyParent(message, ordered);
-      return (0, import_react35.createElement)(
+      return (0, import_react36.createElement)(
         "div",
         {
           key: message.id ?? `${message.roomSeq}`,
@@ -13607,21 +14323,28 @@ function WorkgroupThread({ messages, selfUserId, empty, onReply }) {
         },
         // The quoted parent is resolved from this reader's own copy of the room, so a reply whose
         // parent was deleted still shows as a reply rather than as an unrelated message.
-        quoted === void 0 ? null : (0, import_react35.createElement)(
+        quoted === void 0 ? null : (0, import_react36.createElement)(
           "div",
           { className: "bt-wg-quote", "data-wg-quote": quoted.id },
-          (0, import_react35.createElement)("span", { className: "bt-wg-quote-who" }, quoted.who === void 0 ? t("An earlier message") : quoted.who),
-          quoted.body === void 0 ? null : (0, import_react35.createElement)("span", { className: "bt-wg-quote-body" }, quoted.body)
+          (0, import_react36.createElement)("span", { className: "bt-wg-quote-who" }, quoted.who === void 0 ? t("An earlier message") : quoted.who),
+          quoted.body === void 0 ? null : (0, import_react36.createElement)("span", { className: "bt-wg-quote-body" }, quoted.body)
         ),
-        (0, import_react35.createElement)("div", { className: "bt-wg-message-who" }, message.senderDisplayName ?? message.senderUserId ?? ""),
-        (0, import_react35.createElement)("div", { className: "bt-wg-message-body" }, message.body ?? ""),
+        (0, import_react36.createElement)("div", { className: "bt-wg-message-who" }, message.senderDisplayName ?? message.senderUserId ?? ""),
+        (0, import_react36.createElement)("div", { className: "bt-wg-message-body" }, message.body ?? ""),
+        (message.attachments ?? []).map((entry) => (0, import_react36.createElement)("button", {
+          key: entry.artifactId,
+          type: "button",
+          className: "bt-soft bt-soft-sm",
+          "data-wg-artifact": entry.artifactId,
+          onClick: () => onDownload?.(entry)
+        }, entry.fileName ?? entry.artifactId)),
         // A failed delivery is shown, not hidden: a client that quietly drops mentions leaves the
         // employee believing a colleague was told.
-        message.failed ? (0, import_react35.createElement)("div", { className: "bt-wg-message-failed" }, t("Not delivered")) : null,
+        message.failed ? (0, import_react36.createElement)("div", { className: "bt-wg-message-failed" }, t("Not delivered")) : null,
         // Quoting is offered per message rather than as a composer mode, so the person points at what
         // they are answering. Only a message the Hub gave an id to can be linked, and the button is
         // therefore absent for the rest rather than present and ineffective.
-        onReply !== void 0 && message.id !== void 0 ? (0, import_react35.createElement)("button", {
+        onReply !== void 0 && message.id !== void 0 ? (0, import_react36.createElement)("button", {
           type: "button",
           className: "bt-wg-reply",
           "data-wg-reply": message.id,
@@ -13633,7 +14356,7 @@ function WorkgroupThread({ messages, selfUserId, empty, onReply }) {
   );
 }
 function WorkgroupMembers({ members, bots, onOpenBot }) {
-  const humans = (members ?? []).map((member) => (0, import_react35.createElement)(
+  const humans = (members ?? []).map((member) => (0, import_react36.createElement)(
     "div",
     {
       key: member.userId,
@@ -13643,44 +14366,318 @@ function WorkgroupMembers({ members, bots, onOpenBot }) {
       // connected colleague from an absent one without measuring a dot.
       "data-wg-presence": presenceOf(member)
     },
-    (0, import_react35.createElement)("span", { className: "bt-wg-member-dot", "aria-hidden": "true" }),
-    (0, import_react35.createElement)("span", { className: "bt-wg-member-name" }, memberSummary(member))
+    (0, import_react36.createElement)("span", { className: "bt-wg-member-dot", "aria-hidden": "true" }),
+    (0, import_react36.createElement)("span", { className: "bt-wg-member-name" }, memberSummary(member))
   ));
-  const machines = (bots ?? []).map((bot) => (0, import_react35.createElement)(
+  const machines = (bots ?? []).map((bot) => (0, import_react36.createElement)(
     "div",
     {
       key: `${bot.ownerUserId}:${bot.botId}`,
       className: "bt-wg-member bt-wg-member-bot",
       "data-wg-bot": bot.botId
     },
-    (0, import_react35.createElement)(
+    (0, import_react36.createElement)(
       "button",
       { type: "button", className: "bt-wg-member-name", onClick: () => onOpenBot?.(bot) },
       bot.displayName ?? bot.botId
     ),
     // The owner is shown because a Bot in a workgroup is a delegate, and "whose Bot is this" is the
     // question a reader asks first.
-    (0, import_react35.createElement)("span", { className: "bt-wg-member-owner" }, t("for {name}", { name: bot.ownerDisplayName ?? bot.ownerUserId }))
+    (0, import_react36.createElement)("span", { className: "bt-wg-member-owner" }, t("for {name}", { name: bot.ownerDisplayName ?? bot.ownerUserId }))
   ));
-  return (0, import_react35.createElement)("div", { className: "bt-wg-members", "data-wg-members": String((members ?? []).length) }, ...humans, ...machines);
+  return (0, import_react36.createElement)("div", { className: "bt-wg-members", "data-wg-members": String((members ?? []).length) }, ...humans, ...machines);
 }
-function WorkgroupTasks({ tasks, onDecision }) {
-  const pending = (tasks ?? []).filter((task) => task.state === "PENDING_APPROVAL");
-  if (pending.length === 0) return null;
-  return (0, import_react35.createElement)(
+function ApprovalForm({ task, members, selfUserId, actions, run, loadOwnerBots, onDecision, onCancel }) {
+  const [bots, setBots] = (0, import_react36.useState)([]);
+  const [botsNote, setBotsNote] = (0, import_react36.useState)(void 0);
+  const [mode, setMode] = (0, import_react36.useState)("");
+  const [botId, setBotId] = (0, import_react36.useState)("");
+  const [workDir, setWorkDir] = (0, import_react36.useState)("");
+  const [tools, setTools] = (0, import_react36.useState)("");
+  const [expirySeconds, setExpirySeconds] = (0, import_react36.useState)("");
+  const [recipients, setRecipients] = (0, import_react36.useState)([]);
+  const [note, setNote] = (0, import_react36.useState)(void 0);
+  (0, import_react36.useEffect)(() => {
+    let live = true;
+    if (typeof loadOwnerBots !== "function") {
+      setBotsNote(t("Your published Bots are unavailable, so this approval cannot name one."));
+      return () => {
+        live = false;
+      };
+    }
+    Promise.resolve(loadOwnerBots()).then((listed) => {
+      if (!live) return;
+      const own = (Array.isArray(listed) ? listed : []).filter((entry) => entry?.botId !== void 0 && (entry.ownerUserId === void 0 || entry.ownerUserId === selfUserId));
+      setBots(own);
+      if (task.targetBotId !== void 0 && own.some((entry) => entry.botId === task.targetBotId)) {
+        setMode("existing_bot");
+        setBotId(task.targetBotId);
+      }
+    }).catch((error) => {
+      if (live) setBotsNote(hostText(error?.message ?? String(error)));
+    });
+    return () => {
+      live = false;
+    };
+  }, [task.targetBotId, selfUserId, loadOwnerBots]);
+  const recipientOptions = (members ?? []).filter((member) => member.userId !== selfUserId);
+  const folderReady = typeof actions?.folders === "function";
+  const submit = () => {
+    setNote(void 0);
+    const refuse = (message) => {
+      setNote(message);
+      return false;
+    };
+    if (!Number.isInteger(task.version)) {
+      return refuse(t("This task has no version to decide against. Reload it."));
+    }
+    if (!ASSIGNMENT_MODES.includes(mode)) return refuse(t("Choose how this task should be assigned."));
+    if (mode === "existing_bot" && !bots.some((entry) => entry.botId === botId)) {
+      return refuse(t("Choose one of your published Bots."));
+    }
+    if (workDir === "") return refuse(t("Choose the folder this task may work in."));
+    const allowedTools = tools.split(",").map((text) => text.trim()).filter((text) => text !== "");
+    if (allowedTools.length === 0) return refuse(t("Name at least one tool this task may use."));
+    const seconds = Number(expirySeconds);
+    if (!Number.isInteger(seconds) || seconds <= 0) return refuse(t("Give the task a lifetime in whole seconds."));
+    if (recipients.length === 0) return refuse(t("Choose who may receive the result."));
+    let scope;
+    try {
+      scope = approvalScope({
+        mode,
+        botId,
+        workDir,
+        tools: allowedTools,
+        recipients,
+        expiresAt: new Date(Date.now() + seconds * 1e3).toISOString()
+      });
+    } catch (error) {
+      return refuse(hostText(error?.message ?? String(error)));
+    }
+    onDecision(task, "approve", {
+      expectedVersion: task.version,
+      mode,
+      ...scope.assignedBotId === void 0 ? {} : { botId: scope.assignedBotId },
+      workDir: scope.workDir,
+      tools: scope.tools,
+      recipients: scope.recipients,
+      expiresAt: scope.expiresAt
+    });
+    return true;
+  };
+  return (0, import_react36.createElement)(
+    "div",
+    { className: "bt-wg-approval", "data-wg-approval-form": task.id },
+    (0, import_react36.createElement)(
+      Row,
+      { label: t("Assignment mode") },
+      (0, import_react36.createElement)(
+        "select",
+        {
+          "data-wg-assignment-mode": task.id,
+          "aria-label": t("Assignment mode"),
+          value: mode,
+          onChange: (event) => setMode(event.target.value)
+        },
+        (0, import_react36.createElement)("option", { value: "" }, t("Choose…")),
+        ASSIGNMENT_MODES.map((choice) => (0, import_react36.createElement)("option", {
+          key: choice,
+          value: choice,
+          // An option that cannot be completed is offered disabled rather than hidden: the layout does
+          // not jump while the Bot list loads, and a person who wants "existing Bot" learns why it is
+          // not available yet instead of watching it appear.
+          disabled: choice === "existing_bot" && bots.length === 0
+        }, t(ASSIGNMENT_MODE_LABELS[choice])))
+      )
+    ),
+    mode === "existing_bot" ? (0, import_react36.createElement)(
+      Row,
+      { label: t("Bot") },
+      (0, import_react36.createElement)(
+        "select",
+        {
+          "data-wg-assigned-bot": task.id,
+          "aria-label": t("Bot"),
+          value: botId,
+          onChange: (event) => setBotId(event.target.value)
+        },
+        (0, import_react36.createElement)("option", { value: "" }, t("Choose…")),
+        bots.map((entry) => (0, import_react36.createElement)("option", { key: entry.botId, value: entry.botId }, entry.displayName ?? entry.botId))
+      )
+    ) : null,
+    botsNote === void 0 ? null : (0, import_react36.createElement)("div", { className: "bt-wg-approval-note" }, botsNote),
+    (0, import_react36.createElement)(
+      Row,
+      { label: t("Working folder") },
+      (0, import_react36.createElement)(
+        "div",
+        { "data-wg-workdir": task.id },
+        folderReady ? (0, import_react36.createElement)(FolderMenu, { value: workDir, actions, run, onPick: setWorkDir }) : (0, import_react36.createElement)("span", { className: "bt-wg-approval-note" }, t("Folder choices are unavailable on this machine."))
+      )
+    ),
+    (0, import_react36.createElement)(
+      Row,
+      { label: t("Allowed tools") },
+      (0, import_react36.createElement)("input", {
+        "data-wg-tools": task.id,
+        "aria-label": t("Allowed tools"),
+        placeholder: t("Allowed tools, for example read, summarize"),
+        value: tools,
+        onChange: (event) => setTools(event.target.value)
+      })
+    ),
+    (0, import_react36.createElement)(
+      Row,
+      { label: t("Lifetime (seconds)") },
+      (0, import_react36.createElement)("input", {
+        "data-wg-expiry": task.id,
+        "aria-label": t("Lifetime (seconds)"),
+        inputMode: "numeric",
+        placeholder: "3600",
+        value: expirySeconds,
+        onChange: (event) => setExpirySeconds(event.target.value)
+      })
+    ),
+    (0, import_react36.createElement)(
+      Row,
+      { label: t("Recipients") },
+      (0, import_react36.createElement)(
+        "div",
+        { className: "bt-wg-approval-recipients" },
+        recipientOptions.map((member) => (0, import_react36.createElement)(
+          "label",
+          { key: member.userId, className: "bt-wg-approval-recipient" },
+          (0, import_react36.createElement)("input", {
+            type: "checkbox",
+            "data-wg-recipient": member.userId,
+            checked: recipients.includes(member.userId),
+            onChange: (event) => setRecipients((list) => {
+              const next = list.filter((entry) => entry !== member.userId);
+              return event.target.checked ? [...next, member.userId] : next;
+            })
+          }),
+          (0, import_react36.createElement)("span", {}, memberSummary(member))
+        ))
+      )
+    ),
+    note === void 0 ? null : (0, import_react36.createElement)("div", { className: "bt-wg-approval-error bt-danger", role: "alert", "data-wg-approval-error": task.id }, note),
+    (0, import_react36.createElement)(
+      "div",
+      { className: "bt-wg-task-actions" },
+      (0, import_react36.createElement)("button", { type: "button", className: "bt-wg-approve", "data-wg-approval-submit": task.id, onClick: submit }, t("Approve")),
+      (0, import_react36.createElement)("button", { type: "button", className: "bt-wg-reject", "data-wg-approval-cancel": task.id, onClick: onCancel }, t("Cancel"))
+    )
+  );
+}
+function ReviewControls({ task, members, selfUserId, onReview }) {
+  const [recipients, setRecipients] = (0, import_react36.useState)([]);
+  const [note, setNote] = (0, import_react36.useState)(void 0);
+  const options = (members ?? []).filter((member) => member.userId !== selfUserId);
+  const review = (decision) => {
+    setNote(void 0);
+    if (!Number.isInteger(task.version)) {
+      setNote(t("This task has no version to decide against. Reload it."));
+      return;
+    }
+    if (decision === "share" && recipients.length === 0) {
+      setNote(t("Choose who may receive the result."));
+      return;
+    }
+    onReview?.(task, decision, {
+      expectedVersion: task.version,
+      ...decision === "share" ? { recipients } : {}
+    });
+  };
+  return (0, import_react36.createElement)(
+    "div",
+    { className: "bt-wg-review", "data-wg-review": task.id },
+    (0, import_react36.createElement)(
+      "div",
+      { className: "bt-wg-task-actions" },
+      (0, import_react36.createElement)("button", { type: "button", className: "bt-soft", "data-wg-review-keep": task.id, onClick: () => review("keep") }, t("Keep result")),
+      (0, import_react36.createElement)("button", { type: "button", className: "bt-soft", "data-wg-review-reject": task.id, onClick: () => review("reject") }, t("Reject result")),
+      (0, import_react36.createElement)("button", { type: "button", className: "bt-soft", "data-wg-review-share": task.id, onClick: () => review("share") }, t("Share result"))
+    ),
+    (0, import_react36.createElement)(
+      Row,
+      { label: t("Recipients") },
+      (0, import_react36.createElement)(
+        "div",
+        { className: "bt-wg-approval-recipients" },
+        options.map((member) => (0, import_react36.createElement)(
+          "label",
+          { key: member.userId, className: "bt-wg-approval-recipient" },
+          (0, import_react36.createElement)("input", {
+            type: "checkbox",
+            "data-wg-review-recipient": member.userId,
+            checked: recipients.includes(member.userId),
+            onChange: (event) => setRecipients((list) => {
+              const next = list.filter((entry) => entry !== member.userId);
+              return event.target.checked ? [...next, member.userId] : next;
+            })
+          }),
+          (0, import_react36.createElement)("span", {}, memberSummary(member))
+        ))
+      )
+    ),
+    note === void 0 ? null : (0, import_react36.createElement)("div", { className: "bt-wg-approval-error bt-danger", role: "alert", "data-wg-review-error": task.id }, note)
+  );
+}
+function WorkgroupTasks({ tasks, selfUserId, members, actions, run, loadOwnerBots, onDecision, onReview, onCancel }) {
+  const [openId, setOpenId] = (0, import_react36.useState)(void 0);
+  const all = tasks ?? [];
+  const pending = all.filter((task) => task.state === "PENDING_APPROVAL");
+  const rest = all.filter((task) => task.state !== "PENDING_APPROVAL");
+  const role = (members ?? []).find((member) => member.userId === selfUserId)?.role;
+  const mayCancel = (task) => task.requesterUserId === selfUserId || task.ownerUserId === selfUserId || role === "owner" || role === "admin";
+  const cancellable = (task) => !["CANCELLING", "CANCELLED", "COMPLETED", "SHARED", "REJECTED", "FAILED", "EXPIRED"].includes(task.state);
+  if (pending.length === 0 && rest.length === 0) return null;
+  return (0, import_react36.createElement)(
     "div",
     { className: "bt-wg-tasks", "data-wg-pending": String(pending.length) },
-    pending.map((task) => (0, import_react35.createElement)(
+    pending.map((task) => {
+      const mine = task.ownerUserId === selfUserId;
+      return (0, import_react36.createElement)(
+        Card,
+        { key: task.id, title: t("Approval needed") },
+        (0, import_react36.createElement)(Row, { label: t("Requested by") }, task.requesterDisplayName ?? task.requesterUserId),
+        (0, import_react36.createElement)(Row, { label: t("What") }, task.description),
+        task.targetBotId === void 0 ? null : (0, import_react36.createElement)(Row, { label: t("Requested Bot") }, task.targetBotId),
+        mine ? openId === task.id ? (0, import_react36.createElement)(ApprovalForm, {
+          task,
+          members,
+          selfUserId,
+          actions,
+          run,
+          loadOwnerBots,
+          onDecision,
+          onCancel: () => setOpenId(void 0)
+        }) : (0, import_react36.createElement)(
+          "div",
+          { className: "bt-wg-task-actions" },
+          (0, import_react36.createElement)("button", { type: "button", className: "bt-wg-approve", "data-wg-approve": task.id, onClick: () => setOpenId(task.id) }, t("Approve")),
+          (0, import_react36.createElement)("button", { type: "button", className: "bt-wg-reject", "data-wg-reject": task.id, onClick: () => onDecision?.(task, "reject") }, t("Reject"))
+        ) : null
+      );
+    }),
+    rest.map((task) => (0, import_react36.createElement)(
       Card,
-      { key: task.id, title: t("Approval needed") },
-      (0, import_react35.createElement)(Row, { label: t("Requested by"), value: task.requesterDisplayName ?? task.requesterUserId }),
-      (0, import_react35.createElement)(Row, { label: t("What"), value: task.description }),
-      (0, import_react35.createElement)(
+      { key: task.id, title: t(taskStateLabel(task.state)) },
+      (0, import_react36.createElement)(
+        "div",
+        { "data-wg-task": task.id, "data-wg-task-state": task.state },
+        (0, import_react36.createElement)(Row, { label: t("Requested by") }, task.requesterDisplayName ?? task.requesterUserId),
+        (0, import_react36.createElement)(Row, { label: t("What") }, task.description),
+        // The Hub publishes only a category code for a failure, so the room can say what kind of
+        // failure it was without the owner's message or tool output.
+        task.lastReason === void 0 ? null : (0, import_react36.createElement)(Row, { label: t("Last failure") }, (0, import_react36.createElement)("code", { "data-wg-task-reason": task.lastReason }, task.lastReason))
+      ),
+      task.ownerUserId === selfUserId && task.state === "REVIEW_REQUIRED" ? (0, import_react36.createElement)(ReviewControls, { task, members, selfUserId, onReview }) : null,
+      cancellable(task) && mayCancel(task) ? (0, import_react36.createElement)(
         "div",
         { className: "bt-wg-task-actions" },
-        (0, import_react35.createElement)("button", { type: "button", className: "bt-wg-approve", "data-wg-approve": task.id, onClick: () => onDecision?.(task.id, "approve") }, t("Approve")),
-        (0, import_react35.createElement)("button", { type: "button", className: "bt-wg-reject", "data-wg-reject": task.id, onClick: () => onDecision?.(task.id, "reject") }, t("Reject"))
-      )
+        (0, import_react36.createElement)("button", { type: "button", className: "bt-wg-reject", "data-wg-cancel": task.id, onClick: () => onCancel?.(task) }, t("Cancel task"))
+      ) : null
     ))
   );
 }
@@ -13700,6 +14697,13 @@ function WorkgroupView({
   run,
   onOpenBot,
   onDecision,
+  // The owner's judgement on a finished result: keep it, reject it, or share it with named
+  // recipients. Supplied by the pane; absent means a review surface with no action, which is the
+  // right default for a viewer who is not the owner.
+  onReview,
+  // Stop a task this viewer may cancel. The pane performs the Hub call; this view only decides where
+  // the control belongs.
+  onCancel,
   onSend,
   settingsOpen = false,
   onCloseSettings = () => {
@@ -13711,15 +14715,22 @@ function WorkgroupView({
   // Uploads one file and answers with the artifact it created. Supplied by the pane, which holds the
   // Hub client; absent means the attach control reports that attaching is unavailable rather than
   // silently doing nothing.
-  onAttach
+  onAttach,
+  onDownload,
+  onRoomAction,
+  // The owner's own published Bot directory, read when an approval form opens. Supplied by the
+  // pane, which holds the Hub adapter; absent means the form refuses rather than falling back to
+  // the room's mixed Bot list.
+  loadOwnerBots
 }) {
-  const [draft, setDraft] = (0, import_react35.useState)("");
-  const [sending, setSending] = (0, import_react35.useState)(false);
-  const [reply, setReply] = (0, import_react35.useState)(void 0);
-  const [picked, setPicked] = (0, import_react35.useState)([]);
-  const [mentionQuery, setMentionQuery] = (0, import_react35.useState)(void 0);
-  const [attachments, setAttachments] = (0, import_react35.useState)([]);
-  const [attachNote, setAttachNote] = (0, import_react35.useState)(void 0);
+  const [draft, setDraft] = (0, import_react36.useState)("");
+  const pendingSend = (0, import_react36.useRef)(void 0);
+  const [sending, setSending] = (0, import_react36.useState)(false);
+  const [reply, setReply] = (0, import_react36.useState)(void 0);
+  const [picked, setPicked] = (0, import_react36.useState)([]);
+  const [mentionQuery, setMentionQuery] = (0, import_react36.useState)(void 0);
+  const [attachments, setAttachments] = (0, import_react36.useState)([]);
+  const [attachNote, setAttachNote] = (0, import_react36.useState)(void 0);
   const mentioning = mentionQuery !== void 0;
   const trackMention = (value) => {
     const caret = value.length;
@@ -13761,49 +14772,59 @@ function WorkgroupView({
   const send = async () => {
     if (sending || draft.trim() === "") return;
     setSending(true);
-    const ok = await onSend?.(draft.trim(), reply, {
+    const extra = {
       mentions: composeMessage(draft, picked).mentions,
       attachments: attachments.map((entry) => ({ artifactId: entry.artifactId }))
-    });
-    setSending(false);
-    if (ok !== false) {
-      setDraft("");
-      setReply(void 0);
-      setPicked([]);
-      setAttachments([]);
-      setMentionQuery(void 0);
+    };
+    const key = JSON.stringify({ roomId: room2?.id, text: draft.trim(), reply: reply?.id, ...extra });
+    if (pendingSend.current?.key !== key) pendingSend.current = { key, id: globalThis.crypto.randomUUID() };
+    try {
+      const ok = await onSend?.(draft.trim(), reply, { ...extra, clientMessageId: pendingSend.current.id });
+      if (ok !== false) {
+        pendingSend.current = void 0;
+        setDraft("");
+        setReply(void 0);
+        setPicked([]);
+        setAttachments([]);
+        setMentionQuery(void 0);
+      }
+    } catch (error) {
+      setAttachNote(error?.message ?? String(error));
+    } finally {
+      setSending(false);
     }
   };
-  (0, import_react35.useEffect)(() => {
+  (0, import_react36.useEffect)(() => {
+    pendingSend.current = void 0;
     setDraft("");
     setReply(void 0);
     setPicked([]);
     setAttachments([]);
     setMentionQuery(void 0);
   }, [room2?.id]);
-  (0, import_react35.useEffect)(() => {
+  (0, import_react36.useEffect)(() => {
     if (reply === void 0) return;
     if (!(messages ?? []).some((message) => message.id === reply.id)) setReply(void 0);
   }, [messages, reply]);
   if (settingsOpen) {
     const rows = identityRows(identity);
-    return (0, import_react35.createElement)(
+    return (0, import_react36.createElement)(
       "div",
       { className: "bt-wg bt-wg-settings", "data-wg": room2?.id },
       // An invitation is sent by exact id and the Hub has no user search, so this is where a new
       // colleague finds out what to tell the person who will invite them. Shown only when the Hub
       // has answered for an identifier: a blank block would read as "you have no id".
-      rows.length === 0 ? null : (0, import_react35.createElement)(
+      rows.length === 0 ? null : (0, import_react36.createElement)(
         "div",
         { className: "bt-wg-identity", "data-wg-identity": "self" },
-        (0, import_react35.createElement)("div", { className: "bt-wg-identity-note" }, t("Tell this to the colleague who will invite you.")),
-        rows.map((row) => (0, import_react35.createElement)(
+        (0, import_react36.createElement)("div", { className: "bt-wg-identity-note" }, t("Tell this to the colleague who will invite you.")),
+        rows.map((row) => (0, import_react36.createElement)(
           "div",
           { key: row.key, className: "bt-wg-identity-row", "data-wg-identity-field": row.key },
-          (0, import_react35.createElement)("span", { className: "bt-wg-identity-label" }, t(row.label)),
-          (0, import_react35.createElement)("code", { className: "bt-wg-identity-value" }, row.value)
+          (0, import_react36.createElement)("span", { className: "bt-wg-identity-label" }, t(row.label)),
+          (0, import_react36.createElement)("code", { className: "bt-wg-identity-value" }, row.value)
         )),
-        (0, import_react35.createElement)("button", {
+        (0, import_react36.createElement)("button", {
           type: "button",
           className: "bt-wg-identity-copy",
           "data-wg-identity-copy": "self",
@@ -13812,58 +14833,48 @@ function WorkgroupView({
           }
         }, t("Copy my ID"))
       ),
-      (0, import_react35.createElement)(GroupSettingsForm, {
-        room: { ...room2, members: (members ?? []).map((member) => member.userId) },
-        roster: { byId: {}, bots: bots ?? [] },
-        // The form was written for local group chats, where "delete" is a local bookkeeping act. A
-        // workgroup is a Hub room the local store has never heard of, so the form's destructive action
-        // is redirected to the Hub's dissolve endpoint. Leaving and removing members are not redirected:
-        // only the owner ends the workgroup, and only dissolution ends it for everyone.
-        actions: {
-          ...actions,
-          deleteRoom: (roomId) => onDissolve?.(roomId)
-        },
-        run: async (value) => {
-          const done = await run?.(value);
-          onCloseSettings();
-          return done;
-        },
-        onDeleted: onCloseSettings
-      })
+      (0, import_react36.createElement)(WorkgroupSettings, { room: room2, members, selfUserId, onAction: onRoomAction, onDissolve, onClose: onCloseSettings })
     );
   }
   const unread = unreadCount(messages, watermark);
-  return (0, import_react35.createElement)(
+  return (0, import_react36.createElement)(
     "div",
     { className: "bt-wg", "data-wg": room2?.id, "data-wg-kind": room2?.kind ?? "" },
-    (0, import_react35.createElement)(
+    (0, import_react36.createElement)(
       "div",
       { className: "bt-wg-head", "data-wg-title": room2?.name ?? "" },
-      room2 ? (0, import_react35.createElement)(RoomAvatar, { room: room2, roster: { byId: {}, bots: bots ?? [] }, size: 24 }) : null,
-      (0, import_react35.createElement)("span", { className: "bt-wg-name" }, room2?.name ?? ""),
-      unread > 0 ? (0, import_react35.createElement)("span", { className: "bt-wg-unread", "data-wg-unread": String(unread) }, String(unread)) : null,
-      (0, import_react35.createElement)("button", { type: "button", className: "bt-wg-gear", "data-wg-settings": "open", onClick: () => run?.(null) }, t("Group settings"))
+      room2 ? (0, import_react36.createElement)(RoomAvatar, { room: { ...room2, members: (members ?? []).map((member) => member.userId) }, roster: { byId: {}, bots: bots ?? [] }, size: 24 }) : null,
+      (0, import_react36.createElement)("span", { className: "bt-wg-name" }, room2?.name ?? ""),
+      unread > 0 ? (0, import_react36.createElement)("span", { className: "bt-wg-unread", "data-wg-unread": String(unread) }, String(unread)) : null,
+      (0, import_react36.createElement)("button", { type: "button", className: "bt-wg-gear", "data-wg-settings": "open", onClick: () => run?.(null) }, t("Group settings"))
     ),
-    (0, import_react35.createElement)(WorkgroupThread, {
+    (0, import_react36.createElement)(WorkgroupThread, {
       messages,
       selfUserId,
       empty: empty ?? t("No messages yet"),
-      onReply: (message) => setReply(replyPreview(message))
+      onReply: (message) => setReply(replyPreview(message)),
+      onDownload: async (entry) => {
+        try {
+          await onDownload?.(entry);
+        } catch (error) {
+          setAttachNote(error?.message ?? String(error));
+        }
+      }
     }),
-    (0, import_react35.createElement)(WorkgroupTasks, { tasks, onDecision }),
-    (0, import_react35.createElement)(WorkgroupMembers, { members, bots, onOpenBot }),
+    (0, import_react36.createElement)(WorkgroupTasks, { tasks, selfUserId, members, actions, run, loadOwnerBots, onDecision, onReview, onCancel }),
+    (0, import_react36.createElement)(WorkgroupMembers, { members, bots, onOpenBot }),
     // What is being answered stays visible while typing, and can be dropped: a reply the sender
     // forgot they had selected would attach to the wrong message.
-    reply === void 0 ? null : (0, import_react35.createElement)(
+    reply === void 0 ? null : (0, import_react36.createElement)(
       "div",
       { className: "bt-wg-replying", "data-wg-replying": reply.id },
-      (0, import_react35.createElement)(
+      (0, import_react36.createElement)(
         "div",
         { className: "bt-wg-replying-text" },
-        (0, import_react35.createElement)("div", { className: "bt-wg-replying-who" }, t("Replying to {name}", { name: reply.who })),
-        (0, import_react35.createElement)("div", { className: "bt-wg-replying-body" }, reply.body)
+        (0, import_react36.createElement)("div", { className: "bt-wg-replying-who" }, t("Replying to {name}", { name: reply.who })),
+        (0, import_react36.createElement)("div", { className: "bt-wg-replying-body" }, reply.body)
       ),
-      (0, import_react35.createElement)("button", {
+      (0, import_react36.createElement)("button", {
         type: "button",
         className: "bt-wg-replying-drop",
         "data-wg-reply-drop": "clear",
@@ -13873,14 +14884,14 @@ function WorkgroupView({
     ),
     // What is about to be sent, shown above the composer: the file the sender attached, and any reason
     // the attach failed. Without this the attach control would look like it did nothing.
-    attachments.length > 0 || attachNote !== void 0 ? (0, import_react35.createElement)(
+    attachments.length > 0 || attachNote !== void 0 ? (0, import_react36.createElement)(
       "div",
       { className: "bt-wg-pending", "data-wg-pending": "attachments" },
-      attachments.map((entry) => (0, import_react35.createElement)(
+      attachments.map((entry) => (0, import_react36.createElement)(
         "span",
         { className: "bt-wg-pending-item", key: entry.artifactId },
-        (0, import_react35.createElement)("span", { className: "bt-wg-pending-name" }, entry.fileName),
-        (0, import_react35.createElement)("button", {
+        (0, import_react36.createElement)("span", { className: "bt-wg-pending-name" }, entry.fileName),
+        (0, import_react36.createElement)("button", {
           type: "button",
           className: "bt-wg-pending-drop",
           "data-wg-pending-drop": entry.artifactId,
@@ -13888,17 +14899,17 @@ function WorkgroupView({
           onClick: () => setAttachments((list) => list.filter((item) => item.artifactId !== entry.artifactId))
         }, t("Remove"))
       )),
-      attachNote === void 0 ? null : (0, import_react35.createElement)("span", { className: "bt-wg-pending-error bt-danger", "data-wg-attach-error": "true" }, attachNote)
+      attachNote === void 0 ? null : (0, import_react36.createElement)("span", { className: "bt-wg-pending-error bt-danger", "data-wg-attach-error": "true" }, attachNote)
     ) : null,
-    (0, import_react35.createElement)(
+    (0, import_react36.createElement)(
       "div",
       { className: "bt-wg-compose" },
       // The mention picker opens on the trigger and narrows as the sender keeps typing, the way the
       // team's own @ menu does. The names shown are for reading; what the message sends is ids.
-      mentioning ? (0, import_react35.createElement)(
+      mentioning ? (0, import_react36.createElement)(
         "div",
         { className: "bt-wg-mentions", "data-wg-mentions": "open", role: "listbox", "aria-label": t("Mention someone") },
-        filterCandidates(mentionCandidates({ members, bots }), mentionQuery).slice(0, 8).map((candidate) => (0, import_react35.createElement)(
+        filterCandidates(mentionCandidates({ members, bots }), mentionQuery).slice(0, 8).map((candidate) => (0, import_react36.createElement)(
           "button",
           {
             type: "button",
@@ -13909,12 +14920,12 @@ function WorkgroupView({
             "aria-selected": "false",
             onClick: () => pickMention(candidate)
           },
-          (0, import_react35.createElement)("span", { className: "bt-wg-mention-name" }, candidate.label),
-          candidate.kind === "bot" ? (0, import_react35.createElement)("span", { className: "bt-wg-mention-kind" }, t("Bot of {owner}", { owner: candidate.detail ?? "" })) : null
+          (0, import_react36.createElement)("span", { className: "bt-wg-mention-name" }, candidate.label),
+          candidate.kind === "bot" ? (0, import_react36.createElement)("span", { className: "bt-wg-mention-kind" }, t("Bot of {owner}", { owner: candidate.detail ?? "" })) : null
         )),
-        filterCandidates(mentionCandidates({ members, bots }), mentionQuery).length === 0 ? (0, import_react35.createElement)("div", { className: "bt-wg-mention-empty" }, t("Nobody in this workgroup matches.")) : null
+        filterCandidates(mentionCandidates({ members, bots }), mentionQuery).length === 0 ? (0, import_react36.createElement)("div", { className: "bt-wg-mention-empty" }, t("Nobody in this workgroup matches.")) : null
       ) : null,
-      (0, import_react35.createElement)("textarea", {
+      (0, import_react36.createElement)("textarea", {
         className: "bt-wg-input",
         "data-wg-input": "message",
         "aria-label": t("Message"),
@@ -13933,10 +14944,10 @@ function WorkgroupView({
       // A file is chosen, read, and uploaded by the host, which is where the bytes and the Hub client
       // both live. The picker is a file input rather than a path field so the employee never has to type
       // a path, and so the browser's own file access rules decide what can be read.
-      (0, import_react35.createElement)(
+      (0, import_react36.createElement)(
         "label",
         { className: "bt-wg-attach", "data-wg-attach": "choose", title: t("Attach a file") },
-        (0, import_react35.createElement)("input", {
+        (0, import_react36.createElement)("input", {
           type: "file",
           className: "bt-wg-attach-input",
           "aria-label": t("Attach a file"),
@@ -13947,7 +14958,7 @@ function WorkgroupView({
         }),
         t("Attach")
       ),
-      (0, import_react35.createElement)("button", {
+      (0, import_react36.createElement)("button", {
         type: "button",
         className: "bt-wg-send",
         "data-wg-send": "submit",
@@ -14001,25 +15012,31 @@ function hubStatusOf(view) {
 }
 
 // src/client/workgroup-pane.js
-var import_react36 = require("react");
+var import_react37 = require("react");
 var POLL_MS3 = 4e3;
-function WorkgroupPane({ useSessions, useWorkgroups, useHub, actions }) {
+function WorkgroupPane({ useSessions, useWorkgroups, useHub, useWorkgroupRoom, actions }) {
   const sessionId = useSessions(mainWorkgroupSession);
+  const workgroups = useWorkgroups((value) => value);
+  const hub = useHub((value) => value);
+  const roomSnapshot = useWorkgroupRoom?.(roomIdOfSession(sessionId) ?? "");
   if (sessionId === void 0) return null;
-  return (0, import_react36.createElement)(WorkgroupSurface, {
+  return (0, import_react37.createElement)(WorkgroupSurface, {
+    key: sessionId,
     sessionId,
-    workgroups: useWorkgroups((value) => value),
-    hub: useHub?.((value) => value),
+    workgroups,
+    hub,
+    roomSnapshot,
     actions
   });
 }
-function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
+function WorkgroupSurface({ sessionId, workgroups, hub, actions, roomSnapshot }) {
   const roomId = roomIdOfSession(sessionId);
   const paneLeft = usePaneLeft();
-  const [state, setState] = (0, import_react36.useState)({ phase: "loading" });
-  const [settingsOpen, setSettingsOpen] = (0, import_react36.useState)(false);
-  const view = (0, import_react36.useRef)(null);
-  (0, import_react36.useEffect)(() => {
+  const [loaded, setState] = (0, import_react37.useState)({ phase: "loading" });
+  const state = roomSnapshot === void 0 ? loaded : { ...loaded, ...roomSnapshot };
+  const [settingsOpen, setSettingsOpen] = (0, import_react37.useState)(false);
+  const view = (0, import_react37.useRef)(null);
+  (0, import_react37.useEffect)(() => {
     setSettingsOpen(false);
     setState({ phase: "loading" });
     if (workgroups === void 0 || roomId === void 0) return () => {
@@ -14027,6 +15044,7 @@ function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
     let stopped = false;
     let timer;
     const load = async () => {
+      clearTimeout(timer);
       try {
         const answer = await workgroups.openRoom(roomId);
         if (stopped) return;
@@ -14052,10 +15070,50 @@ function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
           return false;
         }
       }
+      const requestedDecision = value?.decide;
+      if (requestedDecision !== void 0) {
+        try {
+          await workgroups.answerTask(requestedDecision.task.id, requestedDecision.decision, {
+            ...requestedDecision.task.version === void 0 ? {} : { expectedVersion: requestedDecision.task.version },
+            ...requestedDecision.scope ?? {}
+          });
+          await load();
+          return true;
+        } catch (error) {
+          setState((previous) => ({ ...previous, message: error?.message ?? String(error) }));
+          return false;
+        }
+      }
+      const requestedReview = value?.review;
+      if (requestedReview !== void 0) {
+        try {
+          await workgroups.reviewTask(requestedReview.task.id, requestedReview.decision, {
+            ...requestedReview.task.version === void 0 ? {} : { expectedVersion: requestedReview.task.version },
+            ...requestedReview.payload ?? {}
+          });
+          await load();
+          return true;
+        } catch (error) {
+          setState((previous) => ({ ...previous, message: error?.message ?? String(error) }));
+          return false;
+        }
+      }
+      const requestedCancel = value?.cancel;
+      if (requestedCancel !== void 0) {
+        try {
+          await workgroups.cancelTask(requestedCancel.id);
+          await load();
+          return true;
+        } catch (error) {
+          setState((previous) => ({ ...previous, message: error?.message ?? String(error) }));
+          return false;
+        }
+      }
       const message = value?.send;
       if (message === void 0) return true;
       try {
         await workgroups.sendMessage(roomId, message, {
+          ...value.clientMessageId === void 0 ? {} : { clientMessageId: value.clientMessageId },
           ...value.replyToMessageId === void 0 ? {} : { replyToMessageId: value.replyToMessageId },
           ...Array.isArray(value.mentions) && value.mentions.length > 0 ? { mentions: value.mentions } : {},
           ...Array.isArray(value.attachments) && value.attachments.length > 0 ? { attachments: value.attachments } : {}
@@ -14079,12 +15137,60 @@ function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
     const uploaded = await workgroups.uploadArtifact(roomId, { ...file, recipients: [] });
     return { artifactId: uploaded.artifact.id, fileName: uploaded.artifact.fileName };
   };
-  const onDecision = (taskId, decision) => {
-    void workgroups?.answerTask?.(taskId, decision).then(() => run(null));
+  const onRoomAction = async (operation, payload) => {
+    let result;
+    switch (operation) {
+      case "renameRoom":
+        result = await workgroups.renameRoom(roomId, payload);
+        break;
+      case "invite":
+        result = await workgroups.invite(roomId, payload);
+        break;
+      case "setRole":
+        result = await workgroups.setRole(roomId, payload.userId, payload.role);
+        break;
+      case "removeMember":
+        result = await workgroups.removeMember(roomId, payload.userId);
+        break;
+      case "revokeInvitation":
+        result = await workgroups.revokeInvitation(payload.invitationId);
+        break;
+      case "leaveRoom":
+        result = await workgroups.leaveRoom(roomId);
+        break;
+      default:
+        throw new Error(t("Unknown workgroup action"));
+    }
+    if (operation !== "leaveRoom") {
+      const answer = await workgroups.openRoom(roomId);
+      setState({ phase: "ready", ...answer });
+    }
+    return result;
   };
+  const onDownload = async (entry) => {
+    const file = await workgroups.downloadArtifact(entry.artifactId);
+    const url = URL.createObjectURL(new Blob([new Uint8Array(file.bytes)], { type: file.contentType }));
+    try {
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = entry.fileName ?? entry.artifactId;
+      link.click();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  };
+  const onDecision = (task, decision, scope) => view.current?.({
+    decide: { task, decision, ...scope === void 0 ? {} : { scope } }
+  });
+  const onReview = (task, decision, payload) => view.current?.({ review: { task, decision, payload } });
+  const onCancel = (task) => view.current?.({ cancel: task });
+  const loadOwnerBots = (0, import_react37.useMemo)(
+    () => typeof workgroups?.directory === "function" ? () => workgroups.directory({ ownerUserId: workgroups.identity?.userId }) : void 0,
+    [workgroups]
+  );
   const status = hubStatusOf(hub);
   const copy2 = hubStatusCopy(status);
-  return (0, import_react36.createElement)(
+  return (0, import_react37.createElement)(
     "div",
     {
       className: "bt-pane bt-wg-pane",
@@ -14095,12 +15201,13 @@ function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
       // conversation area; a screenshot check and a reader both need to know what is on screen.
       "data-conversation-region": "workgroup"
     },
-    copy2 !== void 0 ? (0, import_react36.createElement)(
+    state.message === void 0 ? null : (0, import_react37.createElement)("div", { role: "alert", className: "bt-danger" }, state.message),
+    copy2 !== void 0 ? (0, import_react37.createElement)(
       "div",
       { className: "bt-wg bt-wg-offline", "data-wg-hub-state": status },
-      (0, import_react36.createElement)("div", { className: "bt-wg-head" }, (0, import_react36.createElement)("span", { className: "bt-wg-name" }, t(copy2.title))),
-      (0, import_react36.createElement)("div", { className: "bt-wg-empty" }, t(copy2.body))
-    ) : (0, import_react36.createElement)(WorkgroupView, {
+      (0, import_react37.createElement)("div", { className: "bt-wg-head" }, (0, import_react37.createElement)("span", { className: "bt-wg-name" }, t(copy2.title))),
+      (0, import_react37.createElement)("div", { className: "bt-wg-empty" }, t(copy2.body))
+    ) : (0, import_react37.createElement)(WorkgroupView, {
       room: state.room,
       members: state.members,
       bots: state.bots,
@@ -14110,9 +15217,14 @@ function WorkgroupSurface({ sessionId, workgroups, hub, actions }) {
       identity: workgroups.identity,
       actions,
       run,
+      loadOwnerBots,
       onSend,
       onAttach,
+      onDownload,
+      onRoomAction,
       onDecision,
+      onReview,
+      onCancel,
       settingsOpen,
       onCloseSettings: () => setSettingsOpen(false),
       // The owner's dissolve reaches the Hub through the same control the rest of this pane uses, so it
@@ -14175,6 +15287,40 @@ function createHubBridge({ pollMs = 4e3, callImpl = call } = {}) {
 }
 function createWorkgroupHub({ bridge }) {
   const invoke = (endpoint, payload) => bridge.send(endpoint, payload);
+  const pending = /* @__PURE__ */ new Map();
+  const roomSources = /* @__PURE__ */ new Map();
+  const roomSource = (roomId) => {
+    let source = roomSources.get(roomId);
+    if (source === void 0) {
+      source = createSource(void 0);
+      roomSources.set(roomId, source);
+    }
+    return source;
+  };
+  const openRoom = (roomId) => {
+    const active = pending.get(roomId);
+    if (active !== void 0) return active.promise;
+    const loading = { events: [] };
+    pending.set(roomId, loading);
+    loading.promise = invoke("hub-open-room", { roomId }).then((state) => {
+      const next = loading.events.reduce(reduceWorkgroup, state);
+      roomSource(roomId).set(next);
+      return next;
+    }).finally(() => {
+      pending.delete(roomId);
+    });
+    return loading.promise;
+  };
+  const applyEvent = (event) => {
+    const roomId = event?.roomId;
+    if (typeof roomId !== "string") return;
+    pending.get(roomId)?.events.push(event);
+    const source = roomSources.get(roomId);
+    const current = source?.getSnapshot();
+    if (current === void 0) return;
+    const next = reduceWorkgroup(current, event);
+    if (next !== current) source.set(next);
+  };
   return {
     get configured() {
       return bridge.view.getSnapshot().configured === true;
@@ -14204,10 +15350,14 @@ function createWorkgroupHub({ bridge }) {
     resume: () => invoke("hub-resume", {}),
     rooms: () => invoke("hub-rooms", {}).then((result) => result?.rooms ?? result),
     createRoom: (name, options = {}) => invoke("hub-create-room", { name, ...options }),
-    openRoom: (roomId) => invoke("hub-open-room", { roomId }),
+    openRoom,
+    roomState: roomSource,
+    applyEvent,
     watch: (roomId) => invoke("hub-open-room", { roomId }),
     dissolve: (roomId) => invoke("hub-dissolve", { roomId }),
-    uploadArtifact: (roomId, payload) => invoke("hub-upload-artifact", { roomId, ...payload }),
+    renameRoom: (roomId, patch) => invoke("hub-rename-room", { roomId, name: patch.name }),
+    downloadArtifact: (artifactId) => invoke("hub-download-artifact", { artifactId }),
+    uploadArtifact: (roomId, payload) => invoke("hub-upload-artifact", { roomId, ...payload, bytes: Array.from(payload.bytes) }),
     invite: (roomId, options) => invoke("hub-invite", { roomId, ...options }),
     invitations: () => invoke("hub-invitations", {}),
     respondToInvitation: (invitationId, decision) => invoke("hub-respond-invitation", { invitationId, decision }),
@@ -14221,7 +15371,13 @@ function createWorkgroupHub({ bridge }) {
     head: (roomId) => invoke("hub-head", { roomId }),
     directory: (options) => invoke("hub-directory", options ?? {}),
     tasks: (roomId) => invoke("hub-tasks", { roomId }),
-    answerTask: (taskId, decision) => invoke("hub-approve-task", { taskId, decision }),
+    answerTask: (taskId, decision, options = {}) => invoke("hub-approve-task", { taskId, decision, ...options }),
+    // Keep, share, or reject a finished result. Sharing names recipients; the other two publish
+    // nothing, which is why they need no recipient list.
+    reviewTask: (taskId, decision, options = {}) => invoke("hub-review-task", { taskId, decision, ...options }),
+    // Stop a task this user may cancel (the requester, the owner, or a room admin). The Hub decides
+    // who that is; the pane only offers the control to those it can already identify.
+    cancelTask: (taskId) => invoke("hub-cancel-task", { taskId }),
     memory: (roomId) => invoke("hub-memory", { roomId }),
     me: () => invoke("hub-me", {}),
     devices: () => invoke("hub-devices", {})
@@ -14282,7 +15438,7 @@ function writeMode(mode, storage = globalThis.localStorage) {
 }
 
 // src/client/user-message.js
-var import_react37 = require("react");
+var import_react38 = require("react");
 var ui = __toESM(require("@deepseek-ai/dsh-client-ui-primitives"), 1);
 var canDrawUserMessages = () => typeof ui.projectUserText === "function";
 function contentParts(content) {
@@ -14314,38 +15470,38 @@ function userTextParts(text, bots, referenceLabels = []) {
   return parts;
 }
 function UserText({ text, bots, referenceLabels, skillNames, references, actions }) {
-  return userTextParts(text, bots, referenceLabels).map((part, index) => part.bot ? (0, import_react37.createElement)(
+  return userTextParts(text, bots, referenceLabels).map((part, index) => part.bot ? (0, import_react38.createElement)(
     "button",
     { key: index, type: "button", className: "bt-umention", title: `@${part.bot.name}`, onClick: () => actions.openSession(part.bot.id) },
-    (0, import_react37.createElement)(BotMark, { bot: part.bot, size: 16 }),
+    (0, import_react38.createElement)(BotMark, { bot: part.bot, size: 16 }),
     part.label
-  ) : (0, import_react37.createElement)(import_react37.Fragment, { key: index }, ui.projectUserText(part.text, referenceLabels, skillNames, "skill", references)));
+  ) : (0, import_react38.createElement)(import_react38.Fragment, { key: index }, ui.projectUserText(part.text, referenceLabels, skillNames, "skill", references)));
 }
 function Attachments({ attachments, renderMessageImages }) {
   const compact2 = attachments.length > 1;
-  return (0, import_react37.createElement)("div", { className: "bt-uattach" }, attachments.map((block, index) => {
+  return (0, import_react38.createElement)("div", { className: "bt-uattach" }, attachments.map((block, index) => {
     if (block.type === "image") {
-      return renderMessageImages ? (0, import_react37.createElement)(import_react37.Fragment, { key: index }, renderMessageImages({ images: [{ attachment: block.attachment }], align: "end", compact: compact2 })) : null;
+      return renderMessageImages ? (0, import_react38.createElement)(import_react38.Fragment, { key: index }, renderMessageImages({ images: [{ attachment: block.attachment }], align: "end", compact: compact2 })) : null;
     }
     const file = block.attachment;
     const meta = [ui.fileExtension?.(file.name)?.toUpperCase().slice(0, 8), ui.fileSizeText?.(file.bytes)].filter(Boolean).join(" · ");
-    return (0, import_react37.createElement)(
+    return (0, import_react38.createElement)(
       "span",
       { key: index, className: "bt-ufile", title: file.name },
-      ui.FileTypeIcon ? (0, import_react37.createElement)(ui.FileTypeIcon, { path: file.name, className: "bt-ufile-icon" }) : null,
-      (0, import_react37.createElement)("span", { className: "bt-ufile-text" }, (0, import_react37.createElement)("span", { className: "bt-ufile-name" }, file.name), meta ? (0, import_react37.createElement)("span", { className: "bt-ufile-meta" }, meta) : null)
+      ui.FileTypeIcon ? (0, import_react38.createElement)(ui.FileTypeIcon, { path: file.name, className: "bt-ufile-icon" }) : null,
+      (0, import_react38.createElement)("span", { className: "bt-ufile-text" }, (0, import_react38.createElement)("span", { className: "bt-ufile-name" }, file.name), meta ? (0, import_react38.createElement)("span", { className: "bt-ufile-meta" }, meta) : null)
     );
   }));
 }
 function CopyButton({ text }) {
-  const [copied, setCopied] = (0, import_react37.useState)(false);
+  const [copied, setCopied] = (0, import_react38.useState)(false);
   const copy2 = () => {
     void navigator.clipboard?.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1e3);
     });
   };
-  return (0, import_react37.createElement)("button", { type: "button", className: "bt-tool", "aria-label": copied ? t("Copied") : t("Copy"), title: copied ? t("Copied") : t("Copy"), onClick: copy2 }, copied ? (0, import_react37.createElement)(CheckIcon) : (0, import_react37.createElement)(CopyIcon));
+  return (0, import_react38.createElement)("button", { type: "button", className: "bt-tool", "aria-label": copied ? t("Copied") : t("Copy"), title: copied ? t("Copied") : t("Copy"), onClick: copy2 }, copied ? (0, import_react38.createElement)(CheckIcon) : (0, import_react38.createElement)(CopyIcon));
 }
 var clock3 = (time) => typeof time === "number" ? new Date(time).toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" }) : void 0;
 function UserMessageCell({ node, sessionId, useRoster, actions, renderMessageImages, openFile, openSkill }) {
@@ -14355,22 +15511,22 @@ function UserMessageCell({ node, sessionId, useRoster, actions, renderMessageIma
   const referenceLabels = data.referenceLabels ?? [];
   const references = openFile && openSkill ? { openFile, openSkill } : void 0;
   const steering = node.kind === "steering";
-  return (0, import_react37.createElement)(
+  return (0, import_react38.createElement)(
     "div",
     { className: "bt-umsg", "data-steering": steering || void 0 },
-    (0, import_react37.createElement)(
+    (0, import_react38.createElement)(
       "div",
       { className: "bt-ustack" },
-      attachments.length > 0 ? (0, import_react37.createElement)(Attachments, { attachments, renderMessageImages }) : null,
-      text !== "" || rest.length > 0 ? (0, import_react37.createElement)(
+      attachments.length > 0 ? (0, import_react38.createElement)(Attachments, { attachments, renderMessageImages }) : null,
+      text !== "" || rest.length > 0 ? (0, import_react38.createElement)(
         "div",
         { className: "bt-ubody", title: clock3(data.time) },
-        (0, import_react37.createElement)(UserText, { text, bots: mentionableBots(roster, sessionId), referenceLabels, skillNames: data.skillNames ?? [], references, actions }),
-        rest.map((block, index) => ui.JsonBlock ? (0, import_react37.createElement)(ui.JsonBlock, { key: index, label: t("Content"), payload: block }) : null)
+        (0, import_react38.createElement)(UserText, { text, bots: mentionableBots(roster, sessionId), referenceLabels, skillNames: data.skillNames ?? [], references, actions }),
+        rest.map((block, index) => ui.JsonBlock ? (0, import_react38.createElement)(ui.JsonBlock, { key: index, label: t("Content"), payload: block }) : null)
       ) : null,
-      referenceLabels.length > 0 ? (0, import_react37.createElement)("div", { className: "bt-urefs" }, t("Referenced {labels}", { labels: referenceLabels.join(t(", ")) })) : null
+      referenceLabels.length > 0 ? (0, import_react38.createElement)("div", { className: "bt-urefs" }, t("Referenced {labels}", { labels: referenceLabels.join(t(", ")) })) : null
     ),
-    text === "" ? null : (0, import_react37.createElement)("div", { className: "bt-utools" }, (0, import_react37.createElement)(CopyButton, { text }))
+    text === "" ? null : (0, import_react38.createElement)("div", { className: "bt-utools" }, (0, import_react38.createElement)(CopyButton, { text }))
   );
 }
 var USER_MESSAGE_CSS = `
@@ -14428,6 +15584,13 @@ var WORKGROUP_CSS = `
 .bt-wg-member-offline .bt-wg-member-dot{background:var(--bt-line-2)}
 .bt-wg-member-owner{color:var(--bt-ink-3)}
 .bt-wg-tasks{flex:none;display:flex;flex-direction:column;gap:8px;padding:0 16px}
+/* The approval form and the review controls are the owner's private surface. They reuse the same
+   task strip, so the card does not jump between "approve" and "review"; only the fields change. */
+.bt-wg-approval,.bt-wg-review{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.bt-wg-approval-note{font-size:12px;color:var(--bt-ink-3);line-height:16px}
+.bt-wg-approval-error{font-size:12px}
+.bt-wg-approval-recipients{display:flex;flex-wrap:wrap;gap:6px 12px}
+.bt-wg-approval-recipient{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--bt-ink-2)}
 .bt-wg-task-actions{display:flex;gap:8px;margin-top:6px}
 .bt-wg-approve,.bt-wg-reject{height:28px;border-radius:999px;border:0;font-size:12px;padding:0 12px;cursor:pointer}
 .bt-wg-approve{background:var(--bt-accent);color:var(--bt-accent-ink,#fff)}
@@ -14506,10 +15669,10 @@ function noticeApprovals({ work, roster, shownSession, openSession, since: since
 }
 
 // src/client/bot-panel.js
-var import_react38 = require("react");
+var import_react39 = require("react");
 function BotPanelIcon(props) {
   const size = props?.size ?? 18;
-  return (0, import_react38.createElement)(
+  return (0, import_react39.createElement)(
     "svg",
     {
       width: size,
@@ -14522,9 +15685,9 @@ function BotPanelIcon(props) {
       strokeLinejoin: "round",
       "aria-hidden": true
     },
-    (0, import_react38.createElement)("path", { d: "M3 14c0-4.4 3.6-8 8-8h3.5a2.5 2.5 0 0 1 0 5H9" }),
-    (0, import_react38.createElement)("path", { d: "M3 14c1.8 3.6 5.2 6 9 6 4.4 0 8-3.6 8-8" }),
-    (0, import_react38.createElement)("circle", { cx: 10.5, cy: 10, r: 0.9, fill: "currentColor", stroke: "none" })
+    (0, import_react39.createElement)("path", { d: "M3 14c0-4.4 3.6-8 8-8h3.5a2.5 2.5 0 0 1 0 5H9" }),
+    (0, import_react39.createElement)("path", { d: "M3 14c1.8 3.6 5.2 6 9 6 4.4 0 8-3.6 8-8" }),
+    (0, import_react39.createElement)("circle", { cx: 10.5, cy: 10, r: 0.9, fill: "currentColor", stroke: "none" })
   );
 }
 
@@ -15261,10 +16424,10 @@ function apply(ctx) {
   const browserTabs = browsers?.tabs ?? createSource({});
   let panelRegistered = false;
   const face = () => ({ actions, hooks: { roster, ui: ui2, activity, work, memoryNews, registry, turnClock, live, cards, browserPages, browserTabs, surface, update } });
-  const workgroupsNow = () => workgroupHub.available ? {
+  const workgroupActions = {
     create: async () => {
       const created = await workgroupHub.createRoom(newWorkgroupName(), { kind: "workgroup" });
-      await enterWorkgroup({
+      return enterWorkgroup({
         roomId: created.id,
         sessions: ctx.sessions,
         openSession: actions.openSession,
@@ -15272,8 +16435,24 @@ function apply(ctx) {
         watch: (roomId) => workgroupHub.watch(roomId),
         report: (error) => actions.reportError(error, "workgroup")
       });
-    }
-  } : void 0;
+    },
+    openRoom: (roomId) => workgroupHub.openRoom(roomId),
+    dissolve: (roomId) => workgroupHub.dissolve(roomId),
+    sendMessage: (roomId, text, options) => workgroupHub.sendMessage(roomId, text, options),
+    uploadArtifact: (roomId, payload) => workgroupHub.uploadArtifact(roomId, payload),
+    answerTask: (taskId, decision, options) => workgroupHub.answerTask(taskId, decision, options),
+    get identity() {
+      return workgroupHub.identity;
+    },
+    renameRoom: (roomId, patch) => workgroupHub.renameRoom(roomId, patch),
+    invite: (roomId, payload) => workgroupHub.invite(roomId, payload),
+    revokeInvitation: (invitationId) => workgroupHub.revokeInvitation(invitationId),
+    setRole: (roomId, userId, role) => workgroupHub.setRole(roomId, userId, role),
+    removeMember: (roomId, userId) => workgroupHub.removeMember(roomId, userId),
+    leaveRoom: (roomId) => workgroupHub.leaveRoom(roomId),
+    downloadArtifact: (artifactId) => workgroupHub.downloadArtifact(artifactId)
+  };
+  const workgroupsNow = () => workgroupHub.available ? workgroupActions : void 0;
   const workgroups = createSource(workgroupsNow());
   ctx.effect(() => hubBridge.view.subscribe(() => {
     workgroups.set(workgroupsNow());
@@ -15282,7 +16461,7 @@ function apply(ctx) {
   ctx.effect(() => hubBridge.view.subscribe(() => {
     hub.set(hubBridge.view.getSnapshot());
   }), "ds-bot: hub status");
-  const overlayFace = () => ({ ...face(), sessions: ctx.sessions, workgroupHub, hooks: { ...face().hooks, workgroups, hub } });
+  const overlayFace = () => ({ ...face(), sessions: ctx.sessions, workgroupHub, hooks: { ...face().hooks, workgroups, hub }, keyedHooks: { workgroupRoom: (roomId) => workgroupHub.roomState(roomId) } });
   const registerBotPanel = () => {
     panelRegistered = true;
     ctx.slots.inject("sidebar.panellist", () => ctx.slots.register({
@@ -15343,6 +16522,14 @@ function apply(ctx) {
     if (controller === void 0 || span === void 0) return;
     controller.toggleSource(CHATS_SOURCE, { trigger: "@", query: "", quoted: false, position: "inline", span });
   };
+  const remote = ctx.get("remote");
+  ctx.effect(() => {
+    if (remote?.$on === void 0) return () => {
+    };
+    return remote.$on("workgroup/event", (event) => {
+      workgroupHub.applyEvent?.(event);
+    });
+  }, "ds-bot: workgroup events");
   const installShell = () => [
     installCompiledStyles(SHELL_CSS, "shell"),
     installCompiledStyles(SIDEBAR_CSS, "sidebar"),

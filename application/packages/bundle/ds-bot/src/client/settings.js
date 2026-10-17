@@ -125,13 +125,16 @@ function BotsPage({ roster, actions, run }) {
   ]
 }
 
-function GroupsPage({ roster, actions, run }) {
+function GroupsPage({ roster, actions, run, workgroups }) {
   const [creating, setCreating] = useState(false)
   return [
     creating
       ? h(NewGroupForm, { key: 'create', roster, actions, run, onCancel: () => setCreating(false), onCreated: room => actions.openSettings('groups', room.id) })
-      : h('div', { key: 'new', className: 'bt-actions' },
-          h('button', { type: 'button', className: 'bt-soft bt-soft-sm bt-with-icon', disabled: roster.bots.length < 2, title: roster.bots.length < 2 ? t('A group chat needs at least two Bots') : undefined, onClick: () => setCreating(true) }, h(PlusIcon), t('Create group chat'))),
+      : h('div', { key: 'new', className: 'bt-actions bt-groups-create-actions' },
+          h('button', { type: 'button', className: 'bt-soft bt-soft-sm bt-with-icon', disabled: roster.bots.length < 2, title: roster.bots.length < 2 ? t('A group chat needs at least two Bots') : undefined, onClick: () => setCreating(true) }, h(PlusIcon), t('Create group chat')),
+          workgroups !== undefined
+            ? h('button', { type: 'button', className: 'bt-soft bt-soft-sm bt-with-icon', onClick: () => void run(workgroups.create().then(sessionId => { if (sessionId !== undefined) actions.closeSettings(); return sessionId })) }, h(PlusIcon), t('Create workgroup chat'))
+            : null),
     h(SetSection, { key: 'groups', title: t('Group chats · {count}', { count: roster.rooms.length }) },
       roster.rooms.length === 0
         ? h(SetRow, { label: t('No group chats yet.'), hint: t('A group chat lets several Bots work on one thing with you.') })
@@ -296,7 +299,7 @@ function HubPage({ hub, workgroupHub, sessions, actions }) {
 }
 
 // While `leaving`, the dialog plays its exit and takes no input.
-export function SettingsDialog({ page, id, roster, actions, useUpdate, hub, workgroupHub, sessions, leaving = false }) {
+export function SettingsDialog({ page, id, roster, actions, useUpdate, hub, workgroupHub, workgroups, sessions, leaving = false }) {
   const [error, setError] = useState('')
   const close = useCallback(() => actions.closeSettings(), [])
   useEscape(close)
@@ -349,7 +352,7 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, hub, work
           bot ? h('div', { className: 'bt-settings-form' }, h(BotSettingsForm, { key: bot.id, bot, roster, actions, run })) : null,
           shown === 'bots' && !bot ? h(BotsPage, { roster, actions, run }) : null,
           room ? h('div', { className: 'bt-settings-form' }, h(GroupSettingsForm, { key: room.id, room, roster, actions, run })) : null,
-          shown === 'groups' && !room ? h(GroupsPage, { roster, actions, run }) : null,
+          shown === 'groups' && !room ? h(GroupsPage, { roster, actions, run, workgroups }) : null,
           shown === 'connectors' ? h(ConnectorsPage, { roster, actions }) : null,
           shown === 'capabilities' ? h(CapabilitiesPage, { roster, actions, run }) : null,
           shown === 'schedules' ? h(SchedulesPage, { roster, actions, start: id ?? undefined }) : null,

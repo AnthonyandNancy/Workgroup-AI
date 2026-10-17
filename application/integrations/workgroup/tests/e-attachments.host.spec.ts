@@ -13,7 +13,8 @@
 //   * **a download is refused to a viewer the ACL excludes**, with the Hub answering 404 rather than
 //     403 so that the refusal does not confirm the file exists.
 
-import { mkdtempSync, rmSync } from 'node:fs'
+import { recycleTestPath } from './recycle.mjs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
@@ -94,7 +95,7 @@ afterAll(async () => {
   for (const cleanup of cleanups.reverse()) await cleanup()
   for (const root of roots) {
     try {
-      rmSync(root, { recursive: true, force: true, maxRetries: 5 })
+      recycleTestPath(root)
     } catch {
       // A temp directory the OS still holds open is residue, not a test result.
     }
@@ -217,6 +218,19 @@ describe('E mentioning over the client', () => {
     // The Hub answers with the candidate it created, and it is pending: nothing has run anywhere.
     expect(sent.proposedTasks).toHaveLength(1)
     expect(sent.proposedTasks[0].state).toBe('PENDING_APPROVAL')
+    // A mention is a request, not an authorization. The owner has no grant to present, and the
+    // task's own history stops at the request: no approval, no dispatch, no execution record.
+    const taskId = sent.proposedTasks[0].id
+    expect((await bob.client.request('GET', `/tasks/${taskId}/grants`)).grants).toEqual([])
+    const detail = await bob.client.request('GET', `/tasks/${taskId}`)
+    const kinds = detail.events.map(event => event.eventType)
+    expect(kinds).toContain('task.created')
+    expect(kinds).not.toContain('task.approved')
+    expect(kinds).not.toContain('task.progress')
+    // The owner's client is the only one asked to decide; the requester can read the request but
+    // the approval queue is addressed to Bob.
+    expect((await bob.client.request('GET', '/tasks/pending')).tasks.some(task => task.id === taskId)).toBe(true)
+    expect((await alice.client.request('GET', '/tasks/pending')).tasks.some(task => task.id === taskId)).toBe(false)
   })
 
   it('refuses a mention of somebody outside the workgroup', async () => {

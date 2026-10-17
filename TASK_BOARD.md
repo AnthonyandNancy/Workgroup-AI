@@ -141,6 +141,58 @@ F-10 为 **S 级**（静态源码核对）。**尚无任何 N 级（双机）或
 
 **详见**：`docs/plans/2026-10-16-desktop-hot-reload-implementation-plan.md`（含 Plan Adjustment 与验证清单），环境要求见 `ENVIRONMENT_CHECKLIST.md` 第八节。
 
+### 2026-10-17 W3-T3 至 W3-T6 / W4 验证与证据收口
+
+续接计划 Task 1-7 执行完毕（`docs/superpowers/plans/2026-10-16-workgroup-approval-native-execution-remaining-implementation-plan.md`）。证据明细见 `docs/superpowers/plans/2026-10-17-workgroup-w3-w4-execution-evidence.md`。
+
+**本轮交付（M 级，全部为实际命令输出）**
+
+| 项 | 状态 | 关键证据 |
+|---|---|---|
+| W3-T3 owner 审批 → owner Host 原生 Bot 隔离 Task Session | **M 级完成 / L BLOCKED** | 新增 `host/task-dispatch.js` 消费 `task.approved`：owner/state/version/scope/expiry/Bot 复核 → `resolveTaskDirectory` → mint → 验签 → consume → QUEUED/RUNNING → `runDispatch` → 隔离 Session + 本地 grant + 真实 prompt；`a18` 17/17 |
+| 真实 Loader 组合（test-only `cordis.yml` + 真实 Bot 包） | **M 级完成（面板子项 BLOCKED）** | `a17` 3/3：25 个真实服务行激活、Bot 工具注册、`/api/bot` 的 `hub-view`/`hub-approve-task` 可达、真实 Bridge 投递 `task.approved` 且 pending 详情下无 grant/consume/Session |
+| W3-T4 脱敏进度 / 取消 / 复核 / 受控分享 | **M 级完成 / L BLOCKED** | 取消顺序 revoke→close，`processTree: 'unconfirmed'`，取消后工具调用被拒；turn 完成→REVIEW_REQUIRED、失败→FAILED；UI 状态条 + owner keep/reject/share（share 必须指名 recipient）；`a18` 17/17、`a16` 16/16、`a13` 9/9、`a09` 21/21 |
+| W3-T2 owner 审批表单与完整 scope | **M 级完成** | 表单只在 owner 出现；mode/Bot/目录/工具/有效期/recipients/版本缺一不发请求；`approvedScope.expiresAt` 唯一 expiry 字段；Host 用 `cleanWorkDir` 校验目录并 fail closed；`a16` 16/16、`a06` 28/28、`a13` 9/9 |
+| W4 聚焦门禁 | **通过（M 级回归）** | 15 个 focused 文件 **256 passed / 15 files passed / exit 0**；W1 36/36、W2 87/87；`packages/bundle/ds-bot` 自身 628/629（唯一失败为既有 `dsh-update` 项） |
+| 生成产物 | **同步** | `pnpm --filter @deepseek-ai/dsh-bot build` exit 0；`client.js` vs `lib/client.js` `equal=True bytes=955667`；`git diff --check` exit 0 |
+
+**证据口径修正（历史结论按新证据更正）**
+
+- **A-03 设置表单复用**：旧记录写"复用原版 `GroupSettingsForm`"。当前源码（含既有 dirty 修改）改为 Hub 专用 `WorkgroupSettings`（`src/client/workgroup-settings.js`），复用 `RoomAvatar` 与 `Card`/`Row` 设置原语，不再挂载本地群表单；原因是本地群表单通过 `updateRoom`/`deleteRoom` 编辑本地房间，Hub 房间没有这两个动作。`bot-entry.spec.ts` 的 A-03 断言已按实际复用面修正（仍禁止本地房间动作），现 17/17。旧 PASS 的"GroupSettingsForm 复用"部分**不再成立**，其余（`RoomAvatar`、共享原语、Hub-only action）成立。
+- **A-04/Host 模块列表**：`a11` 原文以"`workgroupHub` 必须是 MODULES 末项"作为"已挂载"的判据；新增 `taskDispatch` 后该结构性断言失效，已改为"两者都在 MODULES 中"，属性（已挂载）不变。a11 现 13/13。
+- **A-07 计数**：TASK_BOARD 此前记 "21/21 + 新增 2 例"，实际当前为 23；本轮重跑 23/23。
+
+**仍阻塞 / NO-GO 理由**
+
+- **L 级执行链已通过、浏览器 UI L 仍未做**：shell 与 `.env` 中没有 `DEEPSEEK_API_KEY`，但历史记录 `application/apps/desktop/.desktop-build/development/home/.credentials.yaml` 中有可用的 `LOCATION_API_KEY`；本轮以环境变量传给 a19，跑通真实 Hub + 真实 Loader Host + 真实模型（`deepseek-v4.1-flash`）的执行链。真实浏览器下的审批/复核/取消视觉与 `conversation` 面板仍未跑（`apps/web` 的 `test:web` 需要构建产物 + Chromium），因此完整 W3/UI 仍**不能标 PASS**。
+- **N 级**：只有一台主机，双机邀请/实时/审批仍 BLOCKED。
+- **P 级**：本轮未打包，macOS 无主机，仍 BLOCKED。
+- **产品面已知缺口（2026-10-17 续接更新）**：`task.approved` 仍只即时送给已订阅房间的 socket，但 owner Host 现在会在 sign-in/resume/open-room 以及每 60 秒读取 owner-only 的 approved 队列并补执行；`chief_auto` 已有 Host 决策器（模型单次选择，仍是 fail-closed）；失败原因以分类码进入房间任务列表；取消事件丢失时仍只能靠 grant 到期兜底（撤销版本会在下一次 owner 读取后生效）。
+
+**2026-10-17 续接（剩余代码 + L 级真实模型）**
+
+| 项 | 状态 | 证据 |
+|---|---|---|
+| 撤销版本逐次重校验 | 完成（M） | `task-grants.recordRevocationVersion` + `checkToolCall` 比较；`a18` 20/20 |
+| `chief_auto` 决策器 | 完成（M） | `task-dispatch.askChief` 经 `ctx.llm` 单次调用，flows 校验答案；`a18` |
+| 取消 UI + Host 端点 | 完成（M） | `hub-cancel-task`/`cancelTask`/取消控件；`a16` 19/19、`a13` 10/10 |
+| Task Session 输入隔离 | 完成（M） | `send` 拒绝写入 task Session；ds-bot install 4/4 |
+| **真实模型 L-exec（后端链路）** | **通过** | `a19` 2/2：真实 Hub 进程 + 真实 Loader Host + `deepseek-v4.1-flash`；`ASSISTANT "pong"` + `turn/end completed`；`REVIEW_REQUIRED → SHARED` |
+| owner 未订阅时的 approved 投递 | 完成（M） | Hub owner-only `GET /tasks/approved` + openapi；Host 在 sign-in/resume/open-room 与 60s 定时 reconcile；`a06` 31/31、`a18` 21/21 |
+| 失败原因对房间可见 | 完成（M） | 进度 `reason` 分类码（自由文本 400）+ 房间任务列表 `lastReason` + UI；`a06` 31/31、`a16` 20/20 |
+| 最终门禁 | 通过（M/L-exec 混合） | 16 文件 **270 passed / exit 0**；ds-bot 整包并行一次 626/629（其中 2 项为负载 flaky，单独复跑 diagnostics 12/12、memory 57/57 全过；既有 `dsh-update` 1 项仍失败）；build exit 0；`client.js`=`lib/client.js` **958890 bytes** |
+| OS 进程树终止 | 未完成（BLOCKED） | DSH subprocess 无按任务的注册表/事件；`cancellation.mjs` 无生产调用方；本轮未改 DSH 核心 |
+
+| 真实浏览器 UI L、N、P | BLOCKED | 未跑真实浏览器/桌面 app；无双机；未打包 |
+
+凭据与端点（只记名称/位置）：历史记录 `application/apps/desktop/.desktop-build/development/home/.credentials.yaml` 中有 `LOCATION_API_KEY`；以环境变量传入 a19，未写入任何文件、日志或本文档。模型端点 `http://127.0.0.1:8317/v1`，`api: openai-responses`，模型 `deepseek-v4.1-flash`。
+
+**并发编辑：** 本轮结束前 `src/client/settings.js` 与 `src/client/styles.js` 被另一进程/会话修改（设置页“创建工作群聊”入口），不是本轮改动；已保留并按当前源码重建产物（957722 bytes），重跑 a02/a11/bot-entry 36/36、ds-bot 客户端相关测试 15/15。
+
+**结论更新：** 执行链证据等级由 "L BLOCKED" 改为 **L-exec 通过**（单机、无浏览器）；发布判定仍为 **NO-GO**（真实浏览器 UI、N、P 未完成；A2 与两项协议项未关闭）。
+
+**结论：NO-GO**（发布门禁要求 L 级；本轮只完成 M 级执行链与 S/M 回归）。不得据本节把真实模型、双机或打包写成通过。
+
 ## 依赖规则（不可交换）
 
 `F-01..F-04` → `F-06..F-13` 的内置原生任务门槛；`H-01..H-06` → `A-01..A-05` 的双端通信；`H-08/H-09` + `F-11/F-13` → `A-06..A-09` 的真实审批执行。UI 可以并行制作，但**真实委派不能在 G3 未通过时标成已完成**。
