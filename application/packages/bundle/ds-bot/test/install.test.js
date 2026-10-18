@@ -106,6 +106,9 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     // position here is the promise that no tool is registered behind its back. The earlier
     // `tools guard` belongs to the question-tool check; this second one is the task guard.
     'tools guard',
+    // Publishing the team's Bots to the Hub directory is an effect of the workgroup module, which
+    // is installed after the task guard.
+    'effect ds-bot: Hub Bot directory',
     // The approval consumer (`src/host/task-dispatch.js`) is installed last. It registers its
     // turn-end listener and then the approved-task reconciliation effect, so those are the final
     // registrations: nothing may be added behind the task guard.

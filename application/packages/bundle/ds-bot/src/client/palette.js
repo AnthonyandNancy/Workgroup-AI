@@ -2,7 +2,7 @@ import { createElement as h, Fragment, useEffect, useState } from 'react'
 import { FishLogo } from '@deepseek-ai/dsh-client-ui-primitives'
 import { isMainOf } from './sources.js'
 import { currentPart, stripHeader } from './text.js'
-import { PlusIcon, SearchIcon, PeopleIcon, CloseIcon, GearIcon, PlugIcon } from './icons.js'
+import { PlusIcon, SearchIcon, PeopleIcon, CloseIcon, GearIcon } from './icons.js'
 import { BotAvatar, RoomAvatar } from './mark.js'
 import { useEscape } from './overlay-hooks.js'
 import { QUICK_EDGES, useFlip, useGlide } from './motion.js'
@@ -12,7 +12,7 @@ import { t } from './i18n.js'
 // rows (24px avatar, title, subtitle). Bots and groups match on name and role; past
 // messages match on their text.
 const PALETTE_EXIT_MS = 160
-export function CommandPalette({ start, token, roster, actions, useSessions, workgroups }) {
+export function CommandPalette({ start, token, roster, actions, useSessions, extraCommands = [] }) {
   const [query, setQuery] = useState(start ?? '')
   const [cursor, setCursor] = useState(0)
   const [leaving, setLeaving] = useState(false)
@@ -81,10 +81,9 @@ export function CommandPalette({ start, token, roster, actions, useSessions, wor
     { key: 'cmd:new', icon: h(PlusIcon), title: t('New chat'), run: () => actions.openNewChat('new') },
     { key: 'cmd:bot', icon: h(PlusIcon), title: t('Create Bot'), run: () => actions.openNewChat('create') },
     { key: 'cmd:group', icon: h(PeopleIcon), title: t('Create group chat'), run: () => actions.openNewChat('group') },
-    // The third entry surface, directly below the local group command for the same reason the
-    // menu places it directly below the local entry: it adds a distinct entity, it does not
-    // redirect the existing flow. Clicking with no usable Hub reports the Host's reason.
-    ...(workgroups === undefined ? [] : [{ key: 'cmd:workgroup', icon: h(PlugIcon), title: t('Create workgroup chat'), run: () => workgroups.create() }]),
+    // Commands supplied by an integrating surface sit directly below the local group command: they
+    // add a destination, they do not redirect an existing one.
+    ...extraCommands,
     { key: 'cmd:settings', icon: h(GearIcon), title: t('Bot settings'), run: () => actions.openSettings('general') },
   ].filter(command => matchesName(command.title))
   if (commands.length) sections.push([t('Commands'), commands])

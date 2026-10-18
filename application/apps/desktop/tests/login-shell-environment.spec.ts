@@ -89,6 +89,20 @@ describe('mergeLoginShellEnvironment', () => {
     expect(merged).toEqual({ PATH: '/login/bin:/usr/bin', HOME: '/home/user', WORKGROUP_DESKTOP_DSH_DIR: '/launcher', PWD: '/', XDG_CACHE_HOME: '/cache' })
     expect(base.PATH).toBe('/usr/bin')
   })
+
+  it('lets WORKGROUP_HUB_URL through while filtering other WORKGROUP_ names', () => {
+    const merged = mergeLoginShellEnvironment({}, {
+      PATH: '/login/bin:/usr/bin',
+      WORKGROUP_HUB_URL: 'http://127.0.0.1:8443',
+      WORKGROUP_HOME: '/rc-home',
+      WORKGROUP_DESKTOP_DSH_DIR: '/rc',
+      ELECTRON_RUN_AS_NODE: '1',
+    })
+    expect(merged).toEqual({
+      PATH: '/login/bin:/usr/bin',
+      WORKGROUP_HUB_URL: 'http://127.0.0.1:8443',
+    })
+  })
 })
 
 describe('readDesktopLoginShellEnvironment', () => {

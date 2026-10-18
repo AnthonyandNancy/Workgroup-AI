@@ -19,6 +19,7 @@ import {
   writeOperatorAudit,
 } from '../admin/store.js'
 import { RoomError } from '../modules/rooms/store.js'
+import { cancelTaskAsOperator } from '../modules/tasks/store.js'
 import { makeEvent } from '../realtime/events.js'
 
 function adminFailure(reply, error) {
@@ -163,7 +164,17 @@ export function makeAdminRoutes({ adminAuth, requireOperator }) {
           dissolvedBy: null,
           pendingTasks: result.pendingTaskIds.length,
         }, { roomId: result.roomId }))
-        return reply.code(200).send({ workgroup: findAdminWorkgroup(db, result.roomId) })
+        for (const taskId of result.pendingTaskIds) {
+          try {
+            cancelTaskAsOperator(db, { taskId, actorOperatorId: request.operator.id })
+            realtime.publishToRoom(result.roomId, makeEvent('task.cancelled', {
+              taskId, reason: 'workgroup_dissolved', cancelledBy: null,
+            }, { roomId: result.roomId }))
+          } catch (error) {
+            request.log.warn({ err: error, taskId }, 'admin dissolve: task was already settled')
+          }
+        }
+        return reply.code(200).send({ workgroup: findAdminWorkgroup(db, result.roomId), cancelledTasks: result.pendingTaskIds.length })
       } catch (error) {
         return adminFailure(reply, error)
       }

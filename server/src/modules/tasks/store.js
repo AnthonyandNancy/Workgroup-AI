@@ -29,6 +29,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { requireMember, RoomError } from '../rooms/store.js'
+import { isBotInRoom } from '../rooms/bots.js'
 import { isVisibleTo } from '../bots/store.js'
 
 export class TaskError extends Error {
@@ -194,8 +195,9 @@ export function createTask(db, {
     throw new TaskError('A task is a request to another user; ask your own Bot in its chat instead', 'SELF_TASK')
   }
   if (targetBotId !== undefined && targetBotId !== null) {
-    const visible = isVisibleTo(db, { ownerUserId, botId: targetBotId, viewerUserId: requesterUserId, roomId })
-    if (!visible) throw new TaskError('That Bot is not available to you', 'BOT_NOT_AVAILABLE')
+    if (!isBotInRoom(db, { roomId, ownerUserId, botId: targetBotId })) {
+      throw new TaskError('That Bot is not a member of this workgroup', 'BOT_NOT_AVAILABLE')
+    }
   }
 
   const id = randomUUID()
@@ -423,6 +425,17 @@ export function cancelTask(db, { taskId, actorUserId, actorDeviceId, now = new D
   return updated
 }
 
+/** Operator-initiated cancellation used by Hub administration dissolution. */
+export function cancelTaskAsOperator(db, { taskId, actorOperatorId, now = new Date() }) {
+  const task = findTask(db, taskId)
+  if (task === undefined || isTerminal(task.state)) return task
+  const to = task.state === 'RUNNING' || task.state === 'REVIEW_REQUIRED' ? 'CANCELLING' : 'CANCELLED'
+  return transition(db, {
+    taskId, to, expectedVersion: task.version, actorUserId: null, actorDeviceId: null,
+    eventType: 'task.cancelled', payload: { state: to, cancelledBy: null, operator: actorOperatorId }, now,
+  })
+}
+
 /**
  * Mark an approval whose window has passed as expired.
  *
@@ -501,6 +514,43 @@ export function publicTaskEvent(event) {
     payload: JSON.parse(event.public_payload_json),
     createdAt: event.created_at,
   }
+}
+
+/** A room's redacted event stream, joined through its tasks. */
+export function listTaskEventsForRoom(db, { roomId, limit = 100, before } = {}) {
+  const capped = Math.max(1, Math.min(Number(limit) || 100, 200))
+  const rows = db.prepare(`
+    SELECT e.* FROM task_events e
+    JOIN tasks t ON t.id = e.task_id
+    WHERE t.room_id = ? ${before === undefined ? '' : 'AND e.created_at < ?'}
+    ORDER BY e.created_at DESC, e.id DESC
+    LIMIT ?`).all(...(before === undefined ? [roomId, capped] : [roomId, before, capped]))
+  return rows.reverse().map(publicTaskEvent)
+}
+
+/** Non-terminal tasks that name this Bot as target or executor. */
+export function openTaskIdsForBot(db, { roomId, ownerUserId, botId }) {
+  return db.prepare(`SELECT id FROM tasks
+    WHERE room_id = ? AND owner_user_id = ?
+      AND (target_bot_id = ? OR assigned_bot_id = ?)
+      AND state NOT IN ('COMPLETED','SHARED','REJECTED','EXPIRED','CANCELLED','FAILED')`)
+    .all(roomId, ownerUserId, botId, botId).map(row => row.id)
+}
+
+/** Cancel a Bot's open tasks after its room membership has been removed. */
+export function cancelOpenTasksForBot(db, {
+  roomId, ownerUserId, botId, actorUserId, actorDeviceId, now = new Date(),
+}) {
+  const cancelled = []
+  for (const taskId of openTaskIdsForBot(db, { roomId, ownerUserId, botId })) {
+    try {
+      cancelTask(db, { taskId, actorUserId, actorDeviceId, now })
+      cancelled.push(taskId)
+    } catch (error) {
+      if (error?.code !== 'ALREADY_TERMINAL') throw error
+    }
+  }
+  return cancelled
 }
 
 export const taskInternals = { APPROVAL_TTL_SECONDS_DEFAULT, DESCRIPTION_MAX, ASSIGNMENT_MODES }

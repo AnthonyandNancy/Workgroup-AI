@@ -18,6 +18,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { RoomError, requireMember, membershipOf } from '../rooms/store.js'
+import { isBotInRoom } from '../rooms/bots.js'
 import { createTask } from '../tasks/store.js'
 
 export class MessageError extends Error {
@@ -91,6 +92,9 @@ export function assertMentions(db, { roomId, mentions }) {
     if (botId === undefined || botId === null) return { userId }
     if (typeof botId !== 'string' || botId.length === 0) {
       throw new MessageError('A Bot mention must name a bot id', 'INVALID_MENTIONS')
+    }
+    if (!isBotInRoom(db, { roomId, ownerUserId: userId, botId })) {
+      throw new MessageError('That Bot is not a member of this workgroup', 'BOT_NOT_IN_ROOM')
     }
     return { userId, botId }
   })

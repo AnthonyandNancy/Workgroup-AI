@@ -175,6 +175,15 @@ const BOOTSTRAP_PREFIXES = ['WORKGROUP_', 'DSH_', 'XDG_', 'DYLD_', 'BASH_FUNC_']
 const HOME_LAYER_PROXY_NAMES = new Set(['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY'])
 
 /**
+ * Runtime configuration the Harness-home `.env` may set.
+ *
+ * `WORKGROUP_` is otherwise bootstrap-only: `WORKGROUP_HOME` must not be
+ * relocatable by a discovered file. `WORKGROUP_HUB_URL` is not a bootstrap
+ * fact; it is the user's Hub address and belongs in the user's own home file.
+ */
+const HOME_LAYER_RUNTIME_NAMES = new Set(['WORKGROUP_HUB_URL'])
+
+/**
  * Whether a variable may come only from the inherited process environment
  * because it changes process, runtime, VCS, or network bootstrap. The Harness-home
  * file is additionally allowed {@link HOME_LAYER_PROXY_NAMES}.
@@ -192,7 +201,8 @@ function isBootstrapOnly(name: string): boolean {
  * @param binName - the diagnostic prefix on the thrown error.
  * @param dir - the directory whose `.env` to read.
  * @param warn - sink for the one-line unreadable-file diagnostic.
- * @param home - the resolved Harness home; when `dir` is it, {@link HOME_LAYER_PROXY_NAMES} are accepted.
+ * @param home - the resolved Harness home; when `dir` is it, {@link HOME_LAYER_PROXY_NAMES}
+ *   and {@link HOME_LAYER_RUNTIME_NAMES} are accepted.
  * @returns the parsed entries, or `undefined` when the file is absent or unreadable.
  * @throws when the file declares a name {@link isBootstrapOnly} rejects and this layer may not set.
  */
@@ -215,12 +225,17 @@ function readEnvLayer(
   const values = parseEnv(content) as Record<string, string>
   for (const name of Object.keys(values)) {
     if (!isBootstrapOnly(name)) continue
-    const proxyName = HOME_LAYER_PROXY_NAMES.has(name.toUpperCase())
-    if (isHome && proxyName) continue
-    // A proxy name has a second way out that the other bootstrap names do not, so its message says so.
+    const upper = name.toUpperCase()
+    const proxyName = HOME_LAYER_PROXY_NAMES.has(upper)
+    const homeRuntime = HOME_LAYER_RUNTIME_NAMES.has(upper)
+    const homeOnly = proxyName || homeRuntime
+    if (isHome && homeOnly) continue
+    // A home-only name has a second way out that other bootstrap names do not.
     const remedy = proxyName
       ? `export ${name}, or put it in ${resolve(home, '.env')}, which does not travel with a repository`
-      : `export ${name} instead of putting it in a .env file`
+      : homeRuntime
+        ? `export ${name}, or put it in ${resolve(home, '.env')}, which is the user's own file`
+        : `export ${name} instead of putting it in a .env file`
     throw new Error(
       `${binName}: ${path} sets "${name}", which only the launching environment may set`
       + ' (it decides how this process starts, where its code and instructions load from, or how it'

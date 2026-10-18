@@ -31,6 +31,13 @@ export const EVENT_TYPES = Object.freeze([
   // A workgroup ended. Room-scoped and momentary like the rest, but it is the only event that
   // describes a change to the room itself rather than to something inside it.
   'room.dissolved',
+  'room.notice_changed',
+  'room.bot_added',
+  'room.bot_removed',
+  'bot_invitation.created',
+  // The invitation left `pending` (accepted, declined, revoked). Additive in wg.v1: a client that
+  // does not know it still re-reads the room; one that does can update the waiting state in place.
+  'bot_invitation.changed',
   // The room's name changed. Additive in wg.v1: older clients ignore an unknown event, while a
   // client that knows it can update an open room without re-opening it.
   'room.renamed',

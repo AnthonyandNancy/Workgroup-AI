@@ -21,11 +21,125 @@ components:
   schemas:
     Room:
       type: object
-      required: [id, name, ownerUserId, createdAt]
+      required: [id, name, kind, ownerUserId, notice, createdAt]
       properties:
         id: {type: string, format: uuid}
         name: {type: string, minLength: 1, maxLength: 120}
+        kind: {type: string, enum: [ordinary, workgroup]}
         ownerUserId: {type: string, format: uuid}
+        notice: {type: string, maxLength: 2000}
+        createdAt: {type: string, format: date-time}
+        dissolvedAt:
+          type: string
+          format: date-time
+          description: 解散时间；存活房间不返回该字段。
+        myRole:
+          type: string
+          enum: [owner, admin, member]
+          description: 调用者在本房间的角色；仅成员视角的读取/创建响应返回。
+    RoomSummary:
+      allOf:
+        - $ref: '#/components/schemas/Room'
+        - type: object
+          required: [memberCount, botCount, lastMessageAt, lastMessagePreview, lastMessageSeq, pendingApprovalCount]
+          properties:
+            memberCount:
+              type: integer
+              minimum: 0
+              description: 活跃真人成员数。
+            botCount:
+              type: integer
+              minimum: 0
+              description: 活跃 room_bots 数。
+            lastMessageAt:
+              type: [string, 'null']
+              format: date-time
+              description: 最后一条消息时间；无消息为 null。
+            lastMessagePreview:
+              type: string
+              maxLength: 80
+              description: 最后一条消息的单行预览；换行折叠为空格，截断到 80 字符，无消息为空字符串。
+            lastMessageSeq:
+              type: integer
+              minimum: 0
+              description: 最后一条消息的 roomSeq；无消息为 0。客户端未读水位按此字段计算。
+            pendingApprovalCount:
+              type: integer
+              minimum: 0
+              description: 仅统计 owner_user_id 为调用者且 state=PENDING_APPROVAL 的任务。
+    RoomMember:
+      type: object
+      required: [userId, userHandle, displayName, role, joinedAt]
+      properties:
+        userId: {type: string, format: uuid}
+        userHandle: {type: string}
+        displayName: {type: string}
+        role: {type: string, enum: [owner, admin, member]}
+        joinedAt: {type: string, format: date-time}
+        online: {type: boolean}
+    RoomBot:
+      type: object
+      required: [ownerUserId, botId, displayName, presence, addedAt]
+      properties:
+        ownerUserId: {type: string, format: uuid}
+        botId: {type: string, maxLength: 128}
+        displayName: {type: string, maxLength: 80}
+        presence: {type: string, enum: [online, offline]}
+        state: {type: string}
+        addedAt: {type: string, format: date-time}
+    RoomBotAdded:
+      type: object
+      required: [ownerUserId, botId, displayName, addedAt]
+      properties:
+        ownerUserId: {type: string, format: uuid}
+        botId: {type: string, maxLength: 128}
+        displayName: {type: string, maxLength: 80}
+        addedAt: {type: string, format: date-time}
+    RoomBotCandidate:
+      type: object
+      additionalProperties: false
+      required: [ownerUserId, ownerDisplayName, botId, displayName, presence, state, visibility, mine, inRoom]
+      properties:
+        ownerUserId: {type: string, format: uuid}
+        ownerDisplayName: {type: string}
+        botId: {type: string, maxLength: 128}
+        displayName: {type: string, maxLength: 80}
+        presence: {type: string, enum: [online, offline]}
+        state: {type: string}
+        visibility: {type: string, enum: [private, room, public]}
+        mine: {type: boolean}
+        inRoom: {type: boolean}
+      description: >-
+        调用者自己的已发布 Bot（含 private）与其他活跃成员对调用者可见的 Bot。已在房间内的
+        Bot 仍返回并标记 inRoom=true。仅这九个字段，不包含模型、Session、路径或工具等私有信息。
+    BotInvitation:
+      type: object
+      additionalProperties: false
+      required: [id, roomId, ownerUserId, botId, botDisplayName, invitedByUserId, status, expiresAt, createdAt]
+      properties:
+        id: {type: string, format: uuid}
+        roomId: {type: string, format: uuid}
+        roomName: {type: string}
+        ownerUserId: {type: string, format: uuid}
+        botId: {type: string, maxLength: 128}
+        botDisplayName: {type: string}
+        invitedByUserId: {type: string, format: uuid}
+        status: {type: string, enum: [pending, accepted, declined, revoked, expired]}
+        expiresAt: {type: string, format: date-time}
+        createdAt: {type: string, format: date-time}
+    TaskEvent:
+      type: object
+      additionalProperties: false
+      required: [id, taskId, eventType, actorUserId, payload, createdAt]
+      properties:
+        id: {type: string, format: uuid}
+        taskId: {type: string, format: uuid}
+        eventType: {type: string}
+        actorUserId: {type: [string, 'null'], format: uuid}
+        payload:
+          type: object
+          additionalProperties: true
+          description: Hub 已脱敏的公开 payload；不含 scope、路径、工具参数或日志。
         createdAt: {type: string, format: date-time}
     Message:
       type: object
@@ -152,18 +266,27 @@ paths:
         '400': {description: Invalid bootstrap input}
         '403': {description: Anonymous bootstrap is disabled}
         '429': {description: Too many bootstrap attempts}
+  /rooms:
     get:
-      summary: 我的工作群
+      summary: 我的工作群列表（含侧栏 summary）
+      description: >-
+        只返回调用者仍是活跃成员的房间。每个列表项在房间字段之外带 memberCount、botCount、
+        lastMessageAt、lastMessagePreview、lastMessageSeq 与 owner-scoped 的 pendingApprovalCount；
+        服务端一次聚合查询计算，不逐房间查询。
       responses:
         '200':
-          description: Rooms for authenticated user
+          description: Rooms with sidebar summary
           content:
             application/json:
               schema:
-                type: array
-                items: {$ref: '#/components/schemas/Room'}
+                type: object
+                required: [rooms]
+                properties:
+                  rooms:
+                    type: array
+                    items: {$ref: '#/components/schemas/RoomSummary'}
     post:
-      summary: 创建工作群
+      summary: 创建工作群或普通房间
       requestBody:
         required: true
         content:
@@ -173,12 +296,260 @@ paths:
               required: [name]
               properties:
                 name: {type: string, minLength: 1, maxLength: 120}
+                kind: {type: string, enum: [ordinary, workgroup], default: ordinary}
+                botIds:
+                  type: array
+                  description: >-
+                    创建者自己的 Bot id。房间、owner 成员关系与这些 Bot 在同一事务中写入；
+                    任一 Bot 未发布则整个创建被拒绝，不会留下半个工作群。
+                  items: {type: string, minLength: 1, maxLength: 128}
       responses:
         '201':
           description: Created
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/Room'}
+              schema:
+                type: object
+                required: [room, bots]
+                properties:
+                  room: {$ref: '#/components/schemas/Room'}
+                  bots:
+                    type: array
+                    items: {$ref: '#/components/schemas/RoomBot'}
+        '400': {description: Invalid name or kind}
+        '404': {description: 指定的 Bot 不属于调用者或尚未发布}
+  /rooms/{roomId}:
+    parameters: [{name: roomId, in: path, required: true, schema: {type: string, format: uuid}}]
+    get:
+      summary: 读取房间、成员与已加入的 Bot
+      responses:
+        '200':
+          description: Room detail for a member
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [room, members, bots]
+                properties:
+                  room: {$ref: '#/components/schemas/Room'}
+                  members:
+                    type: array
+                    items: {$ref: '#/components/schemas/RoomMember'}
+                  bots:
+                    type: array
+                    items: {$ref: '#/components/schemas/RoomBot'}
+        '404': {description: 房间不存在，或调用者不是成员（两者不可区分）}
+    patch:
+      summary: 修改房间名称或公告（owner/admin）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string, minLength: 1, maxLength: 120}
+                notice: {type: string, maxLength: 2000}
+      responses:
+        '200':
+          description: Updated room
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [room]
+                properties:
+                  room: {$ref: '#/components/schemas/Room'}
+        '403': {description: 调用者不是 owner/admin}
+        '404': {description: 房间不存在，或调用者不是成员}
+        '409': {description: 房间已解散}
+  /rooms/{roomId}/bot-candidates:
+    parameters: [{name: roomId, in: path, required: true, schema: {type: string, format: uuid}}]
+    get:
+      summary: 当前房间可拉入的 Bot 候选
+      description: >-
+        仅房间活跃成员可读，非成员返回与 requireMember 一致的 404。返回调用者自己已发布的 Bot
+        （含 private，所有者恒可见）与其他活跃成员对调用者可见的 Bot；已在房间内的 Bot 仍返回并
+        标记 inRoom=true。每项只有九个字段，不含模型、Session、路径或工具等私有信息。
+      responses:
+        '200':
+          description: Visible Bot candidates
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [bots]
+                properties:
+                  bots:
+                    type: array
+                    items: {$ref: '#/components/schemas/RoomBotCandidate'}
+        '404': {description: 房间不存在，或调用者不是成员（两者不可区分）}
+  /rooms/{roomId}/bots:
+    parameters: [{name: roomId, in: path, required: true, schema: {type: string, format: uuid}}]
+    post:
+      summary: 把调用者自己的 Bot 加入房间
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [botId]
+              properties:
+                botId: {type: string, maxLength: 128}
+      responses:
+        '201':
+          description: Bot is an active room member
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [bot]
+                properties:
+                  bot: {$ref: '#/components/schemas/RoomBotAdded'}
+        '404': {description: 房间不存在、调用者不是成员，或 Bot 未发布}
+        '409': {description: 房间已解散}
+  /rooms/{roomId}/bots/{ownerUserId}/{botId}:
+    parameters:
+      - {name: roomId, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: ownerUserId, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: botId, in: path, required: true, schema: {type: string, maxLength: 128}}
+    delete:
+      summary: 软移除房间 Bot 成员（所有者或 owner/admin）
+      description: 关联的未完成任务会取消；Bot 历史仍保留。
+      responses:
+        '200':
+          description: Bot removed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [roomId, ownerUserId, botId, removedAt, cancelledTasks]
+                properties:
+                  roomId: {type: string, format: uuid}
+                  ownerUserId: {type: string, format: uuid}
+                  botId: {type: string, maxLength: 128}
+                  removedAt: {type: string, format: date-time}
+                  cancelledTasks:
+                    type: array
+                    items: {type: string, format: uuid}
+        '403': {description: 调用者无权移除该 Bot}
+        '404': {description: 房间不存在、调用者不是成员，或 Bot 不在房间}
+        '409': {description: 房间已解散}
+  /rooms/{roomId}/bot-invitations:
+    parameters: [{name: roomId, in: path, required: true, schema: {type: string, format: uuid}}]
+    post:
+      summary: 邀请其他成员的 Bot 进入房间（owner/admin）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ownerUserId, botId]
+              properties:
+                ownerUserId: {type: string, format: uuid}
+                botId: {type: string, maxLength: 128}
+      responses:
+        '201':
+          description: Pending Bot invitation; a repeated request returns the existing pending invitation
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invitation]
+                properties:
+                  invitation: {$ref: '#/components/schemas/BotInvitation'}
+        '403': {description: 调用者不是 owner/admin}
+        '404': {description: 房间/Bot 不可见，或 Bot 所有者不是成员}
+        '409': {description: 调用者邀请自己的 Bot（应直接加入）、Bot 已在房间，或房间已解散}
+  /bot-invitations:
+    get:
+      summary: 当前用户收到的 pending Bot 邀请
+      responses:
+        '200':
+          description: Pending Bot invitations for the caller
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invitations]
+                properties:
+                  invitations:
+                    type: array
+                    items: {$ref: '#/components/schemas/BotInvitation'}
+  /bot-invitations/{invitationId}/accept:
+    parameters: [{name: invitationId, in: path, required: true, schema: {type: string, format: uuid}}]
+    post:
+      summary: Bot 所有者接受邀请并建立 room_bots
+      responses:
+        '200':
+          description: Bot joined the room
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [roomId, ownerUserId, botId]
+                properties:
+                  roomId: {type: string, format: uuid}
+                  ownerUserId: {type: string, format: uuid}
+                  botId: {type: string, maxLength: 128}
+        '404': {description: 邀请不存在、调用者不是 Bot 所有者，或房间/Bot 已不可用}
+        '409': {description: 邀请非 pending，或房间已解散}
+        '410': {description: 邀请已过期}
+  /bot-invitations/{invitationId}/decline:
+    parameters: [{name: invitationId, in: path, required: true, schema: {type: string, format: uuid}}]
+    post:
+      summary: Bot 所有者拒绝邀请
+      responses:
+        '200':
+          description: Invitation declined
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invitation]
+                properties:
+                  invitation: {$ref: '#/components/schemas/BotInvitation'}
+        '404': {description: 邀请不存在，或调用者不是 Bot 所有者}
+        '409': {description: 邀请非 pending}
+  /bot-invitations/{invitationId}/revoke:
+    parameters: [{name: invitationId, in: path, required: true, schema: {type: string, format: uuid}}]
+    post:
+      summary: 邀请人或房间 owner/admin 撤销 Bot 邀请
+      responses:
+        '200':
+          description: Invitation revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invitation]
+                properties:
+                  invitation: {$ref: '#/components/schemas/BotInvitation'}
+        '404': {description: 邀请不存在或调用者无权查看}
+        '409': {description: 邀请非 pending}
+  /rooms/{roomId}/task-events:
+    parameters: [{name: roomId, in: path, required: true, schema: {type: string, format: uuid}}]
+    get:
+      summary: 房间任务活动流（脱敏）
+      description: 成员可读；只返回 Hub 已脱敏的 publicTaskEvent，按时间倒序取页后按时间正序返回。
+      parameters:
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 100}}
+        - {name: before, in: query, schema: {type: string, format: date-time}}
+      responses:
+        '200':
+          description: Redacted room task events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items: {$ref: '#/components/schemas/TaskEvent'}
+        '404': {description: 房间不存在，或调用者不是成员}
   /rooms/{roomId}/invitations:
     parameters: [{name: roomId, in: path, required: true, schema: {type: string, format: uuid}}]
     post:

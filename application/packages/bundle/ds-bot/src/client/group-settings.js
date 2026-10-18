@@ -51,9 +51,6 @@ export function GroupSettingsForm({ room, roster, actions, run, onDeleted }) {
   const admin = roster.byId[room.admin]
   const mode = shownMode(room, roster)
   const modeHint = ROOM_MODES.find(([id]) => id === mode)?.[2] ?? ''
-  // Which of the two entities this form is editing. The Hub's own `kind` decides, so a workgroup is
-  // recognised by what it is rather than by which surface happened to open the form.
-  const workgroup = room.kind === 'workgroup'
   const update = patch => run(actions.updateRoom(room.id, patch))
   const openBot = (id) => { actions.closeSettings(); actions.openSession(id) }
   const remove = () => {
@@ -115,20 +112,10 @@ export function GroupSettingsForm({ room, roster, actions, run, onDeleted }) {
       h(SwitchRow, { label: t('Pin'), hint: t('Kept above the other chats.'), on: room.pinned === true, onChange: pinned => run(actions.setFlags(room.id, { pinned })) }),
       h(SwitchRow, { label: t('Hide from sidebar'), hint: t('Search still finds it.'), on: room.hidden === true, onChange: hidden => run(actions.setFlags(room.id, { hidden })) })),
     h(Card, { title: t('Manage') },
-      // A workgroup and a local group chat end differently, and the label is the only thing that tells
-      // the owner which is about to happen. A local group's history is archived locally; a workgroup's
-      // stays on the Hub and remains readable to its members, so calling both "Delete" would
-      // misdescribe one of them.
-      h('button', { type: 'button', className: 'bt-set-row bt-bs-row bt-bs-danger', 'data-confirm': confirming || undefined, 'data-group-action': workgroup ? 'dissolve' : 'delete', onClick: remove },
+      h('button', { type: 'button', className: 'bt-set-row bt-bs-row bt-bs-danger', 'data-confirm': confirming || undefined, 'data-group-action': 'delete', onClick: remove },
         h('span', { className: 'bt-set-copy' },
-          h('span', { className: 'bt-bs-label' },
-            workgroup
-              ? (confirming ? t('Dissolve {name}?', { name: room.name }) : t('Dissolve workgroup'))
-              : (confirming ? t('Delete {name}?', { name: room.name }) : t('Delete group'))),
-          h('span', { className: 'bt-set-hint' },
-            workgroup
-              ? (confirming ? t('Click again to dissolve. History and records are kept.') : t('Ends the workgroup for everyone. Its history is kept and stays readable.'))
-              : (confirming ? t('Click again to delete. Its history is archived.') : t('Removes the group chat. Its members stay on the team.')))),
+          h('span', { className: 'bt-bs-label' }, confirming ? t('Delete {name}?', { name: room.name }) : t('Delete group')),
+          h('span', { className: 'bt-set-hint' }, confirming ? t('Click again to delete. Its history is archived.') : t('Removes the group chat. Its members stay on the team.'))),
         h('span', { className: 'bt-chevron' }, h(ChevronRightIcon)))))
 }
 

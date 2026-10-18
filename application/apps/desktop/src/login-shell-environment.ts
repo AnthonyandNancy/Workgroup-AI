@@ -19,9 +19,11 @@ const SHELL_SESSION_KEYS = new Set(['PWD', 'OLDPWD', 'SHLVL', '_', ...Object.key
  *
  * Both products' prefixes are excluded: `WORKGROUP_` is this fork's managed namespace, and
  * `DSH_` stays refused so an installed official harness's login-shell facts cannot be adopted
- * as this product's environment.
+ * as this product's environment. `WORKGROUP_HUB_URL` is the one non-bootstrap exception: it
+ * is the user's Hub address, not a path or process-startup fact.
  */
 const LAUNCHER_OWNED_PREFIXES = ['WORKGROUP_', 'DSH_', 'ELECTRON_'] as const
+const LOGIN_SHELL_ALLOWED_NAMES = new Set(['WORKGROUP_HUB_URL'])
 
 /** Validated login-shell read settings. */
 export interface DesktopLoginShellConfig {
@@ -95,7 +97,8 @@ export function parseLoginShellOutput(stdout: string): Record<string, string> | 
 
 /**
  * Overlay login-shell variables on the inherited environment; shell values win except for
- * probe-session variables and launcher-owned `DSH_*` / `ELECTRON_*` names.
+ * probe-session variables, launcher-owned `WORKGROUP_*` / `DSH_*` / `ELECTRON_*` names, and
+ * the `WORKGROUP_HUB_URL` user-configuration exception.
  * @param base - Environment Desktop inherited.
  * @param shell - Variables printed by the login shell.
  * @returns A new environment; neither argument is modified.
@@ -103,7 +106,9 @@ export function parseLoginShellOutput(stdout: string): Record<string, string> | 
 export function mergeLoginShellEnvironment(base: NodeJS.ProcessEnv, shell: Readonly<Record<string, string>>): NodeJS.ProcessEnv {
   const merged = { ...base }
   for (const [key, value] of Object.entries(shell)) {
-    if (SHELL_SESSION_KEYS.has(key) || LAUNCHER_OWNED_PREFIXES.some(prefix => key.startsWith(prefix))) continue
+    const launcherOwned = LAUNCHER_OWNED_PREFIXES.some(prefix => key.startsWith(prefix))
+      && !LOGIN_SHELL_ALLOWED_NAMES.has(key.toUpperCase())
+    if (SHELL_SESSION_KEYS.has(key) || launcherOwned) continue
     merged[key] = value
   }
   return merged

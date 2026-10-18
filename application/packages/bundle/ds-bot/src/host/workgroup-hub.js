@@ -25,10 +25,34 @@
 // relative path that leaves `src/host` would resolve to a different depth once published under
 // `lib/src/host`. A package name is the same string in both trees.
 import { randomUUID } from 'node:crypto'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { clearHubSession, createHubClient, hubConfigPath, hubInstallationPath, hubStatePath, loadHubConfig, loadInstallationState, resolveHubUrl, saveHubConfig, saveInstallationState } from '@deepseek-ai/dsh-workgroup/protocol/hub-client'
 import { createWorkgroupClient, reduceWorkgroup } from '@deepseek-ai/dsh-workgroup/client'
 import { createApprovalClient } from '@deepseek-ai/dsh-workgroup/client/approvals'
 import { createBridge } from '@deepseek-ai/dsh-workgroup/bridge'
+
+/**
+ * How often a published Bot reports its presence.
+ *
+ * The Hub treats a heartbeat older than 90 seconds as offline, so a minute leaves a full interval
+ * of slack for a slow request without ever reporting a running Host as gone. The value follows
+ * from that TTL rather than from taste: a longer period would flap, a shorter one would only add
+ * load.
+ */
+export const BOT_HEARTBEAT_MS = 60_000
+
+/** A rename arrives as a burst of saves; one directory pass per burst is enough. */
+export const BOT_SYNC_DEBOUNCE_MS = 250
+
+/**
+ * How often a scheduled workgroup message is retried after the Hub refuses it.
+ *
+ * A schedule is a promise to the person who set it, so a refusal is kept and retried rather than
+ * dropped; five minutes is long enough not to hammer a Hub that is down and short enough that a
+ * transient failure still lands while the sender is at their desk.
+ */
+export const SCHEDULE_RETRY_MS = 300_000
 
 export function install(rt) {
   const { config, dshHome } = rt
@@ -69,6 +93,92 @@ export function install(rt) {
   // everything the user had open, rather than only the room they last touched.
   const watched = new Set()
   const roomStates = new Map()
+  // What this Host has told the Hub identity it is signed in as, `botId -> { displayName, visibility }`.
+  // It is the difference between a save and a directory write: most saves (messages, flags, prefs)
+  // change nothing the directory shows, and must not produce Hub traffic. The visibility is
+  // remembered rather than assumed: a rename must not reset an owner's sharing decision to private.
+  const publishedBots = new Map()
+  // Whether the owner's existing directory entries were read for this sign-in; reset with the identity.
+  let directoryRead = false
+
+  // ---------------------------------------------------------------- scheduled messages
+  //
+  // A workgroup's scheduled message is the Host's promise, not the window's: the browser may be
+  // closed when it is due, and a message that only fires while somebody is looking is not the
+  // behaviour the original composer offers. The queue is a small JSON file beside the team's own
+  // state, written atomically, so a restart keeps what was scheduled and a send that failed keeps
+  // its reason instead of disappearing.
+
+  const schedulesPath = join(rt.home ?? rt.dshHome ?? '.', 'workgroup-schedules.json')
+  const loadSchedules = () => {
+    try {
+      const parsed = JSON.parse(readFileSync(schedulesPath, 'utf8'))
+      const entries = Array.isArray(parsed) ? parsed : []
+      return Object.fromEntries(entries
+        .filter(entry => entry && typeof entry.id === 'string' && typeof entry.roomId === 'string' && typeof entry.text === 'string' && Number.isFinite(entry.at))
+        .map(entry => [entry.id, entry]))
+    } catch {
+      // No file yet, or one this build cannot read: scheduling starts empty rather than throwing at
+      // install, because a bad queue must not take the whole Bot team down.
+      return {}
+    }
+  }
+  let schedules = loadSchedules()
+  let scheduleTimer
+  const persistSchedules = () => {
+    try {
+      mkdirSync(dirname(schedulesPath), { recursive: true })
+      const temporary = `${schedulesPath}.${process.pid}.tmp`
+      writeFileSync(temporary, JSON.stringify(Object.values(schedules), null, 2))
+      renameSync(temporary, schedulesPath)
+    } catch (error) {
+      rt.warn?.('ds-bot: scheduled workgroup messages were not saved: %s', error?.message ?? error)
+    }
+  }
+  const scheduleList = () => Object.values(schedules).sort((left, right) => left.at - right.at)
+  const armSchedules = () => {
+    if (scheduleTimer !== undefined) { clearTimeout(scheduleTimer); scheduleTimer = undefined }
+    if (publishingStopped) return
+    const next = scheduleList()[0]
+    if (next === undefined) return
+    const wait = next.at - Date.now()
+    // A signed-out Host cannot send; waking to the same due entry immediately would spin. Waiting a
+    // retry interval keeps the queue alive until the next sign-in.
+    const delay = Math.max(0, client?.signedIn === true ? wait : Math.max(wait, SCHEDULE_RETRY_MS))
+    scheduleTimer = setTimeout(() => { scheduleTimer = undefined; void fireDueSchedules() }, Math.min(delay, 2_147_483_647))
+    scheduleTimer.unref?.()
+  }
+  const fireDueSchedules = async () => {
+    const current = client
+    if (publishingStopped) return
+    if (current?.signedIn !== true) { armSchedules(); return }
+    const due = scheduleList().filter(entry => entry.at <= Date.now())
+    for (const entry of due) {
+      try {
+        await workgroup.sendMessage(entry.roomId, entry.text, { clientMessageId: entry.clientMessageId })
+        delete schedules[entry.id]
+      } catch (error) {
+        // Kept, with the reason and a later attempt: a scheduled message the sender believes in
+        // must not vanish because the Hub was briefly unavailable.
+        if (schedules[entry.id] !== undefined) {
+          schedules[entry.id] = { ...entry, at: Date.now() + SCHEDULE_RETRY_MS, lastError: error?.message ?? String(error) }
+        }
+      }
+    }
+    persistSchedules()
+    armSchedules()
+  }
+  let heartbeatTimer
+  let syncTimer
+  let syncChain = Promise.resolve()
+  let syncPending = false
+  let syncQueued = false
+  let publishingStopped = false
+  // Bumped whenever the Hub identity changes, so a pass still in flight for the previous identity
+  // cannot record its answers against the new one.
+  let publishGeneration = 0
+  // With the flags initialized, a queue restored from disk can arm its first due time.
+  armSchedules()
 
   const publishWorkgroupEvent = event => {
     const roomId = event?.roomId
@@ -165,20 +275,219 @@ export function install(rt) {
           clearHubSession(statePath)
           connectionState = 'signed-out'
           connectionDetail = undefined
+          resetBotPublishing()
         }
       }
       if (client === current && current.signedIn) {
         await startBridge()
+        void requestBotSync()
         return
       }
       await ensureClient().bootstrap({ installationId, deviceLabel: 'DSH Bot', platform: 'web' })
       await startBridge()
+      void requestBotSync()
     })()
     const tracked = operation.finally(() => {
       if (guestSessionStarting === tracked) guestSessionStarting = undefined
     })
     guestSessionStarting = tracked
     return tracked
+  }
+
+  /** The local Bots that belong in the Hub directory. */
+  const localBots = () => Object.values(rt.state?.bots ?? {}).filter(bot => (
+    typeof bot?.id === 'string' && bot.id !== '' && typeof bot?.name === 'string' && bot.name.trim() !== ''
+  ))
+
+  const warnDirectory = (action, botId, error) => {
+    rt.warn?.('ds-bot: could not %s Bot %s in the Hub directory: %s', action, botId, error?.message ?? error)
+  }
+
+  const heartbeatBot = async (current, botId) => {
+    try {
+      await current.request('POST', `/bots/${encodeURIComponent(botId)}/heartbeat`, { body: { state: 'online' } })
+    } catch (error) {
+      // Presence is a convenience, so a Hub that is briefly unreachable stays a warning: the Bot
+      // still answers its owner, and the next heartbeat repairs the directory when the Hub returns.
+      rt.warn?.('ds-bot: Bot %s heartbeat was not recorded: %s', botId, error?.message ?? error)
+    }
+  }
+
+  /**
+   * Learn what the signed-in identity has already published, once per sign-in.
+   *
+   * A Host that was not running when a Bot was deleted cannot have withdrawn it, so the directory
+   * keeps an offline entry nobody can publish again. Reading the owner's own entries first lets this
+   * pass withdraw those stale rows and, just as importantly, remember the visibility the owner
+   * chose — a rename must republish the same sharing decision, not reset it to private.
+   *
+   * A failed read is a warning, not a reason to skip publishing: the local team still needs its
+   * directory entries, and a later pass retries the reconciliation.
+   */
+  async function reconcileDirectory(current) {
+    const ownerUserId = current.identity?.userId
+    if (typeof ownerUserId !== 'string' || ownerUserId === '') return false
+    let listed
+    try {
+      listed = await current.request('GET', `/bots/directory?ownerUserId=${encodeURIComponent(ownerUserId)}`)
+    } catch (error) {
+      rt.warn?.('ds-bot: the Bot directory could not be read: %s', error?.message ?? error)
+      return false
+    }
+    const entries = Array.isArray(listed?.bots) ? listed.bots : []
+    const localIds = new Set(localBots().map(bot => bot.id))
+    for (const entry of entries) {
+      if (typeof entry?.botId !== 'string' || entry.botId === '') continue
+      if (!localIds.has(entry.botId)) {
+        try {
+          await current.request('POST', `/bots/${encodeURIComponent(entry.botId)}/withdraw`, { body: {} })
+        } catch (error) {
+          if (error?.code !== 'NO_SUCH_ENTRY') warnDirectory('withdraw', entry.botId, error)
+        }
+        continue
+      }
+      if (!publishedBots.has(entry.botId)) {
+        publishedBots.set(entry.botId, {
+          displayName: typeof entry.displayName === 'string' ? entry.displayName : '',
+          visibility: entry.visibility === 'room' || entry.visibility === 'public' ? entry.visibility : 'private',
+        })
+      }
+    }
+    return true
+  }
+
+  /**
+   * Publish the local team's Bots to the Hub directory, and withdraw the ones this Host published
+   * that are no longer part of the team.
+   *
+   * The directory is discovery and presence, not room membership. A Bot is published private unless
+   * its owner shared it; the owner can still add it to a room either way. No model, Session, path,
+   * or capability field is sent.
+   */
+  async function syncLocalBots() {
+    const current = client
+    if (publishingStopped || current?.signedIn !== true) return
+    const generation = publishGeneration
+    if (!directoryRead) directoryRead = await reconcileDirectory(current)
+    if (generation !== publishGeneration) return
+    const bots = localBots()
+    const ids = new Set(bots.map(bot => bot.id))
+    for (const botId of Array.from(publishedBots.keys())) {
+      if (ids.has(botId)) continue
+      try {
+        await current.request('POST', `/bots/${encodeURIComponent(botId)}/withdraw`, { body: {} })
+      } catch (error) {
+        // A withdraw that finds nothing to withdraw has already achieved what it was for.
+        if (error?.code !== 'NO_SUCH_ENTRY') {
+          warnDirectory('withdraw', botId, error)
+          continue
+        }
+      }
+      if (generation !== publishGeneration) return
+      publishedBots.delete(botId)
+    }
+    for (const bot of bots) {
+      const displayName = bot.name.trim()
+      // The Hub entry is keyed by (owner, botId) and updated in place, so an unchanged name needs
+      // no request at all: this is what keeps ordinary saves out of the directory. The visibility
+      // is the one already recorded, so a rename does not silently narrow a shared Bot.
+      const known = publishedBots.get(bot.id)
+      if (known?.displayName === displayName && known.visibility !== undefined) continue
+      const visibility = known?.visibility ?? 'private'
+      try {
+        await current.request('POST', '/bots', {
+          // The whole body: the directory holds a name, a visibility decision, and the id this
+          // runtime answers for. Instructions, model, Session, folder, tools, and capabilities are
+          // execution details and never leave this machine.
+          body: { botId: bot.id, displayName, visibility },
+        })
+      } catch (error) {
+        warnDirectory('publish', bot.id, error)
+        continue
+      }
+      if (generation !== publishGeneration) return
+      publishedBots.set(bot.id, { displayName, visibility })
+      // Publishing records an intention to be reachable; the first heartbeat is what makes the
+      // entry online, so it follows immediately rather than waiting a whole interval.
+      await heartbeatBot(current, bot.id)
+    }
+  }
+
+  /** One heartbeat round for every Bot this Host has published. */
+  const heartbeatPublishedBots = async () => {
+    const current = client
+    if (publishingStopped || current?.signedIn !== true) return
+    for (const botId of Array.from(publishedBots.keys())) await heartbeatBot(current, botId)
+  }
+
+  /**
+   * Keep presence fresh while this Host runs.
+   *
+   * A self-rescheduling timeout rather than an interval: a slow Hub cannot stack overlapping
+   * rounds, and there is one handle for sign-out, a Hub switch, and disposal to clear.
+   */
+  const scheduleHeartbeat = () => {
+    if (publishingStopped || heartbeatTimer !== undefined || publishedBots.size === 0 || client?.signedIn !== true) return
+    heartbeatTimer = setTimeout(() => {
+      heartbeatTimer = undefined
+      void heartbeatPublishedBots().finally(() => { scheduleHeartbeat() })
+    }, BOT_HEARTBEAT_MS)
+    heartbeatTimer.unref?.()
+  }
+
+  /** Coalesce the saves around a rename or a deletion into one directory pass. */
+  const scheduleBotSync = () => {
+    if (publishingStopped || client?.signedIn !== true) return
+    if (syncTimer !== undefined) clearTimeout(syncTimer)
+    syncTimer = setTimeout(() => {
+      syncTimer = undefined
+      void requestBotSync()
+    }, BOT_SYNC_DEBOUNCE_MS)
+    syncTimer.unref?.()
+  }
+
+  /**
+   * Run at most one directory pass at a time, and keep the heartbeat alive after each one.
+   *
+   * Two passes racing over the same save could publish a Bot twice, or withdraw it between its
+   * publish and its heartbeat. A request that arrives during a pass asks for one more pass rather
+   * than a parallel one, so a change made while the pass was reading is still seen.
+   */
+  const requestBotSync = () => {
+    if (publishingStopped || client?.signedIn !== true) return syncChain
+    if (syncPending) {
+      syncQueued = true
+      return syncChain
+    }
+    syncPending = true
+    syncChain = syncChain.then(async () => {
+      try {
+        do {
+          syncQueued = false
+          await syncLocalBots()
+        } while (syncQueued && !publishingStopped)
+      } catch (error) {
+        rt.warn?.('ds-bot: local Bots were not published: %s', error?.message ?? error)
+      } finally {
+        syncPending = false
+        syncQueued = false
+        scheduleHeartbeat()
+        // A sign-in may have happened while a due message waited for it.
+        armSchedules()
+      }
+    })
+    return syncChain
+  }
+
+  /** Forget what the previous Hub identity was told; the next pass republishes under the new one. */
+  const resetBotPublishing = () => {
+    publishGeneration += 1
+    directoryRead = false
+    if (heartbeatTimer !== undefined) clearTimeout(heartbeatTimer)
+    if (syncTimer !== undefined) clearTimeout(syncTimer)
+    heartbeatTimer = undefined
+    syncTimer = undefined
+    publishedBots.clear()
   }
 
   /**
@@ -190,7 +499,12 @@ export function install(rt) {
   async function signIn({ userHandle, password, label }) {
     ensureClient()
     await client.login({ userHandle, password, label })
+    // A sign-in replaces whatever identity published the directory before (a guest session, or
+    // another account on this machine). Directory entries are owned per user, so this Host's Bots
+    // have to be published again under the account that is signed in now.
+    resetBotPublishing()
     await startBridge()
+    void requestBotSync()
     // Signing in is the first moment this Host can hear about approvals that happened while it was
     // away, so the approved queue is reconciled here rather than waiting for a room event.
     void rt.taskDispatchReconcile?.().catch(error => rt.warn?.('ds-bot: approved tasks were not reconciled: %s', error?.message ?? error))
@@ -209,6 +523,7 @@ export function install(rt) {
       connectionDetail = undefined
       watched.clear()
       roomStates.clear()
+      resetBotPublishing()
     }
     return hubView()
   }
@@ -218,6 +533,7 @@ export function install(rt) {
     ensureClient()
     if (!client.signedIn) return hubView()
     await startBridge()
+    void requestBotSync()
     void rt.taskDispatchReconcile?.().catch(error => rt.warn?.('ds-bot: approved tasks were not reconciled: %s', error?.message ?? error))
     return hubView()
   }
@@ -241,6 +557,7 @@ export function install(rt) {
       configError = undefined
       connectionState = 'signed-out'
       connectionDetail = undefined
+      resetBotPublishing()
     }
     return hubView()
   }
@@ -344,7 +661,13 @@ export function install(rt) {
         return state
       }
       case 'hub-create-room': {
-        const created = await client.request('POST', '/rooms', { body: { name: body.name, kind: 'workgroup' } })
+        const created = await client.request('POST', '/rooms', {
+          body: {
+            name: body.name,
+            kind: 'workgroup',
+            ...(Array.isArray(body.botIds) && body.botIds.length > 0 ? { botIds: body.botIds } : {}),
+          },
+        })
         watched.add(created.room.id)
         await startBridge()
         await bridge.watch(created.room.id)
@@ -360,6 +683,26 @@ export function install(rt) {
         return await workgroup.revokeInvitation(body.invitationId)
       case 'hub-rename-room':
         return await client.request('PATCH', `/rooms/${body.roomId}`, { body: { name: body.name } })
+      case 'hub-update-notice':
+        return await client.request('PATCH', `/rooms/${body.roomId}`, { body: { notice: body.notice } })
+      case 'hub-add-bot':
+        return await client.request('POST', `/rooms/${body.roomId}/bots`, { body: { botId: body.botId } })
+      case 'hub-remove-bot':
+        return await client.request('DELETE', `/rooms/${body.roomId}/bots/${encodeURIComponent(body.ownerUserId)}/${encodeURIComponent(body.botId)}`)
+      case 'hub-bot-invitations': {
+        // The Hub answers `{ invitations }`; the Browser's roster wants the list itself, and a
+        // wrapper object reaching it would read as "no invitations" rather than as a shape mismatch.
+        const listed = await client.request('GET', '/bot-invitations')
+        return listed.invitations ?? []
+      }
+      case 'hub-invite-bot':
+        return await client.request('POST', `/rooms/${body.roomId}/bot-invitations`, {
+          body: { ownerUserId: body.ownerUserId, botId: body.botId },
+        })
+      case 'hub-respond-bot-invitation':
+        return await client.request('POST', `/bot-invitations/${body.invitationId}/${body.decision}`, { body: {} })
+      case 'hub-task-events':
+        return await client.request('GET', `/rooms/${body.roomId}/task-events?limit=${String(body.limit ?? 100)}${body.before === undefined ? '' : `&before=${encodeURIComponent(body.before)}`}`)
       case 'hub-download-artifact': {
         const file = await workgroup.downloadArtifact(body.artifactId)
         return { bytes: Array.from(file.bytes), contentType: file.headers?.['content-type'] ?? 'application/octet-stream' }
@@ -416,6 +759,61 @@ export function install(rt) {
         return await workgroup.head(body.roomId)
       case 'hub-directory':
         return await workgroup.publishedBots({ ownerUserId: body.ownerUserId, query: body.query })
+      case 'hub-bot-candidates':
+        // The caller's own Bots plus the ones other members published and made visible to them.
+        // The Hub filters by membership and visibility; this Host only forwards.
+        return await client.request('GET', `/rooms/${body.roomId}/bot-candidates`)
+      case 'hub-workgroup-schedules':
+        return { schedules: scheduleList() }
+      case 'hub-schedule-workgroup-message': {
+        const text = String(body.text ?? '').trim()
+        const at = Number(body.at)
+        if (typeof body.roomId !== 'string' || body.roomId === '') {
+          throw Object.assign(new Error('A scheduled message needs a room'), { code: 'bot/invalid' })
+        }
+        if (text === '') throw Object.assign(new Error('A scheduled message needs its text'), { code: 'bot/invalid' })
+        if (!Number.isFinite(at) || at <= 0) {
+          throw Object.assign(new Error('A scheduled message needs a time'), { code: 'bot/invalid' })
+        }
+        const entry = {
+          id: randomUUID(),
+          roomId: body.roomId,
+          text,
+          at,
+          // The idempotency key is minted once, here: a retry after a timeout must not produce a
+          // second message, and it survives a Host restart with the entry.
+          clientMessageId: typeof body.clientMessageId === 'string' && body.clientMessageId !== '' ? body.clientMessageId : randomUUID(),
+          createdAt: new Date().toISOString(),
+        }
+        schedules[entry.id] = entry
+        persistSchedules()
+        armSchedules()
+        return { schedule: entry, schedules: scheduleList() }
+      }
+      case 'hub-cancel-workgroup-schedule': {
+        if (schedules[body.id] === undefined) {
+          throw Object.assign(new Error('No such scheduled message'), { code: 'bot/invalid' })
+        }
+        delete schedules[body.id]
+        persistSchedules()
+        armSchedules()
+        return { schedules: scheduleList() }
+      }
+      case 'hub-set-bot-visibility': {
+        // The owner decides who may discover a Bot. Re-publishing the entry records that decision in
+        // the directory; nothing about the Bot's execution leaves this machine.
+        const bot = localBots().find(entry => entry.id === body.botId)
+        if (bot === undefined) throw Object.assign(new Error('No such local Bot'), { code: 'bot/invalid' })
+        if (body.visibility !== 'private' && body.visibility !== 'room') {
+          throw Object.assign(new Error('Visibility must be private or room'), { code: 'bot/invalid' })
+        }
+        const displayName = bot.name.trim()
+        const published = await client.request('POST', '/bots', {
+          body: { botId: bot.id, displayName, visibility: body.visibility },
+        })
+        publishedBots.set(bot.id, { displayName, visibility: body.visibility })
+        return published
+      }
       case 'hub-tasks':
         return await client.request('GET', `/rooms/${body.roomId}/tasks`)
       case 'hub-approve-task': {
@@ -456,6 +854,29 @@ export function install(rt) {
       }
       case 'hub-memory':
         return await client.request('GET', `/rooms/${body.roomId}/memories`)
+      case 'hub-memory-search': {
+        const query = new URLSearchParams({ q: String(body.query ?? '') })
+        return await client.request('GET', `/rooms/${body.roomId}/memories/search?${query.toString()}`)
+      }
+      case 'hub-memory-create':
+        return await client.request('POST', `/rooms/${body.roomId}/memories`, {
+          body: {
+            body: body.body,
+            ...(body.scope === undefined ? {} : { scope: body.scope }),
+            ...(body.sourceMessageId === undefined ? {} : { sourceMessageId: body.sourceMessageId }),
+            ...(body.expiresAt === undefined ? {} : { expiresAt: body.expiresAt }),
+          },
+        })
+      case 'hub-memory-revise':
+        return await client.request('PATCH', `/memories/${body.memoryId}`, {
+          body: {
+            body: body.body,
+            expectedRevision: body.expectedRevision,
+            ...(body.expiresAt === undefined ? {} : { expiresAt: body.expiresAt }),
+          },
+        })
+      case 'hub-memory-delete':
+        return await client.request('DELETE', `/memories/${body.memoryId}`)
       case 'hub-me':
         return await client.me()
       case 'hub-devices':
@@ -464,6 +885,27 @@ export function install(rt) {
         throw Object.assign(new Error(`Unknown workgroup endpoint: ${endpoint}`), { code: 'bot/invalid' })
     }
   }
+
+  // Bot creation, renames, and deletions all commit through `rt.save`, so that is where the
+  // directory learns about them. The wrapper schedules work and returns the save's own promise
+  // untouched, so a failed write still fails exactly as it did; the directory pass re-reads the
+  // team when it runs. The state lives in this install, so two DSH hosts cannot share it.
+  const saveBeforeHubPublish = rt.save
+  if (typeof saveBeforeHubPublish === 'function') {
+    rt.save = (...args) => {
+      const saved = saveBeforeHubPublish(...args)
+      scheduleBotSync()
+      return saved
+    }
+  }
+
+  // A disposed plugin must not keep a timer or keep writing to a Hub the Bot no longer belongs to.
+  rt.ctx?.effect?.(() => () => {
+    publishingStopped = true
+    if (scheduleTimer !== undefined) clearTimeout(scheduleTimer)
+    scheduleTimer = undefined
+    resetBotPublishing()
+  }, 'ds-bot: Hub Bot directory')
 
   // `configError` is deliberately not thrown here: see the module comment. The browser half reads
   // `hub-view` and shows "no Hub configured" rather than the whole Bot entry failing to activate.
