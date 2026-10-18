@@ -736,6 +736,15 @@ Do not commit local `.env` files.
 - Do not modify `server/` in this plan.
 - Do not add a third Hub configuration UI or a second config file format.
 
+## Execution Record (2026-10-18)
+
+- Task 1 completed in `1dd44117`; `app-boot` suite: 85/85 passed.
+- Task 2 completed in `3a087732`; desktop login-shell suite: 17 passed, 5 skipped.
+- Task 3 completed in `7832e5e4` and `e3fc1dc1`; local development home `.env` created at `application/apps/desktop/.desktop-build/development/home/.env` and ignored by Git.
+- Task 4 partially verified: the real development home `.env` was loaded as `user-env`, `resolveHubUrl` returned `http://127.0.0.1:8443/api/v1`, and the Hub health endpoint returned HTTP 200. A real Electron GUI launch was not executed in this tool session; no background job or GUI controller was available.
+- Task 5 verification: `npx vitest run integrations/workgroup/tests/a11-hub-provider.spec.ts integrations/workgroup/tests/a14-hub-settings.spec.ts` passed 16/16; `npx tsc -b apps/desktop/tsconfig.host.json --pretty false` passed. The full `pnpm run typecheck` is blocked by an unrelated baseline Typert path error under `packages/interaction/permission-presets`. The full `pnpm run test:docs` is blocked by pre-existing translation-pairing, package README, archived-note, and doc-standard timeout failures; `markdown wrap`, links, type-equivalence, and budgets passed. No new concrete-terms finding was reported for the changed docs.
+- Acceptance items requiring a real Desktop click-through remain open: the visible `NOT_CONFIGURED` disappearance, workgroup creation from the UI, and appearance in `/admin/`.
+
 ## Plan Self-Check
 
 - Spec coverage: root cause, home-layer allowlist, project-layer rejection, macOS shell, docs, migration, tests, and E2E are each mapped to a task.
