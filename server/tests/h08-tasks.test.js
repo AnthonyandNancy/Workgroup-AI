@@ -64,12 +64,15 @@ async function withHub(run) {
   const delegation = async () => {
     const alice = await person('finance.a', '财务 A')
     const bob = await person('finance.b', '财务 B')
-    const created = await call('POST', '/rooms', { name: 'Finance' }, alice.token)
+    const created = await call('POST', '/rooms', { name: 'Finance', kind: 'workgroup' }, alice.token)
     const roomId = created.body.room.id
     const invited = await call('POST', `/rooms/${roomId}/invitations`, { targetUserId: bob.userId }, alice.token)
     await call('POST', `/invitations/${invited.body.invitation.id}/accept`, {}, bob.token)
-    // Bob publishes his Chief so Alice can address it.
+    // Bob publishes his Chief and explicitly adds it to this workgroup; directory visibility
+    // alone is discovery, not room membership.
     await call('POST', '/bots', { botId: 'chief', displayName: 'Chief', visibility: 'public' }, bob.token)
+    const added = await call('POST', `/rooms/${roomId}/bots`, { botId: 'chief' }, bob.token)
+    assert.equal(added.status, 201, added.raw)
     return { alice, bob, roomId }
   }
   const askTask = (alice, roomId, bob, description, targetBotId = 'chief') =>

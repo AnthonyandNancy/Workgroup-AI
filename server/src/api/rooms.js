@@ -14,16 +14,42 @@
 
 import {
   RoomError, InvitationError,
-  createRoom, listRoomsFor, listMembers, findRoom, requireMember, requireRoomAdmin,
+  createRoom, listRoomSummariesFor, listMembers, findRoom, requireMember, requireRoomAdmin,
   createInvitation, acceptInvitation, declineInvitation, revokeInvitation, findInvitation,
-  listInvitationsFor, removeMember, leaveRoom, setMemberRole, renameRoom,
-  publicRoom, publicMember, publicInvitation, dissolveRoom,
+  listInvitationsFor, removeMember, leaveRoom, setMemberRole, updateRoom,
+  publicRoom, publicRoomSummary, publicMember, publicInvitation, dissolveRoom,
 } from '../modules/rooms/store.js'
-import { cancelTask } from '../modules/tasks/store.js'
+import { cancelOpenTasksForBot, cancelTask } from '../modules/tasks/store.js'
+import {
+  RoomBotError, addOwnBot, inviteBot, acceptBotInvitation, declineBotInvitation,
+  revokeBotInvitation, removeRoomBot, removeBotsOwnedBy, listRoomBots, listBotCandidates,
+  listBotInvitationsFor,
+} from '../modules/rooms/bots.js'
 import { makeEvent } from '../realtime/events.js'
 
 /** Map a domain refusal to a response, keeping the status semantics documented above. */
 function roomFailure(reply, error) {
+  if (error instanceof RoomBotError) {
+    switch (error.code) {
+      case 'ROOM_DISSOLVED':
+        return reply.code(409).send({ error: { code: error.code, message: error.message } })
+      case 'ALREADY_IN_ROOM':
+      case 'INVITATION_NOT_PENDING':
+      case 'OWN_BOT_DIRECT':
+        return reply.code(409).send({ error: { code: error.code, message: error.message } })
+      case 'INVITATION_EXPIRED':
+        return reply.code(410).send({ error: { code: error.code, message: error.message } })
+      case 'NOT_ALLOWED':
+        return reply.code(403).send({ error: { code: error.code, message: error.message } })
+      case 'NO_SUCH_ROOM':
+      case 'NO_SUCH_BOT':
+      case 'NO_SUCH_INVITATION':
+      case 'NOT_IN_ROOM':
+        return reply.code(404).send({ error: { code: error.code, message: error.message } })
+      default:
+        return reply.code(400).send({ error: { code: error.code, message: error.message } })
+    }
+  }
   if (error instanceof RoomError || error instanceof InvitationError) {
     switch (error.code) {
       case 'NOT_A_MEMBER':
@@ -32,6 +58,7 @@ function roomFailure(reply, error) {
       case 'NO_SUCH_ROOM':
       case 'NO_SUCH_USER':
       case 'NO_SUCH_INVITATION':
+      case 'NO_SUCH_BOT':
         return reply.code(404).send({ error: { code: error.code, message: error.message } })
       case 'NOT_A_ROOM_ADMIN':
       case 'ROOM_OWNER_REQUIRED':
@@ -80,7 +107,7 @@ export function makeRoomRoutes({ requireAuth }) {
     // ---- rooms ----
 
     fastify.get('/api/v1/rooms', { preHandler: requireAuth }, async (request) => ({
-      rooms: listRoomsFor(db, request.auth.user.id).map(publicRoom),
+      rooms: listRoomSummariesFor(db, request.auth.user.id).map(publicRoomSummary),
     }))
 
     fastify.post('/api/v1/rooms', { preHandler: requireAuth }, async (request, reply) => {
@@ -91,8 +118,12 @@ export function makeRoomRoutes({ requireAuth }) {
           kind: body.kind,
           ownerUserId: request.auth.user.id,
           ownerDeviceId: request.auth.deviceId,
+          botIds: body.botIds,
         })
-        return reply.code(201).send({ room: publicRoom({ ...room, member_role: 'owner' }) })
+        return reply.code(201).send({
+          room: publicRoom({ ...room, member_role: 'owner' }),
+          bots: listRoomBots(db, room.id),
+        })
       } catch (error) {
         return roomFailure(reply, error)
       }
@@ -104,7 +135,140 @@ export function makeRoomRoutes({ requireAuth }) {
         return reply.code(200).send({
           room: publicRoom({ ...findRoom(db, request.params.roomId), member_role: room.role }),
           members: membersWithPresence(request.params.roomId),
+          bots: listRoomBots(db, request.params.roomId),
         })
+      } catch (error) {
+        return roomFailure(reply, error)
+      }
+    })
+
+    /**
+     * The Bots the caller may bring into this room.
+     *
+     * `requireMember` is the same gate the other room reads use, so a non-member receives the
+     * same 404 as an unknown room and cannot use the candidate list to probe membership.
+     */
+    fastify.get('/api/v1/rooms/:roomId/bot-candidates', { preHandler: requireAuth }, async (request, reply) => {
+      try {
+        return reply.code(200).send({
+          bots: listBotCandidates(db, {
+            roomId: request.params.roomId,
+            viewerUserId: request.auth.user.id,
+          }),
+        })
+      } catch (error) {
+        return roomFailure(reply, error)
+      }
+    })
+
+    /** Add one of the caller's own Bots to a workgroup. */
+    fastify.post('/api/v1/rooms/:roomId/bots', { preHandler: requireAuth }, async (request, reply) => {
+      try {
+        const bot = addOwnBot(db, {
+          roomId: request.params.roomId,
+          actorUserId: request.auth.user.id,
+          actorDeviceId: request.auth.deviceId,
+          botId: request.body?.botId,
+        })
+        fastify.hub.realtime.publishToRoom(request.params.roomId,
+          makeEvent('room.bot_added', { roomId: request.params.roomId, ownerUserId: bot.ownerUserId, botId: bot.botId }, { roomId: request.params.roomId }))
+        return reply.code(201).send({ bot })
+      } catch (error) {
+        return roomFailure(reply, error)
+      }
+    })
+
+    fastify.delete('/api/v1/rooms/:roomId/bots/:ownerUserId/:botId', { preHandler: requireAuth }, async (request, reply) => {
+      try {
+        const removed = removeRoomBot(db, {
+          roomId: request.params.roomId,
+          actorUserId: request.auth.user.id,
+          actorDeviceId: request.auth.deviceId,
+          ownerUserId: request.params.ownerUserId,
+          botId: request.params.botId,
+        })
+        const cancelledTasks = cancelOpenTasksForBot(db, {
+          roomId: request.params.roomId,
+          ownerUserId: removed.ownerUserId,
+          botId: removed.botId,
+          actorUserId: request.auth.user.id,
+          actorDeviceId: request.auth.deviceId,
+        })
+        fastify.hub.realtime.publishToRoom(request.params.roomId,
+          makeEvent('room.bot_removed', { roomId: request.params.roomId, ownerUserId: removed.ownerUserId, botId: removed.botId }, { roomId: request.params.roomId }))
+        for (const taskId of cancelledTasks) {
+          fastify.hub.realtime.publishToRoom(request.params.roomId,
+            makeEvent('task.cancelled', { taskId, reason: 'bot_removed' }, { roomId: request.params.roomId }))
+        }
+        return reply.code(200).send({ ...removed, cancelledTasks })
+      } catch (error) {
+        return roomFailure(reply, error)
+      }
+    })
+
+    fastify.post('/api/v1/rooms/:roomId/bot-invitations', { preHandler: requireAuth }, async (request, reply) => {
+      try {
+        const invitation = inviteBot(db, {
+          roomId: request.params.roomId,
+          actorUserId: request.auth.user.id,
+          actorDeviceId: request.auth.deviceId,
+          ownerUserId: request.body?.ownerUserId,
+          botId: request.body?.botId,
+        })
+        fastify.hub.realtime.publishToRoom(request.params.roomId,
+          makeEvent('bot_invitation.created', { roomId: request.params.roomId, invitation }, { roomId: request.params.roomId }))
+        return reply.code(201).send({ invitation })
+      } catch (error) {
+        return roomFailure(reply, error)
+      }
+    })
+
+    fastify.get('/api/v1/bot-invitations', { preHandler: requireAuth }, async (request) => ({
+      invitations: listBotInvitationsFor(db, request.auth.user.id),
+    }))
+
+    fastify.post('/api/v1/bot-invitations/:invitationId/accept', { preHandler: requireAuth }, async (request, reply) => {
+      try {
+        const result = acceptBotInvitation(db, {
+          invitationId: request.params.invitationId,
+          ownerUserId: request.auth.user.id,
+          actorDeviceId: request.auth.deviceId,
+        })
+        fastify.hub.realtime.publishToRoom(result.roomId,
+          makeEvent('room.bot_added', { roomId: result.roomId, ownerUserId: result.ownerUserId, botId: result.botId }, { roomId: result.roomId }))
+        // The invitation is no longer pending, and every member's copy of it has to say so: the
+        // requester's "waiting for the owner" and the owner's inbox both key off this event.
+        fastify.hub.realtime.publishToRoom(result.roomId,
+          makeEvent('bot_invitation.changed', {
+            roomId: result.roomId,
+            invitationId: request.params.invitationId,
+            ownerUserId: result.ownerUserId,
+            botId: result.botId,
+            status: 'accepted',
+          }, { roomId: result.roomId }))
+        return reply.code(200).send(result)
+      } catch (error) {
+        return roomFailure(reply, error)
+      }
+    })
+
+    fastify.post('/api/v1/bot-invitations/:invitationId/decline', { preHandler: requireAuth }, async (request, reply) => {
+      try {
+        const published = declineBotInvitation(db, { invitationId: request.params.invitationId, actorUserId: request.auth.user.id })
+        fastify.hub.realtime.publishToRoom(published.roomId,
+          makeEvent('bot_invitation.changed', { roomId: published.roomId, invitation: published, status: published.status }, { roomId: published.roomId }))
+        return reply.code(200).send({ invitation: published })
+      } catch (error) {
+        return roomFailure(reply, error)
+      }
+    })
+
+    fastify.post('/api/v1/bot-invitations/:invitationId/revoke', { preHandler: requireAuth }, async (request, reply) => {
+      try {
+        const published = revokeBotInvitation(db, { invitationId: request.params.invitationId, actorUserId: request.auth.user.id })
+        fastify.hub.realtime.publishToRoom(published.roomId,
+          makeEvent('bot_invitation.changed', { roomId: published.roomId, invitation: published, status: published.status }, { roomId: published.roomId }))
+        return reply.code(200).send({ invitation: published })
       } catch (error) {
         return roomFailure(reply, error)
       }
@@ -114,14 +278,22 @@ export function makeRoomRoutes({ requireAuth }) {
       const body = request.body ?? {}
       try {
         requireRoomAdmin(db, { roomId: request.params.roomId, userId: request.auth.user.id })
-        const room = renameRoom(db, {
+        const before = findRoom(db, request.params.roomId)
+        const room = updateRoom(db, {
           roomId: request.params.roomId,
-          name: body.name,
+          ...(body.name === undefined ? {} : { name: body.name }),
+          ...(body.notice === undefined ? {} : { notice: body.notice }),
           actorUserId: request.auth.user.id,
           actorDeviceId: request.auth.deviceId,
         })
-        fastify.hub.realtime.publishToRoom(request.params.roomId,
-          makeEvent('room.renamed', { roomId: request.params.roomId, name: room.name }, { roomId: request.params.roomId }))
+        if (body.name !== undefined && room.name !== before?.name) {
+          fastify.hub.realtime.publishToRoom(request.params.roomId,
+            makeEvent('room.renamed', { roomId: request.params.roomId, name: room.name }, { roomId: request.params.roomId }))
+        }
+        if (body.notice !== undefined && room.notice !== (before?.notice ?? '')) {
+          fastify.hub.realtime.publishToRoom(request.params.roomId,
+            makeEvent('room.notice_changed', { roomId: request.params.roomId, notice: room.notice }, { roomId: request.params.roomId }))
+        }
         return reply.code(200).send({ room: publicRoom(room) })
       } catch (error) {
         return roomFailure(reply, error)
@@ -148,12 +320,30 @@ export function makeRoomRoutes({ requireAuth }) {
         })
         // The subscription check happens at subscribe time, so an open socket would keep
         // receiving this room's events after the member was removed unless it is revoked here.
+        const removedBots = removeBotsOwnedBy(db, {
+          roomId: request.params.roomId,
+          ownerUserId: request.params.userId,
+          actorUserId: request.auth.user.id,
+          actorDeviceId: request.auth.deviceId,
+        })
+        const cancelledTasks = []
+        for (const removed of removedBots) {
+          cancelledTasks.push(...cancelOpenTasksForBot(db, {
+            roomId: request.params.roomId,
+            ownerUserId: removed.ownerUserId,
+            botId: removed.botId,
+            actorUserId: request.auth.user.id,
+            actorDeviceId: request.auth.deviceId,
+          }))
+          fastify.hub.realtime.publishToRoom(request.params.roomId,
+            makeEvent('room.bot_removed', { roomId: request.params.roomId, ownerUserId: removed.ownerUserId, botId: removed.botId }, { roomId: request.params.roomId }))
+        }
         for (const connection of fastify.hub.realtime.connections.values()) {
           if (connection.user.id !== request.params.userId) continue
           if (connection.rooms.has(request.params.roomId)) fastify.hub.realtime.unsubscribe(connection, request.params.roomId)
           fastify.hub.realtime.send(connection, makeEvent('member.changed', { roomId: request.params.roomId, reason: 'removed' }))
         }
-        return reply.code(200).send(result)
+        return reply.code(200).send({ ...result, removedBots, cancelledTasks })
       } catch (error) {
         return roomFailure(reply, error)
       }
@@ -183,7 +373,25 @@ export function makeRoomRoutes({ requireAuth }) {
           userId: request.auth.user.id,
           deviceId: request.auth.deviceId,
         })
-        return reply.code(200).send(result)
+        const removedBots = removeBotsOwnedBy(db, {
+          roomId: request.params.roomId,
+          ownerUserId: request.auth.user.id,
+          actorUserId: request.auth.user.id,
+          actorDeviceId: request.auth.deviceId,
+        })
+        const cancelledTasks = []
+        for (const removed of removedBots) {
+          cancelledTasks.push(...cancelOpenTasksForBot(db, {
+            roomId: request.params.roomId,
+            ownerUserId: removed.ownerUserId,
+            botId: removed.botId,
+            actorUserId: request.auth.user.id,
+            actorDeviceId: request.auth.deviceId,
+          }))
+          fastify.hub.realtime.publishToRoom(request.params.roomId,
+            makeEvent('room.bot_removed', { roomId: request.params.roomId, ownerUserId: removed.ownerUserId, botId: removed.botId }, { roomId: request.params.roomId }))
+        }
+        return reply.code(200).send({ ...result, removedBots, cancelledTasks })
       } catch (error) {
         return roomFailure(reply, error)
       }

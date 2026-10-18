@@ -19,6 +19,7 @@ import {
   TaskError,
   createTask, decideTask, cancelTask, transition, findTask, findApprovalForTask, listTaskEvents,
   listTasksForRoom, listPendingForOwner, listApprovedForOwner, latestProgressReason, publicTask, publicTaskEvent,
+  listTaskEventsForRoom,
 } from '../modules/tasks/store.js'
 import { RoomError, requireMember, listMembers } from '../modules/rooms/store.js'
 import { revokeGrantsForTask } from '../modules/tasks/grants.js'
@@ -171,6 +172,22 @@ export function makeTaskRoutes({ requireAuth }) {
         // recorded public payload, which never carried the scope.
         events: listTaskEvents(db, task.id).map(publicTaskEvent),
       })
+    })
+
+    /** The room's redacted task activity stream. This is not a message log. */
+    fastify.get('/api/v1/rooms/:roomId/task-events', { preHandler: requireAuth }, async (request, reply) => {
+      try {
+        requireMember(db, { roomId: request.params.roomId, userId: request.auth.user.id })
+        return reply.code(200).send({
+          events: listTaskEventsForRoom(db, {
+            roomId: request.params.roomId,
+            limit: request.query?.limit,
+            ...(request.query?.before === undefined ? {} : { before: request.query.before }),
+          }),
+        })
+      } catch (error) {
+        return taskFailure(reply, error)
+      }
     })
 
     /** The task list for one room. */

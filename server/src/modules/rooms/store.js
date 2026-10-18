@@ -25,6 +25,8 @@ export class RoomError extends Error {
 }
 
 const ROOM_NAME_MAX = 120
+const ROOM_NOTICE_MAX = 2000
+const ROOM_SUMMARY_PREVIEW_MAX = 80
 const INVITATION_TTL_SECONDS_DEFAULT = 60 * 60 * 24 * 7
 export const ROOM_ROLES = ['owner', 'admin', 'member']
 /** Roles an invitation may grant. Ownership is not transferable by invitation. */
@@ -54,6 +56,15 @@ export function assertRoomName(name) {
   const value = String(name ?? '').trim()
   if (value.length < 1 || value.length > ROOM_NAME_MAX) {
     throw new RoomError(`A room name must be 1-${ROOM_NAME_MAX} characters`, 'INVALID_ROOM_NAME')
+  }
+  return value
+}
+
+/** The notice is shared instructions, not a message: it has the local-group limit. */
+export function assertRoomNotice(notice) {
+  const value = String(notice ?? '').trim()
+  if (value.length > ROOM_NOTICE_MAX) {
+    throw new RoomError(`A room notice may be at most ${ROOM_NOTICE_MAX} characters`, 'INVALID_ROOM_NOTICE')
   }
   return value
 }
@@ -137,6 +148,15 @@ export function requireRoomAdmin(db, { roomId, userId }) {
   return membership
 }
 
+/** Every mutating room route asks this before changing a row. */
+export function requireLiveRoom(db, { roomId, userId }) {
+  const membership = requireMember(db, { roomId, userId })
+  const room = findRoom(db, roomId)
+  if (room === undefined) throw new RoomError('No such room', 'NO_SUCH_ROOM')
+  if (isDissolved(room)) throw new RoomError('This workgroup has been dissolved', 'ROOM_DISSOLVED')
+  return { room, membership }
+}
+
 export function findRoom(db, roomId) {
   return db.prepare('SELECT * FROM rooms WHERE id = ?').get(roomId)
 }
@@ -149,6 +169,40 @@ export function listRoomsFor(db, userId) {
     WHERE m.user_id = ? AND m.removed_at IS NULL
     ORDER BY r.created_at
   `).all(userId)
+}
+
+/**
+ * The caller's rooms with the sidebar summary, in one query.
+ *
+ * The summary is deliberately batched: a list of twenty rooms must not become twenty extra
+ * reads per field group. Each correlated subquery is indexed by a room id, while the caller's
+ * own pending approvals are counted separately from every other member's.
+ */
+export function listRoomSummariesFor(db, userId) {
+  return db.prepare(`
+    SELECT r.*, m.role AS member_role, m.joined_at AS member_joined_at,
+      (SELECT COUNT(*) FROM room_members rm
+        WHERE rm.room_id = r.id AND rm.removed_at IS NULL) AS member_count,
+      (SELECT COUNT(*) FROM room_bots rb
+        WHERE rb.room_id = r.id AND rb.removed_at IS NULL) AS bot_count,
+      lm.created_at AS last_message_at,
+      lm.body AS last_message_body,
+      COALESCE(lm.room_seq, 0) AS last_message_seq,
+      (SELECT COUNT(*) FROM tasks t
+        WHERE t.room_id = r.id AND t.owner_user_id = ? AND t.state = 'PENDING_APPROVAL') AS pending_approval_count
+    FROM rooms r
+    JOIN room_members m ON m.room_id = r.id
+    LEFT JOIN messages lm ON lm.room_id = r.id
+      AND lm.room_seq = (SELECT MAX(room_seq) FROM messages WHERE room_id = r.id)
+    WHERE m.user_id = ? AND m.removed_at IS NULL
+    ORDER BY r.created_at
+  `).all(userId, userId)
+}
+
+/** A message preview is one line: controls and newlines collapse to spaces, then it is cut. */
+function summarizeMessageBody(body) {
+  if (typeof body !== 'string') return ''
+  return body.replace(/\s+/g, ' ').trim().slice(0, ROOM_SUMMARY_PREVIEW_MAX)
 }
 
 export function listMembers(db, roomId) {
@@ -172,9 +226,21 @@ export function listMembers(db, roomId) {
  * `kind` is recorded here rather than inferred later from members or name. The audit entry
  * carries it too, so "was this room ever a workgroup" is answerable from the trail alone.
  */
-export function createRoom(db, { name, ownerUserId, ownerDeviceId, kind, actorOperatorId, now = new Date() }) {
+export function createRoom(db, { name, ownerUserId, ownerDeviceId, kind, botIds = [], actorOperatorId, now = new Date() }) {
   const roomName = assertRoomName(name)
   const roomKind = assertRoomKind(kind)
+  // The creator's own Bots may join at creation. Validated before the transaction starts: a room
+  // that was created and then failed to get its Bots would be a half-made workgroup the caller did
+  // not ask for, and the Hub must not leave one behind on a bad request.
+  const wantedBots = Array.isArray(botIds)
+    ? [...new Set(botIds.map(value => String(value ?? '').trim()).filter(value => value !== ''))]
+    : []
+  const joiningBots = wantedBots.map((botId) => {
+    const entry = db.prepare('SELECT bot_id, display_name FROM bot_directory WHERE owner_user_id = ? AND bot_id = ?')
+      .get(ownerUserId, botId)
+    if (entry === undefined) throw new RoomError('That Bot is not published', 'NO_SUCH_BOT')
+    return entry
+  })
   const id = randomUUID()
   const createdAt = nowIso(now)
   db.exec('BEGIN IMMEDIATE')
@@ -183,6 +249,12 @@ export function createRoom(db, { name, ownerUserId, ownerDeviceId, kind, actorOp
       .run(id, roomName, ownerUserId, createdAt, roomKind)
     db.prepare('INSERT INTO room_members (room_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)')
       .run(id, ownerUserId, 'owner', createdAt)
+    for (const entry of joiningBots) {
+      db.prepare(`INSERT INTO room_bots
+        (room_id, owner_user_id, bot_id, display_name, added_by_user_id, added_at, removed_at)
+        VALUES (?, ?, ?, ?, ?, ?, NULL)`)
+        .run(id, ownerUserId, entry.bot_id, entry.display_name, ownerUserId, createdAt)
+    }
     audit(db, {
       actorUserId: actorOperatorId === undefined ? ownerUserId : null,
       actorDeviceId: ownerDeviceId,
@@ -191,7 +263,7 @@ export function createRoom(db, { name, ownerUserId, ownerDeviceId, kind, actorOp
       objectType: 'room',
       objectId: id,
       outcome: 'success',
-      details: { name: roomName, kind: roomKind, ...(actorOperatorId === undefined ? {} : { operator: true }) },
+      details: { name: roomName, kind: roomKind, ...(joiningBots.length === 0 ? {} : { botIds: joiningBots.map(entry => entry.bot_id) }), ...(actorOperatorId === undefined ? {} : { operator: true }) },
       now,
     })
     db.exec('COMMIT')
@@ -207,6 +279,9 @@ export function createRoom(db, { name, ownerUserId, ownerDeviceId, kind, actorOp
 }
 
 export function renameRoom(db, { roomId, name, actorUserId, actorDeviceId, actorOperatorId, now = new Date() }) {
+  const room = findRoom(db, roomId)
+  if (room === undefined) throw new RoomError('No such room', 'NO_SUCH_ROOM')
+  if (isDissolved(room)) throw new RoomError('This workgroup has been dissolved', 'ROOM_DISSOLVED')
   const roomName = assertRoomName(name)
   db.exec('BEGIN IMMEDIATE')
   try {
@@ -230,6 +305,36 @@ export function renameRoom(db, { roomId, name, actorUserId, actorDeviceId, actor
     } catch {
       // See above.
     }
+    throw error
+  }
+  return findRoom(db, roomId)
+}
+
+/** Update the two room-profile fields an admin can edit without creating a new room. */
+export function updateRoom(db, {
+  roomId, name, notice, actorUserId, actorDeviceId, now = new Date(),
+}) {
+  const room = findRoom(db, roomId)
+  if (room === undefined) throw new RoomError('No such room', 'NO_SUCH_ROOM')
+  if (isDissolved(room)) throw new RoomError('This workgroup has been dissolved', 'ROOM_DISSOLVED')
+  const roomName = name === undefined ? room.name : assertRoomName(name)
+  const roomNotice = notice === undefined ? (room.notice ?? '') : assertRoomNotice(notice)
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    db.prepare('UPDATE rooms SET name = ?, notice = ? WHERE id = ?').run(roomName, roomNotice, roomId)
+    audit(db, {
+      actorUserId,
+      actorDeviceId,
+      eventType: 'room.updated',
+      objectType: 'room',
+      objectId: roomId,
+      outcome: 'success',
+      details: { ...(name === undefined ? {} : { name: roomName }), ...(notice === undefined ? {} : { notice: roomNotice }) },
+      now,
+    })
+    db.exec('COMMIT')
+  } catch (error) {
+    try { db.exec('ROLLBACK') } catch { /* preserve the original failure */ }
     throw error
   }
   return findRoom(db, roomId)
@@ -290,6 +395,7 @@ export function createInvitation(db, {
   const target = db.prepare('SELECT id, status FROM users WHERE id = ?').get(targetUserId)
   if (target === undefined) throw new InvitationError('No such user', 'NO_SUCH_USER')
   if (target.status !== 'active') throw new InvitationError('That account is disabled', 'ACCOUNT_DISABLED')
+  if (isDissolved(findRoom(db, roomId))) throw new InvitationError('This workgroup has been dissolved', 'ROOM_DISSOLVED')
 
   // Inviting an existing member is a no-op the caller should hear about, not a silent
   // second membership row.
@@ -344,6 +450,7 @@ export function acceptInvitation(db, { invitationId, userId, deviceId, now = new
 
   const room = findRoom(db, invitation.room_id)
   if (room === undefined) throw new InvitationError('The room no longer exists', 'NO_SUCH_ROOM')
+  if (isDissolved(room)) throw new InvitationError('This workgroup has been dissolved', 'ROOM_DISSOLVED')
 
   const joinedAt = nowIso(now)
   db.exec('BEGIN IMMEDIATE')
@@ -403,6 +510,7 @@ export function revokeInvitation(db, { invitationId, actorUserId, actorDeviceId,
  * be undone by accepting an offer that was already in flight.
  */
 export function removeMember(db, { roomId, userId, actorUserId, actorDeviceId, actorOperatorId, now = new Date() }) {
+  if (isDissolved(findRoom(db, roomId))) throw new RoomError('This workgroup has been dissolved', 'ROOM_DISSOLVED')
   const membership = membershipOf(db, { roomId, userId })
   if (membership === undefined) throw new RoomError('That user is not a member', 'NOT_A_MEMBER')
   if (membership.role === 'owner') throw new RoomError('The room owner cannot be removed', 'CANNOT_REMOVE_OWNER')
@@ -440,6 +548,7 @@ export function removeMember(db, { roomId, userId, actorUserId, actorDeviceId, a
 
 /** Leave a room. The owner must transfer ownership first... which V1 does not offer. */
 export function leaveRoom(db, { roomId, userId, deviceId, now = new Date() }) {
+  if (isDissolved(findRoom(db, roomId))) throw new RoomError('This workgroup has been dissolved', 'ROOM_DISSOLVED')
   const membership = membershipOf(db, { roomId, userId })
   if (membership === undefined) throw new RoomError('No such room, or you are not a member', 'NOT_A_MEMBER')
   if (membership.role === 'owner') {
@@ -466,6 +575,7 @@ export function leaveRoom(db, { roomId, userId, deviceId, now = new Date() }) {
 }
 
 export function setMemberRole(db, { roomId, userId, role, actorUserId, actorDeviceId, now = new Date() }) {
+  if (isDissolved(findRoom(db, roomId))) throw new RoomError('This workgroup has been dissolved', 'ROOM_DISSOLVED')
   if (!INVITABLE_ROLES.includes(role)) {
     throw new RoomError(`A member role must be one of ${INVITABLE_ROLES.join(', ')}`, 'INVALID_ROLE')
   }
@@ -495,12 +605,32 @@ export function publicRoom(room) {
     name: room.name,
     kind: room.kind ?? DEFAULT_ROOM_KIND,
     ownerUserId: room.owner_user_id,
+    notice: room.notice ?? '',
     createdAt: room.created_at,
     // Omitted while the workgroup is live, so every existing caller sees exactly what it saw before
     // this column existed. A client that wants the state asks for the field, and a client that does
     // not know about it is not handed a null it has to interpret.
     ...(room.dissolved_at === null || room.dissolved_at === undefined ? {} : { dissolvedAt: room.dissolved_at }),
     ...(room.member_role === undefined ? {} : { myRole: room.member_role }),
+  }
+}
+
+/**
+ * The room list row: the existing room shape plus the sidebar's summary fields.
+ *
+ * These fields are flat rather than nested under one `summary` key because the roster reads them
+ * directly (`lastMessageSeq` drives unread, `lastMessageAt` drives ordering). Empty rooms still
+ * carry every field: no message is `null` time, empty preview and sequence 0, never an omitted key.
+ */
+export function publicRoomSummary(room) {
+  return {
+    ...publicRoom(room),
+    memberCount: room.member_count ?? 0,
+    botCount: room.bot_count ?? 0,
+    lastMessageAt: room.last_message_at ?? null,
+    lastMessagePreview: summarizeMessageBody(room.last_message_body),
+    lastMessageSeq: room.last_message_seq ?? 0,
+    pendingApprovalCount: room.pending_approval_count ?? 0,
   }
 }
 
