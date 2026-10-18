@@ -82,9 +82,20 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions, roomSnap
     const load = async () => {
       clearTimeout(timer)
       try {
-        const answer = await workgroups.openRoom(roomId)
+        // The room snapshot and its redacted task activity are read together: a task card without its
+        // progress history would show a state with no account of how it got there, and the activity is
+        // not a message, so it cannot arrive through the message page.
+        const [answer, activity, scheduled] = await Promise.all([
+          workgroups.openRoom(roomId),
+          typeof workgroups.taskEvents === 'function'
+            ? workgroups.taskEvents(roomId).catch(() => undefined)
+            : undefined,
+          typeof workgroups.workgroupSchedules === 'function'
+            ? workgroups.workgroupSchedules().catch(() => undefined)
+            : undefined,
+        ])
         if (stopped) return
-        setState({ phase: 'ready', ...answer })
+        setState({ phase: 'ready', ...answer, events: activity?.events ?? [], schedules: scheduled?.schedules ?? [] })
       } catch (error) {
         if (stopped) return
         // The reason is kept: "cannot reach the Hub" and "this room is gone" call for different
@@ -192,6 +203,11 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions, roomSnap
     let result
     switch (operation) {
       case 'renameRoom': result = await workgroups.renameRoom(roomId, payload); break
+      case 'updateNotice': result = await workgroups.updateNotice(roomId, payload.notice); break
+      case 'addBot': result = await workgroups.addBot(roomId, payload.botId); break
+      case 'setBotVisibility': result = await workgroups.setBotVisibility(payload.botId, payload.visibility); break
+      case 'inviteBot': result = await workgroups.inviteBot(roomId, payload); break
+      case 'removeBot': result = await workgroups.removeBot(roomId, payload.ownerUserId, payload.botId); break
       case 'invite': result = await workgroups.invite(roomId, payload); break
       case 'setRole': result = await workgroups.setRole(roomId, payload.userId, payload.role); break
       case 'removeMember': result = await workgroups.removeMember(roomId, payload.userId); break
@@ -215,6 +231,24 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions, roomSnap
       link.click()
     } finally { URL.revokeObjectURL(url) }
   }
+  // An image attachment is fetched through the same authorized route as any other file; the object URL
+  // is short-lived and revoked by the caller when it unmounts.
+  const onImage = async (entry) => {
+    const file = await workgroups.downloadArtifact(entry.artifactId)
+    return URL.createObjectURL(new Blob([new Uint8Array(file.bytes)], { type: file.contentType }))
+  }
+  // Memory needs four writes and a search, not just the list the room read provides. A Host that
+  // predates them has no `memoryCreate`, and advertising the panel anyway would give the reader a
+  // form whose every submission throws. The adapter exists only when the writes do.
+  const memory = typeof workgroups.memory === 'function' && typeof workgroups.memoryCreate === 'function'
+    ? {
+      list: () => workgroups.memory(roomId).then(answer => answer?.memories ?? []),
+      search: query => workgroups.memorySearch(roomId, query).then(answer => answer?.memories ?? []),
+      create: payload => workgroups.memoryCreate(roomId, payload),
+      revise: (memoryId, payload) => workgroups.memoryRevise(memoryId, payload),
+      remove: memoryId => workgroups.memoryDelete(memoryId),
+    }
+    : undefined
   const onDecision = (task, decision, scope) => view.current?.({
     decide: { task, decision, ...(scope === undefined ? {} : { scope }) },
   })
@@ -258,6 +292,21 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions, roomSnap
       bots: state.bots,
       messages: state.messages,
       tasks: state.tasks,
+      events: state.events,
+      schedules: state.schedules,
+      onSchedule: typeof workgroups.scheduleWorkgroupMessage === 'function'
+        ? payload => workgroups.scheduleWorkgroupMessage(roomId, payload)
+        : undefined,
+      onCancelSchedule: typeof workgroups.cancelWorkgroupSchedule === 'function'
+        ? id => workgroups.cancelWorkgroupSchedule(id)
+        : undefined,
+      prefs: workgroups.workgroupPrefs?.(roomId),
+      onFlag: patch => workgroups.setWorkgroupFlag?.(roomId, patch),
+      memory,
+      hubState: status,
+      loadBotCandidates: typeof workgroups.botCandidates === 'function'
+        ? () => workgroups.botCandidates(roomId)
+        : undefined,
       selfUserId: workgroups.identity?.userId,
       identity: workgroups.identity,
       actions,
@@ -266,6 +315,7 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions, roomSnap
       onSend,
       onAttach,
       onDownload,
+      onImage,
       onRoomAction,
       onDecision,
       onReview,

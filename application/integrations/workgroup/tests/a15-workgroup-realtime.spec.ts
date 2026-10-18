@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createSource } from '../../../packages/bundle/ds-bot/src/client/sources.js'
 import { createWorkgroupHub } from '../../../packages/bundle/ds-bot/src/client/workgroup-hub.js'
 import { composeMessage, mentionCandidates } from '../../../packages/bundle/ds-bot/src/client/workgroup-mentions.js'
-import { createWorkgroupClient } from '../client/index.mjs'
+import { createWorkgroupClient, reduceWorkgroup } from '../client/index.mjs'
 
 function bridge() {
   const view = createSource({ configured: true, signedIn: true, state: 'open' })
@@ -41,27 +41,26 @@ describe('the Browser workgroup room state', () => {
 
 
 describe('the opened room Bot directory', () => {
-  it('loads only member directories and exposes published Bots with stable mention ids', async () => {
+  it('uses the explicit room Bot members and exposes stable mention ids', async () => {
     const requests = []
     const client = {
       request: async (method, path) => {
         requests.push(path)
-        if (path === '/rooms/room-1') return { room: { id: 'room-1' }, members: [{ userId: 'u1' }] }
+        if (path === '/rooms/room-1') return {
+          room: { id: 'room-1' },
+          members: [{ userId: 'u1' }],
+          bots: [{ botId: 'writer', ownerUserId: 'u1', displayName: 'Writer', presence: 'online', state: 'idle' }],
+        }
         if (path.includes('/messages')) return { messages: [] }
         if (path.includes('/tasks')) return { tasks: [] }
-        if (path === '/bots/directory?ownerUserId=u1') return { bots: [
-          { botId: 'writer', ownerUserId: 'u1', displayName: 'Writer', visibility: 'public', state: 'idle', instructions: 'private instructions' },
-          { botId: 'private', ownerUserId: 'u1', displayName: 'Private', visibility: 'private' },
-          { botId: 'outsider', ownerUserId: 'u2', displayName: 'Outsider', visibility: 'public' },
-        ] }
-        throw new Error(`unexpected directory request ${path}`)
+        throw new Error(`unexpected request ${path}`)
       },
     }
     const state = await createWorkgroupClient({ client }).openRoom('room-1')
     expect(state.bots).toEqual([
-      { botId: 'writer', ownerUserId: 'u1', displayName: 'Writer', visibility: 'public', state: 'idle' },
+      { botId: 'writer', ownerUserId: 'u1', displayName: 'Writer', presence: 'online', state: 'idle' },
     ])
-    expect(requests.filter(path => path.includes('directory'))).toEqual(['/bots/directory?ownerUserId=u1'])
+    expect(requests.filter(path => path.includes('directory'))).toEqual([])
     const bots = mentionCandidates(state).filter(entry => entry.kind === 'bot')
     expect(bots).toHaveLength(1)
     expect(composeMessage('Writer, help', bots).mentions).toEqual([{ userId: 'u1', botId: 'writer' }])
@@ -97,5 +96,27 @@ describe('room baseline and event ordering', () => {
     hub.applyEvent(event)
     expect(hub.roomState('room-1').getSnapshot().messages).toEqual([message])
     expect(hub.roomState('room-1').getSnapshot().head).toBe(1)
+  })
+})
+
+describe('Bot invitation lifecycle events', () => {
+  const base = {
+    room: { id: 'room-1', name: 'Ops', kind: 'workgroup' },
+    members: [],
+    bots: [],
+    messages: [],
+    tasks: [],
+    head: 0,
+  }
+
+  it('marks both invitation lists stale when an invitation is resolved', () => {
+    const changed = { type: 'bot_invitation.changed', roomId: 'room-1', payload: { roomId: 'room-1', invitationId: 'i1', status: 'declined' } }
+    const next = reduceWorkgroup(base, changed)
+    expect(next.invitationsStale).toBe(true)
+    expect(next.botInvitationsStale).toBe(true)
+    // Applying it twice is the same state: the Bridge may deliver at least once.
+    expect(reduceWorkgroup(next, changed)).toEqual(next)
+    // Another room's lifecycle does not touch this room's view.
+    expect(reduceWorkgroup(base, { ...changed, roomId: 'room-2' })).toBe(base)
   })
 })

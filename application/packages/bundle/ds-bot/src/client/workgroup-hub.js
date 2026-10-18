@@ -158,6 +158,24 @@ export function createWorkgroupHub({ bridge }) {
     watch: roomId => invoke('hub-open-room', { roomId }),
     dissolve: roomId => invoke('hub-dissolve', { roomId }),
     renameRoom: (roomId, patch) => invoke('hub-rename-room', { roomId, name: patch.name }),
+    updateNotice: (roomId, notice) => invoke('hub-update-notice', { roomId, notice }),
+    addBot: (roomId, botId) => invoke('hub-add-bot', { roomId, botId }),
+    // The Bots a workgroup can pick from: the caller's own, plus the other members' Bots that the
+    // Hub lets this user see. Membership and visibility are the Hub's decision, not the browser's.
+    botCandidates: roomId => invoke('hub-bot-candidates', { roomId }),
+    // The owner's sharing decision for one of their own Bots. Only the Host can publish it, because
+    // only the Host holds the Hub session.
+    setBotVisibility: (botId, visibility) => invoke('hub-set-bot-visibility', { botId, visibility }),
+    // Scheduled workgroup messages live on the Host: it is the only part that is running when the
+    // window is closed, and it holds the Hub session the send needs.
+    workgroupSchedules: () => invoke('hub-workgroup-schedules', {}),
+    scheduleWorkgroupMessage: (roomId, payload) => invoke('hub-schedule-workgroup-message', { roomId, ...payload }),
+    cancelWorkgroupSchedule: id => invoke('hub-cancel-workgroup-schedule', { id }),
+    removeBot: (roomId, ownerUserId, botId) => invoke('hub-remove-bot', { roomId, ownerUserId, botId }),
+    botInvitations: () => invoke('hub-bot-invitations', {}),
+    inviteBot: (roomId, options) => invoke('hub-invite-bot', { roomId, ...options }),
+    respondToBotInvitation: (invitationId, decision) => invoke('hub-respond-bot-invitation', { invitationId, decision }),
+    taskEvents: (roomId, options = {}) => invoke('hub-task-events', { roomId, ...options }),
     downloadArtifact: artifactId => invoke('hub-download-artifact', { artifactId }),
     uploadArtifact: (roomId, payload) => invoke('hub-upload-artifact', { roomId, ...payload, bytes: Array.from(payload.bytes) }),
     invite: (roomId, options) => invoke('hub-invite', { roomId, ...options }),
@@ -181,6 +199,12 @@ export function createWorkgroupHub({ bridge }) {
     // who that is; the pane only offers the control to those it can already identify.
     cancelTask: taskId => invoke('hub-cancel-task', { taskId }),
     memory: roomId => invoke('hub-memory', { roomId }),
+    // The room's memory is readable by members; corrections are the author's, deletions the author's or
+    // an admin's. The Hub decides both, so these forward the intent rather than pre-judging it.
+    memorySearch: (roomId, query) => invoke('hub-memory-search', { roomId, query }),
+    memoryCreate: (roomId, payload) => invoke('hub-memory-create', { roomId, ...payload }),
+    memoryRevise: (memoryId, payload) => invoke('hub-memory-revise', { memoryId, ...payload }),
+    memoryDelete: memoryId => invoke('hub-memory-delete', { memoryId }),
     me: () => invoke('hub-me', {}),
     devices: () => invoke('hub-devices', {}),
   }

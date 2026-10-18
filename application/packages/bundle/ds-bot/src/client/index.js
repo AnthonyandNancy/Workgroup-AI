@@ -6,7 +6,8 @@ import { themeCss, shellTokens, registry, registerShape, registerTheme, allTheme
 import { MENTION_ORIGIN, currentPart } from './text.js'
 import { SHELL_CSS, CONVERSATION_CSS, installStyles, installCompiledStyles } from './styles.js'
 import { lookOf } from './mark.js'
-import { TeamSidebar, ConnectPlugins, YouAvatar, AccountLauncher, FooterAccount, BrandMark, BrandName, BotReturn, SIDEBAR_CSS, RETURN_CSS, holdShellShortcuts } from './sidebar.js'
+import { ConnectPlugins, YouAvatar, AccountLauncher, FooterAccount, BrandMark, BrandName, BotReturn, SIDEBAR_CSS, RETURN_CSS, holdShellShortcuts } from './sidebar.js'
+import { WorkgroupTeamSidebar, WORKGROUP_SIDEBAR_CSS } from './workgroup-sidebar.js'
 import { HeaderPill } from './header.js'
 import { ComposerPlus, ComposerVoice, menuIcons } from './composer.js'
 import { CHATS_SOURCE, atSources } from './at-menu.js'
@@ -21,7 +22,6 @@ import { SECRET_CSS, SecretDock } from './secret-card.js'
 import { MODEL_CSS, ModelChoiceDock, DeepSeekSignIn } from './model-menu.js'
 import { BOT_SETTINGS_CSS } from './bot-settings.js'
 import { GROUP_SETTINGS_CSS } from './group-settings.js'
-import { newWorkgroupName } from './workgroup.js'
 import { enterWorkgroup } from './workgroup-entry.js'
 import { WorkgroupPane } from './workgroup-pane.js'
 import { needsHomeFallback } from '../shared/workgroup-session.js'
@@ -38,6 +38,8 @@ import { ABOUT_CSS } from './about.js'
 import { MEMBER_CSS, MemberDock } from './member-status.js'
 import { USER_MESSAGE_CSS, UserMessageCell, canDrawUserMessages } from './user-message.js'
 import { WORKGROUP_CSS } from './workgroup-style.js'
+import { WORKGROUP_UI_CSS } from './workgroup-ui/styles.js'
+import { createWorkgroupRoster, loadWorkgroupPrefs, saveWorkgroupPrefs } from './workgroup-roster.js'
 import { noticeApprovals } from './approval-notices.js'
 import { BotPanelIcon } from './bot-panel.js'
 
@@ -366,6 +368,13 @@ export function apply(ctx) {
     return ids
   }
   const actions = {
+    // Workgroup entry points, for the copied sidebar. They forward to the workgroup adapter defined
+    // below, so the sidebar never holds a Hub client or decides a Hub rule.
+    openWorkgroup: roomId => openWorkgroup(roomId),
+    openWorkgroupCreate: () => workgroupActions.openWorkgroupCreate(),
+    answerWorkgroupInvitation: (invitationId, decision) => workgroupActions.answerWorkgroupInvitation(invitationId, decision),
+    answerWorkgroupBotInvitation: (invitationId, decision) => workgroupActions.answerWorkgroupBotInvitation(invitationId, decision),
+    setWorkgroupFlag: (roomId, patch) => workgroupActions.setWorkgroupFlag(roomId, patch),
     // The full-pane overlays sit above the conversation, so opening one must dismiss them
     // or the click appears to do nothing.
     isAgentSession: id => isAgentSessionId(id),
@@ -759,34 +768,87 @@ export function apply(ctx) {
    * the call with a stable reason that the menu, the settings page, and the command palette already
    * surface. Local chats, local groups, and private sessions never depend on this action.
    */
+  const reportWorkgroup = error => actions.reportError(error, 'workgroup')
+  // Ticking the roster while the window is open is what makes an invitation or a colleague's new room
+  // appear without a reload. The roster polls a slow list read, not the room's messages: the room
+  // itself is watched over the Bridge.
+  const workgroupRoster = createWorkgroupRoster({ workgroups: workgroupHub, pollMs: 15_000 })
+  ctx.effect(() => {
+    workgroupRoster.start()
+    return () => workgroupRoster.stop()
+  }, 'ds-bot: workgroup roster')
+  const workgroupPrefs = createSource(loadWorkgroupPrefs())
+  const openWorkgroup = roomId => enterWorkgroup({
+    roomId,
+    sessions: ctx.sessions,
+    openSession: actions.openSession,
+    closeOverlay: actions.closeOverlay,
+    watch: id => workgroupHub.watch(id),
+    report: reportWorkgroup,
+  }).then((sessionId) => {
+    // A newly created room is in the roster the moment the Hub answers, but the sidebar reads a polled
+    // list; refreshing here is what makes the new row appear with the room instead of up to a poll later.
+    void workgroupRoster.refresh()
+    return sessionId
+  })
   const workgroupActions = {
-    create: async () => {
-      // The Hub owns the room: this asks it to create one and shows the result. Nothing local is
-      // written here, which is why a workgroup exists on every machine the member signs in from and
-      // a local group exists on exactly one.
-      const created = await workgroupHub.createRoom(newWorkgroupName(), { kind: 'workgroup' })
-      return enterWorkgroup({
-        roomId: created.id,
-        sessions: ctx.sessions,
-        openSession: actions.openSession,
-        closeOverlay: actions.closeOverlay,
-        watch: roomId => workgroupHub.watch(roomId),
-        report: error => actions.reportError(error, 'workgroup'),
-      })
+    // The entries open the copied creation form instead of creating an unnamed room: a workgroup's
+    // name is a choice, not a date. The form's submit is the only path that creates a Hub room.
+    create: () => { actions.openNewChat('workgroup'); return Promise.resolve(undefined) },
+    openWorkgroupCreate: () => { actions.closeSettings?.(); actions.openNewChat('workgroup') },
+    createRoom: (name, options) => workgroupHub.createRoom(name, options),
+    addBot: (roomId, botId) => workgroupHub.addBot(roomId, botId),
+    get available() { return workgroupHub.available },
+    get identity() { return workgroupHub.identity },
+    openWorkgroup,
+    openRoom: async (roomId) => {
+      const state = await workgroupHub.openRoom(roomId)
+      // Opening a room is reading it: the unread count is this device's watermark, and it advances
+      // only for the room the member actually looked at.
+      workgroupRoster.markRead(roomId, state?.head ?? 0)
+      return state
     },
-    openRoom: roomId => workgroupHub.openRoom(roomId),
     dissolve: roomId => workgroupHub.dissolve(roomId),
     sendMessage: (roomId, text, options) => workgroupHub.sendMessage(roomId, text, options),
     uploadArtifact: (roomId, payload) => workgroupHub.uploadArtifact(roomId, payload),
     answerTask: (taskId, decision, options) => workgroupHub.answerTask(taskId, decision, options),
-    get identity() { return workgroupHub.identity },
+    reviewTask: (taskId, decision, options) => workgroupHub.reviewTask(taskId, decision, options),
+    cancelTask: taskId => workgroupHub.cancelTask(taskId),
     renameRoom: (roomId, patch) => workgroupHub.renameRoom(roomId, patch),
+    updateNotice: (roomId, notice) => workgroupHub.updateNotice(roomId, notice),
     invite: (roomId, payload) => workgroupHub.invite(roomId, payload),
     revokeInvitation: invitationId => workgroupHub.revokeInvitation(invitationId),
     setRole: (roomId, userId, role) => workgroupHub.setRole(roomId, userId, role),
     removeMember: (roomId, userId) => workgroupHub.removeMember(roomId, userId),
     leaveRoom: roomId => workgroupHub.leaveRoom(roomId),
+    removeBot: (roomId, ownerUserId, botId) => workgroupHub.removeBot(roomId, ownerUserId, botId),
+    inviteBot: (roomId, payload) => workgroupHub.inviteBot(roomId, payload),
+    botCandidates: roomId => workgroupHub.botCandidates(roomId),
+    setBotVisibility: (botId, visibility) => workgroupHub.setBotVisibility(botId, visibility),
+    workgroupSchedules: () => workgroupHub.workgroupSchedules(),
+    scheduleWorkgroupMessage: (roomId, payload) => workgroupHub.scheduleWorkgroupMessage(roomId, payload),
+    cancelWorkgroupSchedule: id => workgroupHub.cancelWorkgroupSchedule(id),
+    // The owner's own published Bots, read when an approval form opens or the creation form lists them.
+    directory: options => workgroupHub.directory(options),
+    taskEvents: (roomId, options) => workgroupHub.taskEvents(roomId, options),
     downloadArtifact: artifactId => workgroupHub.downloadArtifact(artifactId),
+    // Group memory: the read the room already had, plus the three corrections the details pane
+    // offers. Each one is authorized by the Hub against membership and the entry's own author.
+    memory: roomId => workgroupHub.memory(roomId),
+    memorySearch: (roomId, query) => workgroupHub.memorySearch(roomId, query),
+    memoryCreate: (roomId, payload) => workgroupHub.memoryCreate(roomId, payload),
+    memoryRevise: (memoryId, payload) => workgroupHub.memoryRevise(memoryId, payload),
+    memoryDelete: memoryId => workgroupHub.memoryDelete(memoryId),
+    workgroupPrefs: roomId => workgroupPrefs.getSnapshot()[roomId] ?? {},
+    setWorkgroupFlag: (roomId, patch) => {
+      workgroupRoster.setFlag(roomId, patch)
+      const next = loadWorkgroupPrefs()
+      saveWorkgroupPrefs(next)
+      workgroupPrefs.set(next)
+      return next[roomId] ?? {}
+    },
+    answerWorkgroupInvitation: (invitationId, decision) => workgroupRoster.answerInvitation(invitationId, decision).catch((error) => { reportWorkgroup(error); throw error }),
+    answerWorkgroupBotInvitation: (invitationId, decision) => workgroupRoster.answerBotInvitation(invitationId, decision).catch((error) => { reportWorkgroup(error); throw error }),
   }
   // A source rather than a plain value because the overlay face is captured once; the action
   // object itself is stable, so nothing has to be re-wired when the Hub view changes.
@@ -800,7 +862,10 @@ export function apply(ctx) {
   // The overlay's own inject face: `face()` plus the workgroup source under `hooks`, which is what
   // makes the menu see changes. Injected props are cached per slot entry, so a plain value in the
   // returned object would freeze the first answer.
-  const overlayFace = () => ({ ...face(), sessions: ctx.sessions, workgroupHub, hooks: { ...face().hooks, workgroups, hub }, keyedHooks: { workgroupRoom: roomId => workgroupHub.roomState(roomId) } })
+  const overlayFace = () => ({ ...face(), sessions: ctx.sessions, workgroupHub, hooks: { ...face().hooks, workgroups, hub, workgroupRoster: workgroupRoster.view, workgroupPrefs }, keyedHooks: { workgroupRoom: roomId => workgroupHub.roomState(roomId) } })
+  // The copied sidebar replaces the team's own `sidebar.workspaces` seat, so it must receive the same
+  // local face plus the workgroup sources it adds rows from.
+  const sidebarFace = () => ({ ...face(), hooks: { ...face().hooks, workgroups, hub, workgroupRoster: workgroupRoster.view, workgroupPrefs } })
 
   /**
    * Register the fork's single first-level `Bot` navigation entry and its panel.
@@ -919,9 +984,11 @@ export function apply(ctx) {
     installCompiledStyles(MEMBER_CSS, 'members'),
     installCompiledStyles(USER_MESSAGE_CSS, 'user-messages'),
     installCompiledStyles(WORKGROUP_CSS, 'workgroups'),
+    installCompiledStyles(WORKGROUP_UI_CSS, 'workgroup-ui'),
+    installCompiledStyles(WORKGROUP_SIDEBAR_CSS, 'workgroup-sidebar'),
     browsers ? installCompiledStyles(BROWSER_CSS, 'browser') : null,
     installTheme(),
-    shadow('sidebar.workspaces', { priority: -10, inject: face }, TeamSidebar),
+    shadow('sidebar.workspaces', { priority: -10, inject: sidebarFace }, WorkgroupTeamSidebar),
     shadow('sidebar.brand.mark', { priority: -10 }, BrandMark),
     shadow('sidebar.brand.name', { priority: -10 }, BrandName),
     shadow('sidebar.footer.action', { id: 'bot-account', order: -200, inject: face }, FooterAccount),

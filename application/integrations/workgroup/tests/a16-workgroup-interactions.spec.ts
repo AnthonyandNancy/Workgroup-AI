@@ -456,6 +456,8 @@ describe('the injected realtime room snapshot', () => {
   it('renders a presence update independently of the HTTP poll', async () => {
     const props = { sessionId: 'wg:room-1', workgroups: workgroups(), hub: { configured: true, signedIn: true, state: 'open' }, roomSnapshot: state }
     await mount('WorkgroupSurface', props)
+    // Presence is shown in the details drawer, where the copied group chat lists its members.
+    await click('[data-wg-details]')
     const roomSnapshot = { ...state, members: state.members.map(member => ({ ...member, online: true })) }
     await act(async () => root.render(h(components.WorkgroupSurface, { ...props, roomSnapshot })))
     expect(container.querySelector('[data-wg-member="u2"]').getAttribute('data-wg-presence')).toBe('online')

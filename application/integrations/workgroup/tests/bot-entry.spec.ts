@@ -132,29 +132,27 @@ it('the shell-chrome rules that used to hide the first-level navigation are scop
 
 it('A-04: the menu gains one workgroup entry, immediately below the group entry', () => {
   const source = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'new-chat.js'), 'utf8')
+  const overlays = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'overlays.js'), 'utf8')
+  // The local menu owns the local rows only; the workgroup row is supplied as a generic extra and
+  // lands immediately after the local group entry, which is the placement the requirement names.
   const groupLine = source.split(String.fromCharCode(10)).findIndex(line => line.includes("t('Create group chat')"))
-  const workgroupLine = source.split(String.fromCharCode(10)).findIndex(line => line.includes("t('Create workgroup chat')"))
+  const extrasLine = source.split(String.fromCharCode(10)).findIndex(line => line.includes('for (const entry of extraOptions)'))
   expect(groupLine, 'the original group entry must still exist').toBeGreaterThanOrEqual(0)
-  expect(workgroupLine, 'the workgroup entry must exist').toBeGreaterThanOrEqual(0)
-  // "Directly below" is the requirement, so the two pushes are adjacent statements with nothing
-  // pushed between them. A comment line is allowed; another `options.push` is not.
-  const between = source.split(String.fromCharCode(10)).slice(groupLine + 1, workgroupLine)
-  const pushedBetween = between.filter(line => line.includes('options.push('))
-  expect(pushedBetween, `something was pushed between them: ${pushedBetween.join(' | ')}`).toEqual([])
+  expect(extrasLine, 'the extra rows must be inserted after it').toBeGreaterThan(groupLine)
+  expect(overlays).toMatch(/extraOptions: workgroups === undefined \? \[\] : \[\{[\s\S]*?label: t\('Create workgroup chat'\)/)
 })
 
 it('A-04: the workgroup entry stays visible without a signed-in Hub', () => {
-  const source = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'new-chat.js'), 'utf8')
-  // The entry is still gated on the prop rather than on a global, so an install that mounts the
-  // pane without the workgroup adapter keeps upstream's menu exactly as it was. The shipped
-  // client always supplies that adapter, so the row is present whether or not a Hub answers;
-  // invoking it reports the Host's stable unavailable reason instead of hiding the feature.
-  expect(source).toMatch(/if \(workgroups !== undefined\) \{/)
   const indexSource = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'index.js'), 'utf8')
+  const overlays = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'overlays.js'), 'utf8')
+  // The action object is always supplied; only the Host knows whether a Hub is configured, and the
+  // form reports that reason rather than the row disappearing.
   expect(indexSource).toMatch(/const workgroups = createSource\(workgroupActions\)/)
   expect(indexSource).not.toMatch(/workgroupHub\.available \? workgroupActions : undefined/)
+  expect(overlays).toMatch(/extraOptions: workgroups === undefined \? \[\] :/)
   // And the original group entry is not behind any Hub gate.
-  const groupLine = source.split(String.fromCharCode(10)).find(line => line.includes("t('Create group chat')"))
+  const newChat = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'new-chat.js'), 'utf8')
+  const groupLine = newChat.split(String.fromCharCode(10)).find(line => line.includes("t('Create group chat')"))
   expect(groupLine).toBeDefined()
   expect(groupLine.includes('workgroups')).toBe(false)
 })
@@ -169,22 +167,25 @@ it('A-04: both menu labels are in the shipped bundle, with their Chinese copy', 
   expect(bundle.includes('新建群聊'), 'the original group copy is unchanged').toBe(true)
 })
 
-it('A-03: a workgroup is rendered through the team’s own room components', () => {
-  const source = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'workgroup.js'), 'utf8')
-  const settings = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'workgroup-settings.js'), 'utf8')
-  // Reuse is the requirement. The room chrome and the settings primitives are the team's own; the
-  // settings *form* is workgroup-specific because a local group form edits a local room through
-  // `updateRoom`/`deleteRoom`, which a Hub room does not have. The shared pieces it does mount are
-  // asserted here, and the Hub-only action path is asserted below and in a16.
-  expect(source).toMatch(/import \{ RoomAvatar \} from '\.\/mark\.js'/)
-  expect(source).toMatch(/import \{ Card, Row, InlineText \} from '\.\/bot-settings\.js'/)
-  expect(settings).toMatch(/import \{ Card, Row \} from '\.\/bot-settings\.js'/)
-  expect(source, 'the settings view must be the workgroup settings form').toMatch(/h\(WorkgroupSettings, \{/)
-  // And it must not carry the local-group affordances, which would imply a workgroup is local.
-  expect(source.includes('createRoom('), 'the view must not create local rooms').toBe(false)
-  expect(settings.includes('updateRoom('), 'workgroup settings must not edit a local room').toBe(false)
-  expect(settings.includes('deleteRoom('), 'workgroup settings must not delete a local room').toBe(false)
-  expect(source.includes("call('"), 'the view must not call the host: everything arrives through props').toBe(false)
+it('A-03: the workgroup surface is a copy that shares the team’s primitives, not a second design system', () => {
+  const view = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'workgroup.js'), 'utf8')
+  const conversation = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'workgroup-ui', 'index.js'), 'utf8')
+  const thread = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'workgroup-ui', 'thread.js'), 'utf8')
+  const settings = readFileSync(join(repoRoot, 'packages', 'bundle', 'ds-bot', 'src', 'client', 'workgroup-ui', 'settings.js'), 'utf8')
+  // The copied interface reuses the original group chat's primitives and class names, and the
+  // original files it was copied from carry no workgroup branch any more.
+  expect(thread).toMatch(/from '..\/i18n.js'/)
+  expect(conversation).toMatch(/from '..\/mark.js'/)
+  expect(settings).toMatch(/from '..\/bot-settings.js'/)
+  expect(thread).toMatch(/bt-group-msg/)
+  expect(settings).toMatch(/data-group-action': 'dissolve'/)
+  // A renderer must not reach the Hub or create local rooms; the pane supplies every adapter.
+  for (const source of [view, conversation, thread, settings]) {
+    expect(source.includes("call('"), 'the view must not call the host').toBe(false)
+    expect(source.includes('createRoom('), 'the view must not create local rooms').toBe(false)
+    expect(source.includes('updateRoom('), 'the view must not edit a local room').toBe(false)
+    expect(source.includes('deleteRoom('), 'the view must not delete a local room').toBe(false)
+  }
 })
 
 it('A-03: the workgroup view and its labels are in the shipped bundle', () => {

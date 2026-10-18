@@ -87,7 +87,7 @@ export function install(rt) {
   // The `hub-*` entries listed here are the workgroup calls that only read from the Hub. The
   // mutating ones (send, invite, create, role changes) stay out, so a host that does not own the
   // local team also does not act on the user's behalf in a shared room.
-  const READS = new Set(['state', 'models', 'efforts', 'earlier', 'room-progress', 'exchange', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'task-session-resolve', 'task-grant-check', 'hub-view', 'hub-me', 'hub-devices', 'hub-messages', 'hub-head', 'hub-tasks', 'hub-members', 'hub-memory', 'hub-directory', 'hub-invitations', 'hub-open-room'])
+  const READS = new Set(['state', 'models', 'efforts', 'earlier', 'room-progress', 'exchange', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'task-session-resolve', 'task-grant-check', 'hub-view', 'hub-me', 'hub-devices', 'hub-messages', 'hub-head', 'hub-tasks', 'hub-members', 'hub-memory', 'hub-directory', 'hub-invitations', 'hub-open-room', 'hub-bot-candidates', 'hub-bot-invitations', 'hub-task-events', 'hub-download-artifact', 'hub-memory-search', 'hub-workgroup-schedules'])
 
   function setPrefs(body) {
     if (body.theme !== undefined) {
@@ -267,6 +267,24 @@ export function install(rt) {
         case 'hub-review-task':
         case 'hub-cancel-task':
         case 'hub-memory':
+        case 'hub-memory-search':
+        case 'hub-memory-create':
+        case 'hub-memory-revise':
+        case 'hub-memory-delete':
+        case 'hub-rename-room':
+        case 'hub-update-notice':
+        case 'hub-add-bot':
+        case 'hub-remove-bot':
+        case 'hub-bot-invitations':
+        case 'hub-invite-bot':
+        case 'hub-respond-bot-invitation':
+        case 'hub-bot-candidates':
+        case 'hub-set-bot-visibility':
+        case 'hub-workgroup-schedules':
+        case 'hub-schedule-workgroup-message':
+        case 'hub-cancel-workgroup-schedule':
+        case 'hub-task-events':
+        case 'hub-download-artifact':
         case 'hub-me':
         case 'hub-devices':
           return ok(await rt.hubEndpoint(endpoint, body, signal))

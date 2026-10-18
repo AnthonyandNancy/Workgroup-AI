@@ -1,16 +1,17 @@
 import { createElement as h, useRef, useState } from 'react'
 import { FishLogo } from '@deepseek-ai/dsh-client-ui-primitives'
-import { PlusIcon, PeopleIcon, ArrowUpIcon, PlugIcon } from './icons.js'
+import { PlusIcon, PeopleIcon, ArrowUpIcon } from './icons.js'
 import { AdminStar, BotMark } from './mark.js'
 import { useEscape, usePaneLeft } from './overlay-hooks.js'
 import { CreateBot } from './create-bot.js'
 import { QUICK_EDGES, useFlip, useGlide, useMorph } from './motion.js'
 import { t } from './i18n.js'
 
-// `workgroups`, when supplied, turns on the fork's workgroup entry. It is passed in rather than
-// imported so a plain-plugin install of this team keeps upstream's menu exactly as it was: with no
-// `workgroups` prop there is no workgroup entry and nothing about a Hub is implied.
-export function NewChat({ mode, roster, actions, workgroups }) {
+// `extraOptions` lets an integrating surface add rows to the menu without teaching this component
+// what those rows mean. The property is generic on purpose: this file owns the local team's menu
+// only, so a Hub-backed entry is supplied by the layer that owns it and is absent in a plain-plugin
+// install.
+export function NewChat({ mode, roster, actions, extraOptions = [] }) {
   const [query, setQuery] = useState('')
   const [picked, setPicked] = useState([])
   const [group, setGroup] = useState(mode === 'group')
@@ -99,13 +100,9 @@ export function NewChat({ mode, roster, actions, workgroups }) {
   if (!group && picked.length === 0 && mode !== 'search' && wanted === '') {
     options.push({ key: 'new', icon: h(PlusIcon), label: t('Create new Bot'), run: createBot })
     options.push({ key: 'group', icon: h(PeopleIcon), label: t('Create group chat'), run: () => { setGroup(true); setCursor(0); inputRef.current?.focus() } })
-    // The workgroup entry sits immediately below the local one, and the local one is untouched:
-    // "创建工作群聊" adds an entity, it does not redirect the existing flow. Its icon is the Hub
-    // plug rather than the group glyph, so the two adjacent rows are distinguishable at a glance
-    // instead of reading as the same action twice.
-    if (workgroups !== undefined) {
-      options.push({ key: 'workgroup', icon: h(PlugIcon), label: t('Create workgroup chat'), run: () => run(workgroups.create) })
-    }
+    // Added rows sit immediately below the local group entry: an integrator adds an entity beside
+    // the existing flow rather than replacing it.
+    for (const entry of extraOptions) options.push({ ...entry, run: () => run(entry.run) })
     // A team holds at most one DSH Agent; the entry exists only while there is none.
     if ((roster.agents ?? []).length === 0) {
       options.push({ key: 'agent', icon: h(FishLogo, { size: 16 }), label: t('Add DSH Agent'), run: () => run(async () => { await actions.addAgent(); close() }) })

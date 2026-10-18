@@ -14,6 +14,7 @@ export const WORKGROUP_CSS = `
 .bt-wg{flex:1;min-height:0;display:flex;flex-direction:column;font-size:14px;color:var(--bt-ink)}
 .bt-wg-head{height:62px;flex:none;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:.5px solid var(--bt-line)}
 .bt-wg-name{font-weight:600;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt-wg-notice{flex:none;margin:0 16px 8px;padding:8px 10px;border-radius:8px;background:var(--bt-tag-bg);color:var(--bt-ink-2);font-size:12px;line-height:18px;white-space:pre-wrap}
 .bt-wg-unread{flex:none;min-width:18px;height:18px;border-radius:999px;background:var(--bt-accent);color:var(--bt-accent-ink,#fff);font-size:11px;line-height:18px;text-align:center;padding:0 5px;box-sizing:border-box}
 .bt-wg-gear{margin-left:auto;flex:none;height:32px;border-radius:999px;border:0;background:var(--bt-hover);color:var(--bt-ink);font-size:13px;padding:0 12px;cursor:pointer}
 .bt-wg-gear:hover{background:var(--bt-active)}

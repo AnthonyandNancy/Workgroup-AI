@@ -63,15 +63,10 @@ export function createWorkgroupClient({ client, bridge, onBotsFromDirectory } = 
         throw error
       }),
     ])
-    const owners = new Set(room.members.map(member => member.userId))
-    const directories = await Promise.all([...owners].map(ownerUserId => publishedBots({ ownerUserId })))
-    const bots = directories.flat()
-      .filter(bot => owners.has(bot.ownerUserId) && ['public', 'room'].includes(bot.visibility))
-      .map(({ botId, ownerUserId, displayName, visibility, state }) => ({ botId, ownerUserId, displayName, visibility, state }))
     return {
       room: room.room,
       members: room.members,
-      bots,
+      bots: Array.isArray(room.bots) ? room.bots : [],
       messages: messages.messages,
       tasks: tasks.tasks ?? [],
       head: messages.nextAfterSeq ?? 0,
@@ -326,8 +321,23 @@ export function reduceWorkgroup(state, event) {
       if (typeof change.name !== 'string' || change.name === state.room?.name) return state
       return { ...state, room: { ...state.room, name: change.name } }
     }
+    case 'room.notice_changed': {
+      const change = event.payload ?? {}
+      if (change.roomId !== undefined && change.roomId !== state.room?.id) return state
+      return { ...state, room: { ...state.room, notice: typeof change.notice === 'string' ? change.notice : state.room?.notice ?? '' } }
+    }
+    case 'room.bot_added':
+    case 'room.bot_removed':
+      return { ...state, botsStale: true }
+    case 'room.dissolved': {
+      const change = event.payload ?? {}
+      if (change.roomId !== undefined && change.roomId !== state.room?.id) return state
+      return { ...state, room: { ...state.room, dissolvedAt: change.dissolvedAt ?? state.room?.dissolvedAt ?? new Date().toISOString() } }
+    }
     case 'invitation.created':
-      return { ...state, invitationsStale: true }
+    case 'bot_invitation.created':
+    case 'bot_invitation.changed':
+      return { ...state, invitationsStale: true, botInvitationsStale: true }
     case 'task.approval_requested':
     case 'task.approved':
     case 'task.cancelled':
@@ -350,5 +360,5 @@ export function reduceWorkgroup(state, event) {
  * `null` state would be a crash on first paint instead of an empty room.
  */
 export function emptyWorkgroupState(roomId) {
-  return { room: { id: roomId, name: '' }, members: [], messages: [], tasks: [], head: 0, loading: true }
+  return { room: { id: roomId, name: '', notice: '' }, members: [], bots: [], messages: [], tasks: [], head: 0, loading: true }
 }

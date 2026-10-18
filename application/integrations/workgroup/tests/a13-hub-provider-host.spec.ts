@@ -6,15 +6,19 @@ import { install } from '../../../packages/bundle/ds-bot/src/host/workgroup-hub.
 
 import { recycleTestPath } from './recycle.mjs'
 
-const temporaryRoots = []
+// One root per file, one unique directory per case inside it. The recycle runs PowerShell on Windows
+// and costs seconds per root, so a root per case made the cleanup (not the tests) dominate the run and
+// occasionally exceeded the hook budget. Cases still get separate state and home directories.
+const fileRoot = mkdtempSync(join(tmpdir(), 'wg-a13-'))
+let temporarySerial = 0
 function temporaryPath(prefix, name) {
-  const root = mkdtempSync(join(tmpdir(), prefix))
-  temporaryRoots.push(root)
+  const root = join(fileRoot, `${String(++temporarySerial).padStart(2, '0')}-${prefix}`)
+  mkdirSync(root, { recursive: true })
   return join(root, name)
 }
-// The recycle runs PowerShell on Windows, and this file now leaves a tree per case: a whole
-// file's worth in one hook exceeds the default hook timeout.
-afterAll(() => { for (const root of temporaryRoots.splice(0)) recycleTestPath(root) }, 60_000)
+// The budget covers cleanup only; no assertion depends on it. One recycle is ~8 s, so the margin is
+// no longer tied to the number of cases.
+afterAll(() => { recycleTestPath(fileRoot) }, 180_000)
 
 function response(payload) {
   return { ok: true, status: 200, json: async () => payload }
