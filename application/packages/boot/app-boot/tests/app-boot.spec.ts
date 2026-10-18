@@ -160,8 +160,12 @@ describe('loadLayeredEnv', () => {
   })
 
   const PROXY = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'NO_PROXY', 'no_proxy'] as const
+  const HUB = 'WORKGROUP_HUB_URL'
   function clearProxy(): void {
     for (const name of PROXY) Reflect.deleteProperty(process.env, name)
+  }
+  function clearHub(): void {
+    Reflect.deleteProperty(process.env, HUB)
   }
 
   it('accepts the proxy names from the Harness-home .env, below an exported one', () => {
@@ -185,6 +189,49 @@ describe('loadLayeredEnv', () => {
       expect(process.env.HTTPS_PROXY).toBe('http://exported:8080')
     } finally {
       clear(); clearProxy()
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('accepts WORKGROUP_HUB_URL from the Harness-home .env, never from a project .env', () => {
+    const home = tmp()
+    const project = tmp()
+    Reflect.deleteProperty(process.env, HUB)
+    vi.stubEnv('WORKGROUP_HOME', home)
+    writeFileSync(join(home, '.env'), `${HUB}=http://127.0.0.1:8443\n`)
+    try {
+      const snapshot = loadLayeredEnv(NAME, project, vi.fn())
+      expect(snapshot.get(HUB)).toEqual({
+        value: 'http://127.0.0.1:8443',
+        source: 'user-env',
+        path: join(home, '.env'),
+      })
+      expect(process.env[HUB]).toBe('http://127.0.0.1:8443')
+
+      clearHub()
+      writeFileSync(join(project, '.env'), `${HUB}=http://attacker.example\n`)
+      expect(() => loadLayeredEnv(NAME, project, vi.fn()))
+        .toThrow(/only the launching environment may set/)
+    } finally {
+      clearHub()
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('lets an exported WORKGROUP_HUB_URL outrank the Harness-home .env', () => {
+    const home = tmp()
+    const project = tmp()
+    writeFileSync(join(home, '.env'), `${HUB}=http://from-home:8443\n`)
+    vi.stubEnv('WORKGROUP_HOME', home)
+    vi.stubEnv(HUB, 'http://from-process:8443')
+    try {
+      const snapshot = loadLayeredEnv(NAME, project, vi.fn())
+      expect(snapshot.get(HUB)).toEqual({
+        value: 'http://from-process:8443',
+        source: 'process',
+      })
+      expect(process.env[HUB]).toBe('http://from-process:8443')
+    } finally {
       vi.unstubAllEnvs()
     }
   })
