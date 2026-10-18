@@ -15,13 +15,45 @@ function fakeLocale(active) {
   }
 }
 
+function clientSources(dir) {
+  const files = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const child = new URL(`${entry.name}${entry.isDirectory() ? '/' : ''}`, dir)
+    if (entry.isDirectory()) files.push(...clientSources(child))
+    else if (entry.name.endsWith('.js')) files.push(child)
+  }
+  return files
+}
+
+/** Every literal first argument of a `t(...)` call, with source escapes resolved. */
+function translatedKeys(text) {
+  const keys = []
+  for (let at = text.indexOf('t('); at >= 0; at = text.indexOf('t(', at + 2)) {
+    if (at > 0 && /[\w$]/.test(text[at - 1])) continue
+    let index = at + 2
+    while (/\s/.test(text[index] ?? '')) index += 1
+    const quote = text[index]
+    if (quote !== "'" && quote !== '"') continue
+    let key = ''
+    index += 1
+    while (index < text.length) {
+      if (text[index] === '\\') { key += text[index + 1] ?? ''; index += 2; continue }
+      if (text[index] === quote) break
+      key += text[index]
+      index += 1
+    }
+    if (text[index] === quote) keys.push(key)
+  }
+  return keys
+}
+
 test('every literal the client translates has a Chinese entry', () => {
   const dir = new URL('../src/client/', import.meta.url)
   const missing = []
-  for (const name of readdirSync(dir).filter(file => file.endsWith('.js'))) {
-    const text = readFileSync(new URL(name, dir), 'utf8')
-    for (const match of text.matchAll(/\bt\(\s*(['"])((?:\\.|(?!\1).)*)\1/g)) {
-      const key = match[2].replace(/\\'/g, "'")
+  for (const file of clientSources(dir)) {
+    const name = decodeURIComponent(file.pathname).split('/src/client/')[1] ?? file.pathname
+    const text = readFileSync(file, 'utf8')
+    for (const key of translatedKeys(text)) {
       if (!Object.hasOwn(DICTIONARY.zh, key)) missing.push(`${name}: ${key}`)
     }
   }

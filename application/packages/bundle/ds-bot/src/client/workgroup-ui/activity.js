@@ -37,6 +37,9 @@ const EVENT_WORDS = {
 
 const TERMINAL = ['CANCELLING', 'CANCELLED', 'COMPLETED', 'SHARED', 'REJECTED', 'FAILED', 'EXPIRED']
 
+/** Whether a task can still move, be stopped, or accept owner work. */
+export const isTaskActive = task => task !== undefined && !TERMINAL.includes(task.state)
+
 function ApprovalForm({ task, members, selfUserId, actions, run, loadOwnerBots, onDecision, onCancel }) {
   const [bots, setBots] = useState([])
   const [botsNote, setBotsNote] = useState(undefined)
@@ -240,7 +243,7 @@ export function TaskCard({ task, events, members, selfUserId, actions, run, load
   const mine = task.ownerUserId === selfUserId
   const role = (members ?? []).find(member => member.userId === selfUserId)?.role
   const mayCancel = task.requesterUserId === selfUserId || task.ownerUserId === selfUserId || role === 'owner' || role === 'admin'
-  const cancellable = !TERMINAL.includes(task.state)
+  const cancellable = isTaskActive(task)
   return h('section', {
     className: 'bt-activity',
     'data-wg-task': task.id,

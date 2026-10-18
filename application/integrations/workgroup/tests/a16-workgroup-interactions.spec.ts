@@ -21,7 +21,7 @@ beforeAll(async () => {
     bundle: true, write: false, format: 'cjs', platform: 'browser', external: ['react', 'react-dom'],
     plugins: [{ name: 'shell-primitives', setup(builder) {
       builder.onResolve({ filter: /^@deepseek-ai\/dsh-client-ui-primitives$/ }, () => ({ path: 'primitives', namespace: 'test-shell' }))
-      builder.onLoad({ filter: /.*/, namespace: 'test-shell' }, () => ({ contents: 'export const FishLogo = () => null; export const MarkdownText = () => null;' }))
+      builder.onLoad({ filter: /.*/, namespace: 'test-shell' }, () => ({ contents: "import { createElement as h } from 'react'; export const FishLogo = () => null; export const MarkdownText = ({ text }) => h('span', { 'data-test-markdown': 'true' }, text);" }))
     } }],
   })
   const module = { exports: {} }
@@ -52,6 +52,11 @@ async function fill(selector, value) {
   const target = container.querySelector(selector)
   expect(target, selector).not.toBeNull()
   await act(async () => Simulate.change(target, { target: { value } }))
+}
+async function blur(selector) {
+  const target = container.querySelector(selector)
+  expect(target, selector).not.toBeNull()
+  await act(async () => Simulate.blur(target))
 }
 const state = {
   room: { id: 'room-1', name: 'Ops', kind: 'workgroup', ownerUserId: 'u1' },
@@ -91,9 +96,10 @@ describe('workgroup composer and Hub settings (mock Host)', () => {
     const hub = workgroups()
     const local = { updateRoom: vi.fn(), deleteRoom: vi.fn() }
     await mount('WorkgroupSurface', { sessionId: 'wg:room-1', workgroups: hub, actions: local, hub: { configured: true, signedIn: true, state: 'open' } })
+    await click('[data-wg-details]')
     await click('[data-wg-settings="open"]')
     await fill('[aria-label="Group name"]', 'New name')
-    await click('[data-wg-action="rename"]')
+    await blur('[aria-label="Group name"]')
     expect(hub.renameRoom).toHaveBeenCalledWith('room-1', { name: 'New name' })
     await fill('[aria-label="User ID"]', 'u3')
     await click('[data-wg-action="invite"]')
@@ -114,6 +120,7 @@ describe('workgroup composer and Hub settings (mock Host)', () => {
   it('lets a member leave and withholds owner settings', async () => {
     const hub = workgroups('u2')
     await mount('WorkgroupSurface', { sessionId: 'wg:room-1', workgroups: hub, hub: { configured: true, signedIn: true, state: 'open' } })
+    await click('[data-wg-details]')
     await click('[data-wg-settings="open"]')
     expect(container.querySelector('[data-group-action="dissolve"]')).toBeNull()
     expect(container.querySelector('[data-wg-action="rename"]')).toBeNull()
@@ -208,7 +215,7 @@ describe('owner-only workgroup task decisions', () => {
     await vi.waitFor(() => expect(hub.openRoom).toHaveBeenCalledTimes(2))
     // A rejection grants nothing, so it carries no scope at all: only the version the card held.
     expect(hub.answerTask).toHaveBeenCalledWith('task-1', 'reject', { expectedVersion: 7 })
-    expect(container.querySelector('[data-wg-settings="open"]')).not.toBeNull()
+    expect(container.querySelector('[data-wg-details]')).not.toBeNull()
   })
 
   it('refuses an incomplete approval scope locally without contacting the Hub', async () => {

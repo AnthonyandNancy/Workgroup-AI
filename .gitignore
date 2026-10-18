@@ -38,3 +38,6 @@ worktrees/
 backups/
 *.preset
 _shots/
+
+# 本地验证产物
+output/

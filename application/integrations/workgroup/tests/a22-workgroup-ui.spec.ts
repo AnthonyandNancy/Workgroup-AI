@@ -30,7 +30,7 @@ beforeAll(async () => {
     bundle: true, write: false, format: 'cjs', platform: 'browser', external: ['react', 'react-dom'],
     plugins: [{ name: 'shell-primitives', setup(builder) {
       builder.onResolve({ filter: /^@deepseek-ai\/dsh-client-ui-primitives$/ }, () => ({ path: 'primitives', namespace: 'test-shell' }))
-      builder.onLoad({ filter: /.*/, namespace: 'test-shell' }, () => ({ contents: 'export const FishLogo = () => null; export const MarkdownText = () => null;' }))
+      builder.onLoad({ filter: /.*/, namespace: 'test-shell' }, () => ({ contents: "import { createElement as h } from 'react'; export const FishLogo = () => null; export const MarkdownText = ({ text }) => h('span', { 'data-test-markdown': 'true' }, text);" }))
     } }],
   })
   const module = { exports: {} }
@@ -62,6 +62,11 @@ async function fill(selector, value) {
   expect(target, selector).not.toBeNull()
   await act(async () => Simulate.change(target, { target: { value } }))
 }
+async function blur(selector) {
+  const target = container.querySelector(selector)
+  expect(target, selector).not.toBeNull()
+  await act(async () => Simulate.blur(target))
+}
 
 const members = [
   { userId: 'u1', displayName: 'Alice', role: 'owner', online: true },
@@ -91,6 +96,8 @@ describe('the copied workgroup conversation', () => {
     expect(container.textContent).toContain('Bob')
     expect(container.querySelector('.bt-umsg [data-wg-message="m2"]') ?? container.querySelector('.bt-umsg')).not.toBeNull()
     expect(container.querySelector('[data-wg-message="m1"]').className).toBe('bt-group-msg')
+    expect(container.querySelector('[data-wg-message="m1"] .bt-lead')).not.toBeNull()
+    expect(container.querySelector('[data-wg-message="m1"] .bt-bubble [data-test-markdown="true"]')).not.toBeNull()
   })
 
   it('marks an undelivered message instead of showing it as sent', async () => {
@@ -165,6 +172,54 @@ describe('the copied workgroup conversation', () => {
     await act(async () => root.render(h(components.WorkgroupConversation, { ...base, tasks: [task], events, selfUserId: 'u2' })))
     expect(container.querySelector('[data-wg-approve="task-1"]')).toBeNull()
   })
+
+  it('opens the original details drawer and switches to settings inside it', async () => {
+    const onRoomAction = vi.fn(async () => ({}))
+    await mount('WorkgroupConversation', { ...base, onRoomAction })
+    expect(container.querySelector('.bt-wg-panel')).toBeNull()
+    await click('[data-wg-details]')
+    for (const selector of ['.bt-panel.bt-wg-panel', '.bt-panel-grip', '.bt-panel-view', '.bt-drawer-top', '.bt-drawer-id', '.bt-drawer-body']) {
+      expect(container.querySelector(selector), selector).not.toBeNull()
+    }
+    const panel = container.querySelector('.bt-panel.bt-wg-panel')
+    expect(panel.style.getPropertyValue('--bt-panel-w')).toBe('320px')
+    expect(container.querySelector('.bt-wg-surface').style.marginRight).toBe('320px')
+    await click('[data-wg-settings="open"]')
+    expect(container.querySelector('.bt-subhead')).not.toBeNull()
+    expect(container.querySelector('.bt-drawer-body.bt-set-body')).not.toBeNull()
+    expect(container.querySelector('.bt-wg-thread'), 'the conversation stays mounted').not.toBeNull()
+    await click('[data-wg-settings-back]')
+    expect(container.querySelector('.bt-drawer-id')).not.toBeNull()
+    await click('[data-wg-details-close]')
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 320)) })
+    expect(container.querySelector('.bt-wg-panel')).toBeNull()
+    expect(container.querySelector('.bt-wg-surface').style.marginRight).toBe('0px')
+  })
+
+  it('renames the group from the details drawer', async () => {
+    const onRoomAction = vi.fn(async () => ({}))
+    await mount('WorkgroupConversation', { ...base, onRoomAction })
+    await click('[data-wg-details]')
+    await click('.bt-drawer-name')
+    const input = container.querySelector('.bt-drawer-name-input')
+    expect(input).not.toBeNull()
+    await act(async () => Simulate.change(input, { target: { value: 'Renamed' } }))
+    await act(async () => Simulate.blur(input))
+    expect(onRoomAction).toHaveBeenCalledWith('renameRoom', { name: 'Renamed' })
+  })
+
+  it('copies the conversation from the details header', async () => {
+    const writeText = vi.fn(async () => {})
+    vi.stubGlobal('navigator', Object.assign(Object.create(navigator), { clipboard: { writeText } }))
+    await mount('WorkgroupConversation', base)
+    await click('[data-wg-details]')
+    await click('[data-wg-share="true"]')
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledTimes(1))
+    const text = writeText.mock.calls[0][0]
+    expect(text).toContain('**Bob:** hello')
+    expect(text).toContain('**Alice:** hi')
+    expect(container.querySelector('[data-wg-share="true"]').getAttribute('aria-label')).toBe('Copied conversation')
+  })
 })
 
 describe('the copied workgroup settings', () => {
@@ -173,10 +228,10 @@ describe('the copied workgroup settings', () => {
   it('saves the name and the notice through the Hub adapter', async () => {
     await mount('WorkgroupSettingsForm', { room, members, bots, selfUserId: 'u1', onAction, onClose: vi.fn() })
     await fill('[aria-label="Group name"]', 'New name')
-    await click('[data-wg-action="rename"]')
+    await blur('[aria-label="Group name"]')
     expect(onAction).toHaveBeenCalledWith('renameRoom', { name: 'New name' })
     await fill('[aria-label="Notice"]', 'New notice')
-    await click('[data-wg-action="notice"]')
+    await blur('[aria-label="Notice"]')
     expect(onAction).toHaveBeenCalledWith('updateNotice', { notice: 'New notice' })
   })
 
@@ -186,12 +241,14 @@ describe('the copied workgroup settings', () => {
       { ownerUserId: 'u2', botId: 'theirs', displayName: 'Theirs', ownerDisplayName: 'Bob', mine: false, inRoom: false, visibility: 'room' },
     ])
     await mount('WorkgroupSettingsForm', { room, members, bots, selfUserId: 'u1', onAction, onClose: vi.fn(), loadBotCandidates })
-    await vi.waitFor(() => expect(container.querySelector('[data-wg-action="add-bot"]')).not.toBeNull())
+    await vi.waitFor(() => expect(container.querySelector('[data-wg-add-row="bot"]')).not.toBeNull())
+    await click('[data-wg-add-row="bot"]')
     await act(async () => {
       Simulate.change(container.querySelector('[aria-label="Add a Bot"]'), { target: { value: 'mine' } })
     })
     await click('[data-wg-action="add-bot"]')
     expect(onAction).toHaveBeenCalledWith('addBot', { botId: 'mine' })
+    await click('[data-wg-add-row="other-bot"]')
     await act(async () => {
       Simulate.change(container.querySelector('[aria-label="Invite another member\'s Bot"]'), { target: { value: 'u2:theirs' } })
     })
@@ -254,6 +311,23 @@ describe('the copied workgroup details', () => {
     await mount('WorkgroupDetails', { room, members, bots, tasks: [], selfUserId: 'u1' })
     expect(container.querySelector('[data-wg-memory="unavailable"]')).not.toBeNull()
   })
+
+  it('shows how answers and permissions work and reports task usage', async () => {
+    const task = { id: 'task-1', state: 'SHARED', description: 'Read the notes', updatedAt: '2026-01-01T10:00:00.000Z' }
+    await mount('WorkgroupDetails', { room, members, bots, tasks: [task], selfUserId: 'u1' })
+    expect(container.querySelector('[data-wg-who-answers="true"]').textContent).toContain('No automatic answers')
+    expect(container.querySelector('[data-wg-permissions="true"]').textContent).toContain('folder, tools, and lifetime')
+    expect(container.textContent).toContain('Usage')
+    expect(container.textContent).toContain('1 tasks')
+  })
+
+  it('stops a Bot by cancelling its active task', async () => {
+    const task = { id: 'task-stop', state: 'APPROVED', ownerUserId: 'u2', targetBotId: 'b1', description: 'Work' }
+    const onCancel = vi.fn()
+    await mount('WorkgroupDetails', { room, members, bots, tasks: [task], selfUserId: 'u1', onCancel })
+    await click('[data-wg-stop-bot="b1"]')
+    expect(onCancel).toHaveBeenCalledWith(task)
+  })
 })
 
 describe('the copied workgroup creation form', () => {
@@ -269,22 +343,107 @@ describe('the copied workgroup creation form', () => {
     }
   }
 
-  it('requires a name and then creates, adds the chosen Bot, and invites by user id', async () => {
+  it('renders the original new-chat skeleton and closes with Escape', async () => {
+    const onCancel = vi.fn()
+    await mount('WorkgroupCreate', { workgroups: workgroups(), onCreated: vi.fn(), onCancel })
+    const pane = container.querySelector('.bt-pane')
+    expect(pane, 'the creation surface uses the original pane').not.toBeNull()
+    expect(pane.style.left).toBe('280px')
+    for (const selector of ['.bt-newchat', '.bt-to', '.bt-drop', '.bt-nc-compose', '.bt-nc-card', '.bt-x', '.bt-send.bt-to-create']) {
+      expect(container.querySelector(selector), selector).not.toBeNull()
+    }
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(onCancel).toHaveBeenCalledTimes(1)
+  })
+
+  it('picks a Bot with the same arrow/Enter movement as the original list', async () => {
+    await mount('WorkgroupCreate', { workgroups: workgroups(), onCreated: vi.fn(), onCancel: vi.fn() })
+    await vi.waitFor(() => expect(container.querySelector('[data-wg-create-bot="mine"]')).not.toBeNull())
+    const input = container.querySelector('[aria-label="Add your Bot"]')
+    expect(input).not.toBeNull()
+    await act(async () => Simulate.keyDown(input, { key: 'ArrowDown' }))
+    await act(async () => Simulate.keyDown(input, { key: 'Enter' }))
+    expect(container.querySelectorAll('.bt-to .bt-token')).toHaveLength(1)
+    expect(container.querySelector('.bt-to .bt-token').textContent).toContain('Mine')
+  })
+
+  it('creates with a Bot alone and names the workgroup after its members', async () => {
     const hub = workgroups()
     const onCreated = vi.fn()
     await mount('WorkgroupCreate', { workgroups: hub, onCreated, onCancel: vi.fn() })
     await vi.waitFor(() => expect(container.querySelector('[data-wg-create-bot="mine"]')).not.toBeNull())
     expect(container.querySelector('[data-wg-create-submit="true"]').disabled).toBe(true)
-    await fill('[aria-label="Workgroup name"]', 'Launch')
     await click('[data-wg-create-bot="mine"]')
-    await fill('[aria-label="User ID"]', 'u3')
-    await click('[data-wg-create-invite="add"]')
+    expect(container.querySelector('[data-wg-create-submit="true"]').disabled).toBe(false)
     await click('[data-wg-create-submit="true"]')
     await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith({ id: 'room-9', name: 'New' }))
     // The chosen Bots travel with the creation call: the Hub makes the room and its Bots one unit.
-    expect(hub.createRoom).toHaveBeenCalledWith('Launch', { kind: 'workgroup', botIds: ['mine'] })
+    expect(hub.createRoom).toHaveBeenCalledWith('You, Mine', { kind: 'workgroup', botIds: ['mine'] })
     expect(hub.addBot).not.toHaveBeenCalled()
+  })
+
+  it('creates with a Bot and an invite when the name is left empty', async () => {
+    const hub = workgroups()
+    const onCreated = vi.fn()
+    await mount('WorkgroupCreate', { workgroups: hub, onCreated, onCancel: vi.fn() })
+    await vi.waitFor(() => expect(container.querySelector('[data-wg-create-bot="mine"]')).not.toBeNull())
+    await click('[data-wg-create-bot="mine"]')
+    await fill('[aria-label="User ID to invite"]', 'u3')
+    await click('[data-wg-create-invite="add"]')
+    await click('[data-wg-create-submit="true"]')
+    await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith({ id: 'room-9', name: 'New' }))
+    expect(hub.createRoom).toHaveBeenCalledWith('You, Mine', { kind: 'workgroup', botIds: ['mine'] })
     expect(hub.invite).toHaveBeenCalledWith('room-9', { targetUserId: 'u3', role: 'member' })
+  })
+
+  it('does not create from a name alone', async () => {
+    const hub = workgroups()
+    await mount('WorkgroupCreate', { workgroups: hub, onCreated: vi.fn(), onCancel: vi.fn() })
+    await vi.waitFor(() => expect(container.querySelector('[data-wg-create-bot="mine"]')).not.toBeNull())
+    await fill('[aria-label="Workgroup name"]', 'Launch')
+    expect(container.querySelector('[data-wg-create-submit="true"]').disabled).toBe(true)
+    expect(hub.createRoom).not.toHaveBeenCalled()
+  })
+
+  it('uses the typed name when one is provided', async () => {
+    const hub = workgroups()
+    const onCreated = vi.fn()
+    await mount('WorkgroupCreate', { workgroups: hub, onCreated, onCancel: vi.fn() })
+    await vi.waitFor(() => expect(container.querySelector('[data-wg-create-bot="mine"]')).not.toBeNull())
+    await fill('[aria-label="Workgroup name"]', 'Launch')
+    await click('[data-wg-create-bot="mine"]')
+    await click('[data-wg-create-submit="true"]')
+    await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith({ id: 'room-9', name: 'New' }))
+    expect(hub.createRoom).toHaveBeenCalledWith('Launch', { kind: 'workgroup', botIds: ['mine'] })
+  })
+
+  it('opens the created room even when an invitation fails, and reports that failure once', async () => {
+    const hub = workgroups({ invite: vi.fn(async () => { throw new Error('invite failed') }) })
+    const onCreated = vi.fn()
+    const report = vi.fn()
+    await mount('WorkgroupCreate', { workgroups: hub, onCreated, onCancel: vi.fn(), report })
+    await vi.waitFor(() => expect(container.querySelector('[data-wg-create-bot="mine"]')).not.toBeNull())
+    await click('[data-wg-create-bot="mine"]')
+    await fill('[aria-label="User ID to invite"]', 'u3')
+    await click('[data-wg-create-invite="add"]')
+    await click('[data-wg-create-submit="true"]')
+    await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith({ id: 'room-9', name: 'New' }))
+    expect(hub.createRoom).toHaveBeenCalledTimes(1)
+    expect(report).toHaveBeenCalledTimes(1)
+    expect(report.mock.calls[0][0].message).toContain('invite failed')
+  })
+
+  it.each([
+    ['signed out', { phase: 'ready', configured: true, signedIn: false, state: 'closed' }, 'Configured, signed out'],
+    ['reconnecting', { phase: 'ready', configured: true, signedIn: true, state: 'reconnecting' }, 'Hub is reconnecting'],
+    ['refused', { phase: 'ready', configured: true, signedIn: true, state: 'fatal' }, 'Hub refused this device'],
+  ])('blocks creation when the Hub is %s and says why', async (_label, view, copy) => {
+    await mount('WorkgroupCreate', { workgroups: workgroups(), hub: view, onCreated: vi.fn(), onCancel: vi.fn() })
+    expect(container.querySelector('[data-wg-create-unavailable="true"]').textContent).toContain(copy)
+    await fill('[aria-label="Workgroup name"]', 'Launch')
+    expect(container.querySelector('[data-wg-create-submit="true"]').disabled).toBe(true)
   })
 
   it('refuses to create without a Hub and says why', async () => {

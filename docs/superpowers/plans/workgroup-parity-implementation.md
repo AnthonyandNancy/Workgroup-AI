@@ -31,10 +31,10 @@
 | Task 6 Host Bot 发布与 Bridge | DONE | 登录/恢复发布、改名/删除同步、60s 心跳、withdraw、bot-candidates；a20 10/10 |
 | Task 7 客户端工作群读模型/reducer | DONE | openRoom 显式 room bots；reducer 公告/Bot/邀请/解散；新增 workgroup-roster 读模型与本地偏好 |
 | Task 8 客户端 roster/侧栏/邀请 | DONE | 复制侧栏 WorkgroupTeamSidebar：本地实体 + 工作群行 + 真人/Bot 邀请 + pin/hide + Hub 状态 |
-| Task 9 复制原群聊会话/设置/详情/创建 UI | DONE | workgroup-ui/ 复制消息、composer、设置、详情、任务活动、群记忆与创建表单；接入 `wg:` overlay |
+| Task 9 复制原群聊会话/设置/详情/创建 UI | DONE（2026-10-18 校正） | 创建面、会话头、详情、设置已按原群聊 `bt-newchat`/`bt-head`/`bt-panel-view`/`bt-drawer-*` 结构重建；a22 26/26、a16 20/20；`client.js` 与 `lib/client.js` 已重建 |
 | Task 10 入口/overlay/注册接线 | DONE | 三入口统一打开复制创建表单；通用 extraOptions/extraCommands/extraGroups；创建后进入并刷新 roster |
 | Task 11 原群聊清理 | DONE | 原群聊文件移除 workgroup 分支；旧 WorkgroupSettings 备份到 backups/ 并停止引用；复制件独立演进 |
-| Task 12 回归与验收 | PARTIAL | 定向回归、构建、lint 已通过；真实双客户端 Hub、离线重连、原群聊真实 UI 回归与固定窗口/主题/语言/缩放截图对照尚未执行（本会话无运行中的 Hub/Host 桌面环境） |
+| Task 12 回归与验收 | PARTIAL | 客户端 124/124、服务端 12/12、构建/lint/i18n 通过；web 端已启动真实 Hub 并截图创建面/详情/设置；原群聊固定环境像素对照仍未执行（测试 profile 只有 1 个本地 Bot，无法创建本地群聊），typecheck 因既有 permission-presets 路径问题失败 |
 
 ## Plan 偏差
 
@@ -45,6 +45,8 @@
 3. **定时任务由 Host 调度，只发送普通消息。** 队列持久化在 Host 的 `workgroup-schedules.json`，窗口关闭或重启后仍按期发送；@ Bot 仍由 Hub 生成待审批任务，不直接执行；发送失败保留条目、记录原因并稍后重试。客户端不再持有定时器。
 4. **Bot 可见性由所有者决定，默认 private。** 工作群设置里自己的 Bot 有“成员可见”开关，打开后以 `room` 可见性重新发布，其他成员才能发现并邀请；默认仍是 private，非所有者不能改变该设置。
 5. **创建房间与所选 Bot 单事务。** `POST /rooms` 接受 `botIds`（创建者自己的已发布 Bot），房间、owner 成员关系与这些 Bot 同事务写入；任一 Bot 未发布则整个创建被拒绝，不留半个工作群。真人邀请仍是创建后的 pending 邀请。
+6. **web 端加载 `lib/client.js`，不是只看根 `client.js`。** 根 `client.js` 是 `link:`/git 安装的提交产物；DSH web 通过包的 `./client` export 加载 `lib/client.js`。本次验证同时运行 `build-client.mjs` 和 `build-lib.mjs`，后者生成的 `lib/client.js` 是 ignored 的验证构建，不进入提交。
+7. **详情/设置面板采用工作群 pane 内 flex 面板，不是原群聊的 fixed `bt-panel` + `chatRoom` 平移。** 外层宽度、边框、`bt-panel-view`、`bt-drawer-*` 内部结构已对齐；拖拽调宽与跨列 spring 动画未复制，登记为残余差异。
 
 ## Execution Log
 
@@ -76,6 +78,7 @@
   - 创建：`createRoom` 校验并写入 `botIds` 同事务，路由返回 room+bots，Host 转发，创建表单改为一次调用；h16 覆盖原子性与未发布 Bot 404 不留房，a22 覆盖请求形状。
   - 引用会话：按 R17 保持禁用并说明原因（本机 Session 不能被跨用户 Bot 读取），登记为需求驱动适配而非缺口。
 - Host 回归：新增 a20 10/10；a17（真实 `/api/bot` Loader composition）3/3。a13 曾因 Windows 下每个用例一个临时根、清理约 160s 而触顶 hook 预算（断言 14/14、文件级 exit 1）。改为**整文件一个临时根、用例使用唯一子目录**（`wg-a13-*`，符合 recycle 的安全前缀），清理降为一次；复验 exit 0（14/14，约 34s），不再随用例数增长。
+- 2026-10-18 工作群创建/设置/详情校正：`workgroup-ui/create.js` 改为原群聊 `bt-pane/bt-newchat/bt-to/bt-drop/bt-nc-compose` 骨架，增加名称输入、Esc/键盘选择、Hub 阻断原因和“创建成功但邀请失败”处理；`workgroup-ui/index.js` 改为 `bt-head/bt-pill` 与 `bt-wg-panel` 详情/设置面板，修复详情齿轮无效、错误未读徽标和消息上方公告条；`details.js`/`settings.js` 对齐原群聊正文和 `InlineText`/单 Members 卡结构；`workgroup-status.js`/`workgroup-sidebar.js` 共享创建阻断文案；`i18n.js` 补齐工作群中文并让 `test/i18n.test.js` 递归扫描 `src/client`。验证：a22 26/26、a16 20/20、全工作群客户端 124/124、i18n/workgroup-css 7/7、服务端 h16 12/12、`build-client.mjs --check` BUILD_OK、lint 0 errors（20 既有 warnings）、`verify-client-ui-i18n` 通过；web 端用临时 Hub 启动并截图创建面/详情/设置，创建了 `UI 验收工作群`。`npm run typecheck` 失败于 `packages/interaction/permission-presets/lib/types/types.d.ts` 的既有路径问题，与本次 JS 改动无关。
 
 ---
 

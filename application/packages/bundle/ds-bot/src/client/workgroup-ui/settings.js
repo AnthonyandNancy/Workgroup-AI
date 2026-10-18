@@ -15,15 +15,15 @@
 // The Hub re-checks every action. This form decides what a viewer is offered.
 
 import { createElement as h, useEffect, useState } from 'react'
-import { Card, Row, SwitchRow } from '../bot-settings.js'
-import { ChevronRightIcon } from '../icons.js'
+import { Card, InlineText, Row, SwitchRow } from '../bot-settings.js'
+import { ChevronRightIcon, PlusIcon } from '../icons.js'
 import { BotAvatar, RoomAvatar } from '../mark.js'
 import { t } from '../i18n.js'
 
 const roleLabel = role => t(role === 'owner' ? 'Owner' : role === 'admin' ? 'Admin' : 'Member')
 
-function Hero({ room, members }) {
-  const humans = (members ?? []).length
+function Hero({ room, members, bots }) {
+  const humans = (members ?? []).length + (bots ?? []).length
   return h('div', { className: 'bt-bs-hero' },
     h(RoomAvatar, { room: { ...room, members: (members ?? []).map(member => member.userId) }, roster: { byId: {}, bots: [] }, size: 64 }),
     h('div', { className: 'bt-bs-who' },
@@ -59,7 +59,7 @@ function MemberRow({ member, manage, selfUserId, busy, act, onAction }) {
 
 function BotRow({ bot, selfUserId, manage, busy, act, onAction, visibility, onVisibility }) {
   const removable = manage || bot.ownerUserId === selfUserId
-  return h('div', { className: 'bt-set-row bt-bs-row bt-gs-member' },
+  return h('div', { className: 'bt-set-row bt-bs-row bt-bs-stack bt-gs-member bt-wg-bot-row' },
     h('span', { className: 'bt-gs-who' },
       h(BotAvatar, {
         bot: { id: `${bot.ownerUserId}:${bot.botId}`, name: bot.displayName ?? bot.botId, look: { shape: 'circle', color: 'blue' } },
@@ -68,23 +68,24 @@ function BotRow({ bot, selfUserId, manage, busy, act, onAction, visibility, onVi
       }),
       h('span', { className: 'bt-row-title' }, bot.displayName ?? bot.botId),
       h('span', { className: 'bt-tag' }, t('Bot of {owner}', { owner: bot.ownerDisplayName ?? bot.ownerUserId }))),
-    // Only the owner decides who may discover their Bot. A room administrator can remove it from the
-    // room, but cannot widen the directory entry on someone else's behalf.
-    bot.ownerUserId === selfUserId
-      ? h('label', { className: 'bt-wg-visibility', title: t('Visible to members') },
-        h('input', {
-          type: 'checkbox', 'data-wg-bot-visibility': bot.botId, disabled: busy,
-          checked: visibility === 'room',
-          onChange: event => onVisibility?.(event.target.checked ? 'room' : 'private'),
-        }),
-        h('span', { className: 'bt-set-hint' }, t('Visible to members')))
-      : null,
-    removable
-      ? h('button', {
-        type: 'button', className: 'bt-soft', disabled: busy, 'data-wg-remove-bot': bot.botId,
-        onClick: () => act(() => onAction('removeBot', { ownerUserId: bot.ownerUserId, botId: bot.botId })),
-      }, t('Remove'))
-      : null)
+    h('div', { className: 'bt-wg-bot-controls' },
+      // Only the owner decides who may discover their Bot. A room administrator can remove it from
+      // the room, but cannot widen the directory entry on someone else's behalf.
+      bot.ownerUserId === selfUserId
+        ? h('label', { className: 'bt-wg-visibility', title: t('Visible to members') },
+          h('input', {
+            type: 'checkbox', 'data-wg-bot-visibility': bot.botId, disabled: busy,
+            checked: visibility === 'room',
+            onChange: event => onVisibility?.(event.target.checked ? 'room' : 'private'),
+          }),
+          h('span', { className: 'bt-set-hint' }, t('Visible to members')))
+        : null,
+      removable
+        ? h('button', {
+          type: 'button', className: 'bt-soft', disabled: busy, 'data-wg-remove-bot': bot.botId,
+          onClick: () => act(() => onAction('removeBot', { ownerUserId: bot.ownerUserId, botId: bot.botId })),
+        }, t('Remove'))
+        : null))
 }
 
 /**
@@ -108,14 +109,14 @@ export function WorkgroupSettingsForm({
   loadOwnerBots,
   loadBotCandidates,
 }) {
-  const [name, setName] = useState(room.name)
-  const [notice, setNotice] = useState(room.notice ?? '')
   const [target, setTarget] = useState('')
   const [candidates, setCandidates] = useState([])
   const [candidateNote, setCandidateNote] = useState(undefined)
   const [visibilityOverrides, setVisibilityOverrides] = useState({})
   const [botId, setBotId] = useState('')
   const [inviteTarget, setInviteTarget] = useState('')
+  const [addingOwn, setAddingOwn] = useState(false)
+  const [addingOthers, setAddingOthers] = useState(false)
   const [invitation, setInvitation] = useState(undefined)
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -128,8 +129,6 @@ export function WorkgroupSettingsForm({
     setBusy(true); setError(undefined)
     try { return await operation() } catch (failure) { setError(failure?.message ?? String(failure)) } finally { setBusy(false) }
   }
-  useEffect(() => { setName(room.name) }, [room.name])
-  useEffect(() => { setNotice(room.notice ?? '') }, [room.notice])
   useEffect(() => {
     let live = true
     if (!manage) return () => { live = false }
@@ -160,30 +159,24 @@ export function WorkgroupSettingsForm({
   const others = available.filter(entry => entry.mine !== true && entry.ownerUserId !== selfUserId && entry.visibility !== 'private')
 
   return h('div', { className: 'bt-bs bt-wg-settings-form' },
-    h(Hero, { room, members }),
+    h(Hero, { room, members, bots }),
     h(Card, { title: t('Profile') },
-      manage
-        ? h('div', { className: 'bt-set-row bt-bs-row' },
-          h('input', {
-            className: 'bt-bs-input', 'aria-label': t('Group name'), value: name, maxLength: 60,
-            onChange: event => setName(event.target.value),
-          }),
-          h('button', {
-            type: 'button', className: 'bt-soft', disabled: busy || name.trim() === '' || name.trim() === room.name,
-            'data-wg-action': 'rename', onClick: () => act(() => onAction('renameRoom', { name: name.trim() })),
-          }, t('Save changes')))
-        : h(Row, { label: t('Name') }, room.name),
-      manage
-        ? h(Row, { label: t('Notice'), hint: t('Every member reads it before speaking in this group.'), stack: true },
-          h('textarea', {
-            className: 'bt-bs-input bt-bs-area', 'aria-label': t('Notice'), value: notice, maxLength: 2000, rows: 3,
-            onChange: event => setNotice(event.target.value),
-          }),
-          h('button', {
-            type: 'button', className: 'bt-soft bt-soft-sm', disabled: busy || notice === (room.notice ?? ''),
-            'data-wg-action': 'notice', onClick: () => act(() => onAction('updateNotice', { notice })),
-          }, t('Save notice')))
-        : h(Row, { label: t('Notice') }, room.notice ?? '')),
+      h(Row, { label: t('Name') },
+        manage
+          ? h(InlineText, {
+            label: t('Group name'), value: room.name, placeholder: t('Group name'),
+            maxLength: 60, required: true,
+            onSave: next => act(() => onAction('renameRoom', { name: next })),
+          })
+          : room.name),
+      h(Row, { label: t('Notice'), hint: t('Every member reads it before speaking in this group.'), stack: true },
+        manage
+          ? h(InlineText, {
+            label: t('Notice'), value: room.notice ?? '', multiline: true, maxLength: 2000,
+            placeholder: t('Shared instructions every member reads before speaking…'),
+            onSave: next => act(() => onAction('updateNotice', { notice: next })),
+          })
+          : (room.notice ?? ''))),
     // The original group's execution settings are replaced with an explanation, not removed
     // silently: a member who looks for "who answers" or "working folder" must find out why a
     // workgroup does not have one.
@@ -191,8 +184,19 @@ export function WorkgroupSettingsForm({
       h('div', { className: 'bt-set-row bt-bs-row bt-bs-stack' },
         h('span', { className: 'bt-set-hint' },
           t('A Bot here belongs to someone else. When you @ it, its owner approves the folder, tools, and lifetime of that one task — the group never shares an execution scope.')))),
-    h(Card, { title: t('Members · {count}', { count: (members ?? []).length }) },
+    h(Card, { title: t('Members · {count}', { count: (members ?? []).length + (bots ?? []).length }) },
       (members ?? []).map(member => h(MemberRow, { key: member.userId, member, manage, selfUserId, busy, act, onAction })),
+      (bots ?? []).map(bot => h(BotRow, {
+        key: `${bot.ownerUserId}:${bot.botId}`,
+        bot,
+        selfUserId,
+        manage,
+        busy,
+        act,
+        onAction,
+        visibility: visibilityOf(bot),
+        onVisibility: value => changeVisibility(bot, value),
+      })),
       manage
         ? h('div', { className: 'bt-set-row bt-bs-row' },
           h('input', {
@@ -213,50 +217,54 @@ export function WorkgroupSettingsForm({
           type: 'button', className: 'bt-soft bt-soft-sm', disabled: busy, 'data-wg-action': 'revoke',
           onClick: () => act(async () => { await onAction('revokeInvitation', { invitationId: invitation.id }); setInvitation(undefined) }),
         }, t('Revoke invitation'))
-        : null),
-    h(Card, { title: t('Bots · {count}', { count: (bots ?? []).length }) },
-      (bots ?? []).length === 0
-        ? h('div', { className: 'bt-set-row bt-bs-row' }, h('span', { className: 'bt-set-hint' }, t('No Bots in this workgroup.')))
-        : (bots ?? []).map(bot => h(BotRow, {
-          key: `${bot.ownerUserId}:${bot.botId}`,
-          bot,
-          selfUserId,
-          manage,
-          busy,
-          act,
-          onAction,
-          visibility: visibilityOf(bot),
-          onVisibility: value => changeVisibility(bot, value),
-        })),
+        : null,
       candidateNote === undefined ? null : h('div', { className: 'bt-set-row bt-bs-row' }, h('span', { className: 'bt-set-hint' }, candidateNote)),
       manage && own.length > 0
-        ? h('div', { className: 'bt-set-row bt-bs-row' },
-          h('select', { className: 'bt-bs-input', 'aria-label': t('Add a Bot'), value: botId, onChange: event => setBotId(event.target.value) },
-            h('option', { value: '' }, t('Choose a Bot')),
-            own.map(entry => h('option', { key: `${entry.ownerUserId}:${entry.botId}`, value: entry.botId }, entry.displayName ?? entry.botId))),
-          h('button', {
-            type: 'button', className: 'bt-soft', disabled: busy || botId === '', 'data-wg-action': 'add-bot',
-            onClick: () => act(async () => { await onAction('addBot', { botId }); setBotId('') }),
-          }, t('Add Bot')))
+        ? (addingOwn
+            ? h('div', { className: 'bt-set-row bt-bs-row' },
+              h('select', { className: 'bt-bs-input', 'aria-label': t('Add a Bot'), value: botId, onChange: event => setBotId(event.target.value) },
+                h('option', { value: '' }, t('Choose a Bot')),
+                own.map(entry => h('option', { key: `${entry.ownerUserId}:${entry.botId}`, value: entry.botId }, entry.displayName ?? entry.botId))),
+              h('button', {
+                type: 'button', className: 'bt-soft', disabled: busy || botId === '', 'data-wg-action': 'add-bot',
+                onClick: () => act(async () => { await onAction('addBot', { botId }); setBotId(''); setAddingOwn(false) }),
+              }, t('Add Bot')),
+              h('button', {
+                type: 'button', className: 'bt-soft bt-soft-sm',
+                onClick: () => { setBotId(''); setAddingOwn(false) },
+              }, t('Cancel')))
+            : h('button', {
+              type: 'button', className: 'bt-set-row bt-bs-row bt-gs-add',
+              'data-wg-add-row': 'bot', onClick: () => setAddingOwn(true),
+            }, h(PlusIcon), t('Add a Bot')))
         : null,
-      // Somebody else's Bot joins only when its owner accepts; the row asks for that, it does not add.
       manage && others.length > 0
-        ? h('div', { className: 'bt-set-row bt-bs-row' },
-          h('select', {
-            className: 'bt-bs-input', 'aria-label': t("Invite another member's Bot"), value: inviteTarget,
-            onChange: event => setInviteTarget(event.target.value),
-          },
-          h('option', { value: '' }, t('Choose a colleague’s Bot')),
-          others.map(entry => h('option', { key: `${entry.ownerUserId}:${entry.botId}`, value: `${entry.ownerUserId}:${entry.botId}` },
-            `${entry.displayName ?? entry.botId} · ${entry.ownerDisplayName ?? entry.ownerUserId}`))),
-          h('button', {
-            type: 'button', className: 'bt-soft', disabled: busy || inviteTarget === '', 'data-wg-action': 'invite-bot',
-            onClick: () => act(async () => {
-              const [ownerUserId, bot] = inviteTarget.split(':')
-              await onAction('inviteBot', { ownerUserId, botId: bot })
-              setInviteTarget('')
-            }),
-          }, t('Ask the owner')))
+        ? (addingOthers
+            ? h('div', { className: 'bt-set-row bt-bs-row' },
+              h('select', {
+                className: 'bt-bs-input', 'aria-label': t("Invite another member's Bot"), value: inviteTarget,
+                onChange: event => setInviteTarget(event.target.value),
+              },
+              h('option', { value: '' }, t('Choose a colleague’s Bot')),
+              others.map(entry => h('option', { key: `${entry.ownerUserId}:${entry.botId}`, value: `${entry.ownerUserId}:${entry.botId}` },
+                `${entry.displayName ?? entry.botId} · ${entry.ownerDisplayName ?? entry.ownerUserId}`))),
+              h('button', {
+                type: 'button', className: 'bt-soft', disabled: busy || inviteTarget === '', 'data-wg-action': 'invite-bot',
+                onClick: () => act(async () => {
+                  const [ownerUserId, bot] = inviteTarget.split(':')
+                  await onAction('inviteBot', { ownerUserId, botId: bot })
+                  setInviteTarget('')
+                  setAddingOthers(false)
+                }),
+              }, t('Ask the owner')),
+              h('button', {
+                type: 'button', className: 'bt-soft bt-soft-sm',
+                onClick: () => { setInviteTarget(''); setAddingOthers(false) },
+              }, t('Cancel')))
+            : h('button', {
+              type: 'button', className: 'bt-set-row bt-bs-row bt-gs-add',
+              'data-wg-add-row': 'other-bot', onClick: () => setAddingOthers(true),
+            }, h(PlusIcon), t("Invite another member's Bot")))
         : null,
       h('div', { className: 'bt-set-row bt-gs-note' }, h('span', { className: 'bt-set-hint' },
         t('A Bot’s owner approves every task it runs. A workgroup never appoints a Bot as an administrator.')))),
@@ -288,8 +296,7 @@ export function WorkgroupSettingsForm({
           type: 'button', className: 'bt-soft bt-soft-sm', disabled: busy, 'data-wg-action': 'leave',
           onClick: () => act(async () => { await onAction('leaveRoom', {}); onClose() }),
         }, t('Leave workgroup'))
-        : null,
-      h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onClose }, t('Close'))),
+        : null),
     identity === undefined ? null : h('div', { className: 'bt-set-row bt-gs-note' },
       h('span', { className: 'bt-set-hint' }, t('Your user id: {id}', { id: identity.userId ?? '' }))),
     error === undefined ? null : h('div', { role: 'alert', className: 'bt-danger', 'data-wg-settings-error': 'true' }, error))

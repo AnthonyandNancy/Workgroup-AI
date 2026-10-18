@@ -70,11 +70,9 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions, roomSnap
   const paneLeft = usePaneLeft()
   const [loaded, setState] = useState({ phase: 'loading' })
   const state = roomSnapshot === undefined ? loaded : { ...loaded, ...roomSnapshot }
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const view = useRef(null)
 
   useEffect(() => {
-    setSettingsOpen(false)
     setState({ phase: 'loading' })
     if (workgroups === undefined || roomId === undefined) return () => {}
     let stopped = false
@@ -105,11 +103,9 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions, roomSnap
       }
       if (!stopped) timer = setTimeout(load, POLL_MS)
     }
-    // The control the pane hands to `WorkgroupView`: it takes a value and answers whether the Hub
-    // accepted it. Settings open as a view change, which is the same call the team's own group
-    // settings make.
+    // The control the pane hands to `WorkgroupView`: it takes an operation and answers whether the
+    // Hub accepted it. Panel view changes stay inside the copied conversation.
     view.current = async (value) => {
-      if (value === null) { setSettingsOpen(true); return true }
       if (value?.dissolve !== undefined) {
         try {
           await workgroups.dissolve(value.dissolve)
@@ -320,8 +316,6 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions, roomSnap
       onDecision,
       onReview,
       onCancel,
-      settingsOpen,
-      onCloseSettings: () => setSettingsOpen(false),
       // The owner's dissolve reaches the Hub through the same control the rest of this pane uses, so it
       // shares one error path and one reload. It does not touch the local room store: a workgroup is a
       // Hub room, and that store has never heard of it.

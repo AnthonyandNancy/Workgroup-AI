@@ -30,7 +30,7 @@ import { hostText, t } from './i18n.js'
 import { showsDshRow } from './dsh-offer.js'
 import { isWorkgroupSession, workgroupSessionId } from '../shared/workgroup-session.js'
 import { BrandMark, BrandName } from './sidebar.js'
-import { hubStatusOf } from './workgroup-status.js'
+import { hubCreateHint, hubStatusOf } from './workgroup-status.js'
 import { emptyWorkgroupRoster, sortWorkgroupRows, visibleWorkgroupRows } from './workgroup-roster.js'
 
 // -------------------------------------------------------------------------
@@ -416,22 +416,6 @@ function hubStateOf(hub) {
 
 const hubLabel = state => t(HUB_LABEL[state] ?? 'Hub status unknown')
 
-function createHint(state, hub) {
-  switch (state) {
-    case 'live': return undefined
-    case 'absent': return t('Hub is not configured')
-    case 'signed-out': return t('Configured, signed out')
-    case 'offline': return t('Hub is offline. Reconnect to create a workgroup.')
-    case 'reconnecting': return t('Hub is reconnecting. Wait for the connection before creating a workgroup.')
-    case 'refused': return t('Hub refused this device. Sign in again to create a workgroup.')
-    case 'unknown':
-      return hub?.phase === 'unreachable'
-        ? t('Could not check the Workgroup Hub.')
-        : t('Checking the Workgroup Hub…')
-    default: return t('Checking the Workgroup Hub…')
-  }
-}
-
 const roleLabel = (role) => {
   if (role === 'owner') return t('Owner')
   if (role === 'admin') return t('Admin')
@@ -556,7 +540,10 @@ function WorkgroupMenu({ menu, actions, onClose }) {
 function WorkgroupSectionHead({ hubState, hub, actions, wide }) {
   const [error, setError] = useState('')
   const action = actions.openWorkgroupCreate
-  const hint = typeof action === 'function' ? createHint(hubState, hub) : t('Workgroup creation is not available in this build.')
+  const hintKey = typeof action === 'function' ? hubCreateHint(hubState, hub) : undefined
+  const hint = typeof action === 'function'
+    ? (hintKey === undefined ? undefined : t(hintKey))
+    : t('Workgroup creation is not available in this build.')
   const enabled = hubState === 'live' && typeof action === 'function'
   const run = () => {
     setError('')

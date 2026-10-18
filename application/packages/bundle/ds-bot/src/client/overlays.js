@@ -52,6 +52,7 @@ export function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useA
       ? createPortal(h(WorkgroupCreate, {
         key: 'workgroup',
         workgroups,
+        hub,
         onCancel: actions.closeOverlay,
         onCreated: (room) => { void workgroups.openWorkgroup(room.id); actions.closeOverlay() },
         report: error => actions.reportError?.(error, 'workgroup'),

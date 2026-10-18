@@ -17,7 +17,7 @@
 import { createElement as h, useEffect, useMemo, useState } from 'react'
 import { BotMark } from '../mark.js'
 import { dateLocale, t } from '../i18n.js'
-import { WorkgroupTasks } from './activity.js'
+import { isTaskActive, WorkgroupTasks } from './activity.js'
 import { HumanFace } from './thread.js'
 import { memberSummary } from './model.js'
 import { presenceOf } from '../workgroup-presence.js'
@@ -42,43 +42,65 @@ function About({ text, title, onMissing, missingLabel }) {
     long ? h('button', { type: 'button', className: 'bt-more', onClick: () => setOpen(value => !value) }, open ? t('Show less') : t('Show more')) : null)
 }
 
-function MemberRows({ members, bots }) {
-  return h('div', { className: 'bt-members', role: 'list' },
-    (members ?? []).map(member => h('div', {
+function MemberRows({ members, bots, tasks, onCancel }) {
+  const people = (members ?? []).map((member) => {
+    const text = h('span', { className: 'bt-member-text' },
+      h('span', { className: 'bt-member-line' },
+        h('span', { className: 'bt-member-name' }, memberSummary(member)),
+        h('span', {
+          className: `bt-wg-member-dot bt-wg-member-dot-${member.online === true ? 'online' : 'offline'}`,
+          'aria-hidden': true,
+        })),
+      h('span', { className: 'bt-member-sub' }, member.online === true ? t('Online') : t('Offline')))
+    return h('div', {
       role: 'listitem',
       className: 'bt-member',
       key: member.userId,
       'data-wg-member': member.userId,
       'data-wg-presence': presenceOf(member),
     },
-      h('div', { className: 'bt-member-row' },
-        h('span', { className: 'bt-member-open' },
-          h(HumanFace, { name: member.displayName ?? member.userId, size: 32 }),
-          h('span', { className: 'bt-member-text' },
-            h('span', { className: 'bt-member-line' },
-              h('span', { className: 'bt-member-name' }, memberSummary(member)),
-              h('span', { className: `bt-wg-member-dot bt-wg-member-dot-${member.online === true ? 'online' : 'offline'}`, 'aria-hidden': true }))))))),
-    (bots ?? []).map(bot => h('div', { role: 'listitem', className: 'bt-member', key: `${bot.ownerUserId}:${bot.botId}` },
+    h('div', { className: 'bt-member-row' },
+      h('span', { className: 'bt-member-open' },
+        h(HumanFace, { name: member.displayName ?? member.userId, size: 32 }),
+        text)))
+  })
+  const machines = (bots ?? []).map((bot) => {
+    const active = (tasks ?? []).find(task =>
+      isTaskActive(task)
+      && task.targetBotId === bot.botId
+      && task.ownerUserId === bot.ownerUserId)
+    const name = bot.displayName ?? bot.botId
+    const text = h('span', { className: 'bt-member-text' },
+      h('span', { className: 'bt-member-line' },
+        h('span', { className: 'bt-member-name' }, name),
+        h('span', { className: 'bt-tag' }, t('Bot'))),
+      h('span', { className: 'bt-member-sub' },
+        `${t('Owner: {name}', { name: bot.ownerDisplayName ?? bot.ownerUserId })}${active === undefined ? '' : ` · ${t('Working')}`}`))
+    return h('div', { role: 'listitem', className: 'bt-member', key: `${bot.ownerUserId}:${bot.botId}` },
       h('div', { className: 'bt-member-row' },
         h('span', { className: 'bt-member-open' },
           h(BotMark, { look: { shape: 'circle', color: 'blue' }, size: 32 }),
-          h('span', { className: 'bt-member-text' },
-            h('span', { className: 'bt-member-line' },
-              h('span', { className: 'bt-member-name' }, bot.displayName ?? bot.botId),
-              h('span', { className: 'bt-tag' }, t('Bot'))),
-            h('span', { className: 'bt-member-sub' }, t('Owner: {name}', { name: bot.ownerDisplayName ?? bot.ownerUserId }))))))))
+          text),
+        active === undefined
+          ? null
+          : h('button', {
+            type: 'button', className: 'bt-member-stop', 'data-wg-stop-bot': bot.botId,
+            'aria-label': `${t('Stop')} · ${name}`, onClick: () => onCancel?.(active),
+          }, t('Stop'))))
+  })
+  return h('div', { className: 'bt-members', role: 'list' }, people, machines)
 }
 
 function TaskUsage({ tasks }) {
   const counts = useMemo(() => {
     const total = (tasks ?? []).length
-    const open = (tasks ?? []).filter(task => !['COMPLETED', 'SHARED', 'REJECTED', 'CANCELLED', 'FAILED', 'EXPIRED'].includes(task.state)).length
+    const open = (tasks ?? []).filter(isTaskActive).length
     const shared = (tasks ?? []).filter(task => task.state === 'SHARED').length
     return { total, open, shared }
   }, [tasks])
   if (counts.total === 0) return null
   return h('div', { key: 'usage' },
-    h('div', { className: 'bt-section-title' }, t('Task activity')),
+    h('div', { className: 'bt-section-title', 'data-wg-usage': 'true' }, t('Usage')),
     h('div', { className: 'bt-kv' }, h('span', null, t('{count} tasks', { count: counts.total })), h('span', null, t('{count} open', { count: counts.open }))),
     h('div', { className: 'bt-kv' }, h('span', null, t('Shared results')), h('span', null, String(counts.shared))))
 }
@@ -202,7 +224,6 @@ export function WorkgroupDetails({
   bots,
   tasks,
   selfUserId,
-  usage,
   actions,
   run,
   loadOwnerBots,
@@ -210,11 +231,10 @@ export function WorkgroupDetails({
   onReview,
   onCancel,
   onOpenSettings,
-  onClose,
   memory,
   hubState,
 }) {
-  return h('div', { className: 'bt-drawer-body bt-wg-details', 'data-wg-details': room?.id },
+  return h('div', { className: 'bt-drawer-body', 'data-wg-details': room?.id },
     About({
       text: room?.notice ?? '',
       title: t('Notice'),
@@ -222,16 +242,20 @@ export function WorkgroupDetails({
       missingLabel: t('Add a notice in group settings'),
     }),
     h('div', { className: 'bt-section-title' }, t('Members · {count}', { count: (members ?? []).length + (bots ?? []).length })),
-    h(MemberRows, { members, bots }),
+    h(MemberRows, { members, bots, tasks, onCancel }),
+    h('div', null,
+      h('div', { className: 'bt-section-title' }, t('Who answers')),
+      h('div', { className: 'bt-muted', 'data-wg-who-answers': 'true' },
+        t('No automatic answers. @ a Bot creates a task its owner approves.'))),
+    h('div', null,
+      h('div', { className: 'bt-section-title' }, t('Permissions')),
+      h('div', { className: 'bt-muted', 'data-wg-permissions': 'true' },
+        t('Each task runs only with the folder, tools, and lifetime its owner approves.'))),
     h('div', { className: 'bt-section-title' }, t('Workgroup')),
     h('div', { className: 'bt-kv' }, h('span', null, t('Hub')), h('span', { 'data-wg-hub-state': hubState ?? 'unknown' }, t(HUB_STATE_WORDS[hubState] ?? HUB_STATE_WORDS.unknown))),
     room?.dissolvedAt === undefined ? null : h('div', { className: 'bt-kv', 'data-wg-dissolved': room.dissolvedAt }, h('span', null, t('Dissolved')), h('span', null, when(room.dissolvedAt))),
     TaskUsage({ tasks }),
     h('div', { key: 'tasks' }, h('div', { className: 'bt-section-title' }, t('Task activity')),
       h(WorkgroupTasks, { tasks, selfUserId, members, actions, run, loadOwnerBots, onDecision, onReview, onCancel })),
-    MemoryPanel({ memory }),
-    h('div', { className: 'bt-wg-task-actions' },
-      h('button', { type: 'button', className: 'bt-soft', 'data-wg-settings': 'open', onClick: onOpenSettings }, t('Group settings')),
-      h('button', { type: 'button', className: 'bt-soft', 'data-wg-details-close': 'true', onClick: onClose }, t('Close'))),
-    usage === undefined ? null : h('div', { className: 'bt-kv' }, h('span', null, t('Usage')), h('span', null, usage)))
+    MemoryPanel({ memory }))
 }

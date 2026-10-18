@@ -12,11 +12,13 @@
 // pretending a Bot said something it did not.
 
 import { createElement as h, useEffect, useMemo, useState } from 'react'
+import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { DownloadIcon, ReplyIcon } from '../icons.js'
 import { dateLocale, t } from '../i18n.js'
 import { replyParent } from '../workgroup-reply.js'
 
 const IMAGE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i
+const mdLabels = () => ({ code: { copyLabel: t('Copy'), copiedLabel: t('Copied') }, footnotes: t('Footnotes') })
 const stamp = value => {
   const parsed = typeof value === 'number' ? value : Date.parse(value ?? '')
   return Number.isFinite(parsed) ? parsed : 0
@@ -121,7 +123,8 @@ function MessageLine({ message, quoted, selfUserId, onReply, onDownload, onImage
       h('div', { className: 'bt-ustack' },
         h(Quote, { quoted }),
         attachments.length > 0 ? h('div', { className: 'bt-uattach' }, attachments.map(entry => h(AttachmentRow, { key: entry.artifactId, entry, onDownload, onImage }))) : null,
-        body === '' ? null : h('div', { className: 'bt-ubody', title: clock(message.createdAt) }, body),
+        body === '' ? null : h('div', { className: 'bt-ubody', title: clock(message.createdAt) },
+          h(MarkdownText, { text: body, labels: mdLabels(), variant: 'compact' })),
         message.failed ? h('div', { className: 'bt-wg-message-failed', role: 'status' }, t('Not delivered')) : null),
       h('div', { className: 'bt-utools' }, message.id === undefined ? null : h('button', {
         type: 'button', className: 'bt-tool', 'data-wg-reply': message.id, 'aria-label': t('Quote this message'), title: t('Quote'),
@@ -129,11 +132,13 @@ function MessageLine({ message, quoted, selfUserId, onReply, onDownload, onImage
       }, h(ReplyIcon))))
   }
   return h('div', { className: 'bt-group-msg', 'data-wg-message': message.id ?? String(message.roomSeq) },
-    h('span', { className: 'bt-group-name' }, h(HumanFace, { name, size: 18 }), name),
+    h('span', { className: 'bt-group-name' }, name),
     h('div', { className: 'bt-msg-line' },
+      h('span', { className: 'bt-lead', 'aria-hidden': true }, h(HumanFace, { name, size: 22 })),
       h('div', { className: 'bt-bubble' },
         h(Quote, { quoted }),
-        body === '' ? null : h('span', { className: 'bt-wg-message-text' }, body),
+        body === '' ? null : h('div', { className: 'bt-wg-message-text' },
+          h(MarkdownText, { text: body, labels: mdLabels(), variant: 'compact' })),
         attachments.length > 0 ? h('div', { className: 'bt-uattach' }, attachments.map(entry => h(AttachmentRow, { key: entry.artifactId, entry, onDownload, onImage }))) : null,
         message.failed ? h('div', { className: 'bt-wg-message-failed', role: 'status' }, t('Not delivered')) : null)),
     h('div', { className: 'bt-utools' }, message.id === undefined ? null : h('button', {

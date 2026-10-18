@@ -76,3 +76,33 @@ export function hubStatusOf(view) {
   if (view.state === 'fatal') return 'refused'
   return 'offline'
 }
+
+/**
+ * What the creation surface says when the Hub cannot create a room.
+ *
+ * Returns a dictionary key, not translated text, so the sidebar and the create form can share the
+ * same per-status explanation without either owning the other's copy. `reconnecting` is included
+ * because the sidebar distinguishes it from a stopped connection: one repairs itself, the other
+ * waits for somebody.
+ *
+ * @param status - one of {@link HUB_STATUSES}, or the sidebar's `reconnecting` state.
+ * @param view - the same bridge snapshot used to derive the status.
+ * @returns a dictionary key, or `undefined` when the Hub is usable.
+ */
+export function hubCreateHint(status, view) {
+  switch (status) {
+    case 'absent': return 'Hub is not configured'
+    case 'signed-out': return 'Configured, signed out'
+    case 'reconnecting': return 'Hub is reconnecting. Wait for the connection before creating a workgroup.'
+    case 'offline':
+      return view?.state === 'reconnecting'
+        ? 'Hub is reconnecting. Wait for the connection before creating a workgroup.'
+        : 'Hub is offline. Reconnect to create a workgroup.'
+    case 'refused': return 'Hub refused this device. Sign in again to create a workgroup.'
+    case 'unknown':
+      return view?.phase === 'unreachable'
+        ? 'Could not check the Workgroup Hub.'
+        : 'Checking the Workgroup Hub…'
+    default: return undefined
+  }
+}
