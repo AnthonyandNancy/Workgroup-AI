@@ -27,7 +27,7 @@ Workgroup-AI/
 
 1. 每位员工安装 `application/` 构建的 Windows/macOS 桌面包；Web 模式复用受支持的 DSH Web/Host 路径，不承诺仅靠远端浏览器就能执行本地工具。
 2. 管理员将 **`server/` 单独部署** 到一台内网服务器/NAS/常开主机（可用容器或系统服务）；服务器不需要安装 `application/`、Electron、DSH 或 DS Bot。
-3. 管理员通过安装包/启动环境注入 `WORKGROUP_HUB_URL`；应用首次进入 Bot 时自动匿名快速认证，应用内不提供 Hub 地址、登录或注册配置。不同员工通过工作群交换消息，但所有实际 Bot 操作仍在任务所有人本地执行。
+3. 管理员通过安装包/启动环境或用户自己的 `$WORKGROUP_HOME/.env` 设置 `WORKGROUP_HUB_URL`；应用首次进入 Bot 时自动匿名快速认证，应用内不提供 Hub 地址、登录或注册配置。`application/.env` 不是桌面端配置源。不同员工通过工作群交换消息，但所有实际 Bot 操作仍在任务所有人本地执行。
 4. 客户端本地可以不连接 Hub 而继续使用 DSH、Chief、下属 Bot、私人聊天、普通群聊；此时工作群显示离线/受限状态。
 
 ## 交给 AI 的开始指令

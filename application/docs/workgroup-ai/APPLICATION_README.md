@@ -14,7 +14,17 @@
 
 ## 用户安装后的默认行为
 
-首次启动有 Chief；DSH 一级导航“插件”正下方只有 Bot。进入 Bot 后才能看到原版内部功能，“创建群聊”下方增加“创建工作群聊”。Hub 地址由安装包/启动环境通过 `WORKGROUP_HUB_URL` 提供，应用内不出现 Hub 地址、登录或注册配置；首次进入 Bot 自动完成匿名快速认证。原版私聊和普通群仍可用。
+首次启动有 Chief；DSH 一级导航“插件”正下方只有 Bot。进入 Bot 后才能看到原版内部功能，“创建群聊”下方增加“创建工作群聊”。Hub 地址由启动环境或 `$WORKGROUP_HOME/.env` 中的 `WORKGROUP_HUB_URL` 提供，应用内不出现 Hub 地址、登录或注册配置；首次进入 Bot 自动完成匿名快速认证。原版私聊和普通群仍可用。
+
+## 桌面端 Hub 地址
+
+桌面端不读取 `application/.env`，也不允许项目目录的 `.env` 设置 `WORKGROUP_HUB_URL`。桌面 Host 只从用户自己的 Harness-home 读取：开发模式为 `application/apps/desktop/.desktop-build/development/home/.env`，Windows 安装包为 `%USERPROFILE%\.workgroup-ai\.env`，macOS/Linux 安装包为 `~/.workgroup-ai/.env`。如果设置了 `WORKGROUP_HOME`，使用 `$WORKGROUP_HOME/.env`。
+
+```env
+WORKGROUP_HUB_URL=http://127.0.0.1:8443
+```
+
+修改后必须完全退出并重启 Desktop。`127.0.0.1` 只适用于 Hub 与 Desktop 在同一台机器；跨机器请填写 Hub 的局域网地址。
 
 ## 起步门禁
 
