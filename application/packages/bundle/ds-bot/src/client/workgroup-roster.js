@@ -82,12 +82,23 @@ export function workgroupRow(room, prefs = {}) {
   const pref = prefs?.[room.id] ?? {}
   const lastSeq = Number.isInteger(room.lastMessageSeq) ? room.lastMessageSeq : 0
   const readSeq = Number.isInteger(pref.lastReadSeq) ? pref.lastReadSeq : 0
+  // Two different questions, kept apart rather than merged into one number:
+  //
+  //   * `unread` counts what arrived past the read watermark — "there is something new here".
+  //   * `marked` is what the member chose in the menu — "I want to come back to this".
+  //
+  // The badge shows either, because both mean "not dealt with yet", but clearing one must not clear the
+  // other: opening the room answers the first, and only opening it answers the second.
+  const unread = Math.max(0, lastSeq - readSeq)
+  const marked = pref.marked === true
   return {
     ...room,
     kind: 'workgroup',
     pinned: pref.pinned === true,
     hidden: pref.hidden === true,
-    unread: Math.max(0, lastSeq - readSeq),
+    unread,
+    marked,
+    badge: marked ? Math.max(unread, 1) : unread,
     lastActivityAt: room.lastMessageAt ?? room.createdAt,
   }
 }
@@ -197,6 +208,10 @@ export function createWorkgroupRoster({ workgroups, pollMs = 15_000, prefs, stor
     /** Record that the member has read the room up to `seq`. */
     markRead: (roomId, seq) => {
       const previous = readPrefs()[roomId]?.lastReadSeq ?? 0
+      const marked = readPrefs()[roomId]?.marked === true
+      // Opening the room answers both markers: the watermark advances to what was just read, and the
+      // manual "come back to this" is what the member has now done.
+      if (marked) writePref(roomId, { marked: false })
       if (!Number.isInteger(seq) || seq <= previous) return source
       writePref(roomId, { lastReadSeq: seq })
       return source

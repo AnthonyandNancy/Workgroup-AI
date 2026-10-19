@@ -20,7 +20,7 @@
 
 import { createElement as h, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ChatsIcon, ClockIcon, PaperclipIcon, PlusIcon, ArrowUpIcon, CloseIcon } from '../icons.js'
+import { ChatsIcon, ClockIcon, PaperclipIcon, PlusIcon, ArrowUpIcon, CloseIcon, MicIcon } from '../icons.js'
 import { useLinger } from '../motion.js'
 import { dateLocale, t } from '../i18n.js'
 import { composeMessage, filterCandidates, mentionCandidates, MENTION_TRIGGER } from '../workgroup-mentions.js'
@@ -31,11 +31,26 @@ const NO_SCHEDULES = Object.freeze([])
 const keepFocus = event => event.preventDefault()
 const nowMs = () => Date.now()
 
-/** A mention picker row's stable key. */
-const candidateKey = candidate => (candidate.botId === undefined ? candidate.userId : `${candidate.userId}:${candidate.botId}`)
+/**
+ * What to tell the person when a send or an upload was refused.
+ *
+ * The Hub answers refusals with a machine code, and two of them describe a state the person can act
+ * on. Everything else falls through to the Hub's own sentence, which is already written for a reader.
+ */
+const noteOf = (error) => {
+  if (error?.code === 'BOT_NOT_AVAILABLE') return t('That Bot is not available in this workgroup any more.')
+  if (error?.code === 'ROOM_DISSOLVED') return t('This workgroup has been dissolved, so no new message can be sent.')
+  return error?.message ?? String(error)
+}
 
-function MentionMenu({ members, bots, query, onPick }) {
-  const all = filterCandidates(mentionCandidates({ members, bots }), query).slice(0, 8)
+/** A mention picker row's stable key. */
+const candidateKey = candidate => {
+  if (candidate.all === true) return 'all'
+  return candidate.botId === undefined ? candidate.userId : `${candidate.userId}:${candidate.botId}`
+}
+
+function MentionMenu({ members, bots, query, canSummonEveryone, onPick }) {
+  const all = filterCandidates(mentionCandidates({ members, bots, canSummonEveryone }), query).slice(0, 8)
   if (all.length === 0) return h('div', { className: 'bt-wg-mention-empty' }, t('Nobody in this workgroup matches.'))
   return h('div', { className: 'bt-wg-mentions', 'data-wg-mentions': 'open', role: 'listbox', 'aria-label': t('Mention someone') },
     all.map(candidate => h('button', {
@@ -50,7 +65,9 @@ function MentionMenu({ members, bots, query, onPick }) {
     h('span', { className: 'bt-wg-mention-name' }, candidate.label),
     candidate.kind === 'bot'
       ? h('span', { className: 'bt-wg-mention-kind' }, t('Bot of {owner}', { owner: candidate.detail ?? '' }))
-      : null)))
+      : candidate.kind === 'all'
+        ? h('span', { className: 'bt-wg-mention-kind' }, t('Everyone in the room'))
+        : null)))
 }
 
 /**
@@ -60,7 +77,59 @@ function MentionMenu({ members, bots, query, onPick }) {
  * counts as accepted. The draft is cleared only on acceptance, because clearing on submit and then
  * failing loses what the person typed.
  */
+/** The browser's speech recognition, or undefined where the browser has none. */
+const speechApi = () => window.SpeechRecognition ?? window.webkitSpeechRecognition
+
+/**
+ * Dictation for this composer.
+ *
+ * Copied from the original composer rather than imported from it: the original must not gain a
+ * workgroup dependency, and what is duplicated is a browser API call plus its error strings. The
+ * final text is appended to the draft; interim text is shown the same way the original shows it, so
+ * the two composers behave alike.
+ */
+function useDictation(onText) {
+  const [listening, setListening] = useState(false)
+  const [note, setNote] = useState('')
+  const recognition = useRef(null)
+  const latest = useRef(onText)
+  latest.current = onText
+  useEffect(() => () => recognition.current?.abort(), [])
+  useEffect(() => {
+    if (!note) return undefined
+    const timer = setTimeout(() => setNote(''), 2600)
+    return () => clearTimeout(timer)
+  }, [note])
+  const start = () => {
+    const Api = speechApi()
+    if (!Api) { setNote(t('Dictation is not available in this browser')); return false }
+    const engine = new Api()
+    engine.lang = navigator.language || 'zh-CN'
+    engine.interimResults = true
+    engine.continuous = true
+    engine.onresult = (event) => {
+      let interim = ''
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index]
+        const text = result[0]?.transcript ?? ''
+        if (result.isFinal) { if (text.trim()) latest.current(text, true) } else interim += text
+      }
+      if (interim) latest.current(interim, false)
+    }
+    engine.onerror = (event) => {
+      if (event.error === 'aborted' || event.error === 'no-speech') return
+      setNote(event.error === 'not-allowed' || event.error === 'service-not-allowed' ? t('Microphone access is blocked') : t("Couldn't hear that"))
+    }
+    engine.onend = () => { setListening(false); recognition.current = null }
+    recognition.current = engine
+    try { engine.start(); setListening(true); return true } catch { setNote(t("Couldn't start dictation")); return false }
+  }
+  const stop = () => recognition.current?.stop()
+  return { listening, note, start, stop }
+}
+
 export function WorkgroupComposer({
+  canSummonEveryone = false,
   room,
   members,
   bots,
@@ -92,6 +161,7 @@ export function WorkgroupComposer({
   const button = useRef(null)
   const menuBox = useRef(null)
   const fileInput = useRef(null)
+  const input = useRef(null)
   const mentioning = mentionQuery !== undefined
 
   // A room switch is a new draft: the previous room's words are not this room's.
@@ -103,7 +173,17 @@ export function WorkgroupComposer({
     setMentionQuery(undefined)
     setFailed(false)
     setNote(undefined)
+    if (input.current !== null) input.current.style.height = 'auto'
   }, [room?.id])
+
+  // The box grows with the draft up to the stylesheet's max-height, then scrolls. Measured after
+  // every change so a pasted paragraph does not stay a single line.
+  useEffect(() => {
+    const node = input.current
+    if (node === null) return
+    node.style.height = 'auto'
+    node.style.height = `${Math.min(node.scrollHeight, 160)}px`
+  }, [draft])
 
   useEffect(() => { setScheduled(schedules) }, [schedules])
 
@@ -146,7 +226,7 @@ export function WorkgroupComposer({
       if (uploaded === undefined || uploaded === null) return
       setAttachments(list => [...list, { artifactId: uploaded.artifactId, fileName: uploaded.fileName ?? file.name }])
     } catch (error) {
-      setNote(error?.message ?? String(error))
+      setNote(noteOf(error))
     }
   }
 
@@ -171,7 +251,7 @@ export function WorkgroupComposer({
       }
     } catch (error) {
       setFailed(true)
-      setNote(error?.message ?? String(error))
+      setNote(noteOf(error))
     } finally {
       setSending(false)
     }
@@ -201,6 +281,12 @@ export function WorkgroupComposer({
     setMenu({ left: rect?.left ?? 0, bottom: window.innerHeight - (rect?.top ?? 0) + 8 })
   }
 
+  // Dictation appends the recognised text to whatever is already typed, which is what the original
+  // composer does: a half-written line must not be replaced by a spoken one.
+  const dictation = useDictation((text, final) => {
+    if (!final) return
+    setDraft(current => (current === '' ? text : `${current}${/\s$/.test(current) ? '' : ' '}${text}`))
+  })
   const placeholder = room?.name === undefined ? t('Message') : t('Message {name}', { name: room.name })
   return h('div', { className: 'bt-wg-compose' },
     scheduled.length > 0
@@ -238,7 +324,7 @@ export function WorkgroupComposer({
           }, t('Remove')))))
       : null,
     mentioning
-      ? h(MentionMenu, { members, bots, query: mentionQuery, onPick: pickMention })
+      ? h(MentionMenu, { members, bots, query: mentionQuery, canSummonEveryone, onPick: pickMention })
       : null,
     schedule === undefined ? null : h('div', { className: 'bt-wg-schedule-form', role: 'dialog', 'aria-label': t('Scheduled task') },
       h('div', { className: 'bt-wg-schedule-copy' }, t('A scheduled message is a normal message sent later, even if this window is closed. It cannot run a Bot without the owner’s approval.')),
@@ -258,7 +344,18 @@ export function WorkgroupComposer({
         ref: button, type: 'button', className: 'bt-plus', 'aria-label': t('Add'), title: t('Add'),
         'aria-haspopup': 'menu', 'aria-expanded': menu !== undefined, onMouseDown: keepFocus, onClick: toggleMenu,
       }, h(PlusIcon)),
+      h('button', {
+        type: 'button',
+        className: 'bt-mic',
+        'data-wg-dictate': dictation.listening ? 'listening' : 'ready',
+        'aria-label': dictation.listening ? t('Stop dictation') : t('Dictate'),
+        'aria-pressed': dictation.listening,
+        title: dictation.listening ? t('Stop dictation') : t('Dictate'),
+        onMouseDown: keepFocus,
+        onClick: () => (dictation.listening ? dictation.stop() : dictation.start()),
+      }, h(MicIcon)),
       h('textarea', {
+        ref: input,
         className: 'bt-wg-input',
         'data-wg-input': 'message',
         'aria-label': t('Message'),
@@ -299,5 +396,6 @@ export function WorkgroupComposer({
     }, h(ClockIcon), h('span', { className: 'bt-menu-label' }, t('Scheduled task')))),
     document.body),
     note === undefined ? null : h('div', { className: failed ? 'bt-danger bt-wg-compose-note' : 'bt-wg-compose-note', role: 'status', 'data-wg-compose-note': failed ? 'failed' : 'info' }, note),
+    dictation.note === '' ? null : h('div', { className: 'bt-wg-compose-note', role: 'status', 'data-wg-dictate-note': 'true' }, dictation.note),
     failed ? h('div', { className: 'bt-wg-message-failed', 'data-wg-draft': 'undelivered' }, t('Your message is still in the box. Send it again when the Hub is reachable.')) : null)
 }

@@ -30,6 +30,9 @@ import { t } from './i18n.js'
 /** How often the pane re-reads a room it is already showing, while the tab is visible. */
 const POLL_MS = 4000
 
+/** How many messages one "load earlier" fetch asks for. */
+const EARLIER_PAGE = 50
+
 // Re-exported rather than reimplemented: the sidebar's view of the main Session and this pane's
 // must agree, or the pane would render over a conversation the shell thinks it left, and the
 // unknown-Session fallback would pull a workgroup away. One module owns both rules.
@@ -169,12 +172,23 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions, roomSnap
         // The reply travels as the id of the message being answered, which is what the Hub stores;
         // the quoted text the sender saw is never sent as if it were their own words. Mentions travel
         // as ids for the same reason: a name in the text is for reading, the id is what the Hub acts on.
-        await workgroups.sendMessage(roomId, message, {
+        const sent = await workgroups.sendMessage(roomId, message, {
           ...(value.clientMessageId === undefined ? {} : { clientMessageId: value.clientMessageId }),
           ...(value.replyToMessageId === undefined ? {} : { replyToMessageId: value.replyToMessageId }),
           ...(Array.isArray(value.mentions) && value.mentions.length > 0 ? { mentions: value.mentions } : {}),
           ...(Array.isArray(value.attachments) && value.attachments.length > 0 ? { attachments: value.attachments } : {}),
         })
+        // A Bot mention answers with the tasks it proposed. Merging them here is what makes the card
+        // appear with the message instead of one poll later; the Hub stays the authority, and the
+        // read below replaces these rows with its own answer.
+        const proposed = Array.isArray(sent?.proposedTasks) ? sent.proposedTasks : []
+        if (proposed.length > 0) {
+          setState(previous => {
+            const known = new Map((previous.tasks ?? []).map(task => [task.id, task]))
+            for (const task of proposed) known.set(task.id, task)
+            return { ...previous, tasks: [...known.values()] }
+          })
+        }
         await load()
         return true
       } catch (error) {
@@ -194,6 +208,37 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions, roomSnap
   const onAttach = async (file) => {
     const uploaded = await workgroups.uploadArtifact(roomId, { ...file, recipients: [] })
     return { artifactId: uploaded.artifact.id, fileName: uploaded.artifact.fileName }
+  }
+  // Older messages are fetched by the pane, which owns the Hub reads: the conversation owns where the
+  // cursor is, and the pane owns what a read means.
+  const loadEarlier = async (beforeSeq) => {
+    const page = await workgroups.messagesBefore(roomId, beforeSeq, EARLIER_PAGE)
+    if (!Array.isArray(page?.messages) || page.messages.length === 0) return { hasMore: false }
+    setState((previous) => {
+      const known = new Set((previous.messages ?? []).map(message => message.id ?? `seq:${message.roomSeq}`))
+      // Prepended in Hub order and de-duplicated by message: a page that overlaps what is on screen
+      // must not show a line twice.
+      const older = page.messages.filter(message => !known.has(message.id ?? `seq:${message.roomSeq}`))
+      return { ...previous, messages: [...older, ...(previous.messages ?? [])] }
+    })
+    return { hasMore: page.hasMore === true }
+  }
+  const onReact = async (messageId, emoji) => {
+    const answer = await workgroups.addReaction(roomId, messageId, emoji)
+    applyReactions(messageId, answer?.reactions)
+  }
+  const onUnreact = async (messageId, emoji) => {
+    const answer = await workgroups.removeReaction(roomId, messageId, emoji)
+    applyReactions(messageId, answer?.reactions)
+  }
+  /** Write one message's reaction set into the state, without disturbing the rest of the page. */
+  const applyReactions = (messageId, reactions) => {
+    setState((previous) => ({
+      ...previous,
+      messages: (previous.messages ?? []).map(message => (message.id === messageId
+        ? { ...message, reactions: Array.isArray(reactions) ? reactions : [] }
+        : message)),
+    }))
   }
   const onRoomAction = async (operation, payload) => {
     let result
@@ -313,6 +358,9 @@ export function WorkgroupSurface({ sessionId, workgroups, hub, actions, roomSnap
       onDownload,
       onImage,
       onRoomAction,
+      onReact,
+      onUnreact,
+      onLoadEarlier: loadEarlier,
       onDecision,
       onReview,
       onCancel,

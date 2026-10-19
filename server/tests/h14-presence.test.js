@@ -25,6 +25,7 @@ import { loadConfig } from '../src/config/index.js'
 import { openDatabase } from '../src/db/index.js'
 import { migrate } from '../src/db/migrate.js'
 import { createServer } from '../src/server.js'
+import { makeWorkgroup } from './helpers/workgroup.js'
 import { EVENT_TYPES } from '../src/realtime/events.js'
 
 const SIGNING_KEY = 'h14-presence-test-signing-key-long-enough'
@@ -99,7 +100,7 @@ async function withLiveHub(run) {
   const twoInRoom = async () => {
     const alice = await person('alice')
     const bob = await person('bob')
-    const created = await http('POST', '/rooms', { name: 'Finance', kind: 'workgroup' }, alice.token)
+    const created = await makeWorkgroup(http, alice, { name: 'Finance' })
     const roomId = created.body.room.id
     const invited = await http('POST', `/rooms/${roomId}/invitations`, { targetUserId: bob.userId }, alice.token)
     await http('POST', `/invitations/${invited.body.invitation.id}/accept`, {}, bob.token)

@@ -191,9 +191,10 @@ export function createTask(db, {
   // The owner must also be in the room: a task is room-scoped, and its progress is posted
   // where the requester can see it.
   requireMember(db, { roomId, userId: ownerUserId })
-  if (requesterUserId === ownerUserId) {
-    throw new TaskError('A task is a request to another user; ask your own Bot in its chat instead', 'SELF_TASK')
-  }
+  // A task may be addressed to the requester's own Bot: a workgroup carries the original group
+  // chat's basic ability to put its own Bots to work. `decideTask` still makes the owner the only
+  // approver, so a task to yourself is approved, granted and audited exactly like any other, and
+  // no cross-user authority is implied by it.
   if (targetBotId !== undefined && targetBotId !== null) {
     if (!isBotInRoom(db, { roomId, ownerUserId, botId: targetBotId })) {
       throw new TaskError('That Bot is not a member of this workgroup', 'BOT_NOT_AVAILABLE')
@@ -475,7 +476,7 @@ export function expireStaleApprovals(db, { now = new Date() } = {}) {
  * `includeScope` implies nothing about `includeMachine`: the scope is the owner's statement about
  * what may run, and it is only ever published to the owner or to a requester after a share.
  */
-export function publicTask(task, { includeScope = false, includeMachine = false, approval } = {}) {
+export function publicTask(task, { includeScope = false, includeMachine = false, approval, includeResult = false } = {}) {
   return {
     id: task.id,
     roomId: task.room_id,
@@ -494,6 +495,9 @@ export function publicTask(task, { includeScope = false, includeMachine = false,
     revocationVersion: task.revocation_version,
     createdAt: task.created_at,
     updatedAt: task.updated_at,
+    // What the work produced. Born private like the scope: it is the owner's own output, and the
+    // only act that publishes it to the room is a share, which writes it as a message.
+    ...(includeResult && typeof task.result_text === 'string' ? { resultText: task.result_text } : {}),
     ...(approval === undefined ? {} : {
       approval: {
         decision: approval.decision,
@@ -503,6 +507,30 @@ export function publicTask(task, { includeScope = false, includeMachine = false,
       },
     }),
   }
+}
+
+/**
+ * Record what a finished task produced, on the owner's word.
+ *
+ * The owner's Host is the only writer: it ran the work, so it is the only party that knows the text.
+ * Stored on the task rather than in the progress stream, because a progress line is room-visible
+ * while a result is not until it is shared.
+ *
+ * @param {object} db
+ * @param {{ taskId: string, ownerUserId: string, text: string, now?: Date }} options
+ * @returns the updated task row
+ */
+export function recordTaskResult(db, { taskId, ownerUserId, text, now = new Date() }) {
+  const task = findTask(db, taskId)
+  if (task === undefined) throw new TaskError('No such task', 'NO_SUCH_TASK')
+  if (task.owner_user_id !== ownerUserId) throw new TaskError('Only the task owner records its result', 'NOT_TASK_OWNER')
+  if (isTerminal(task.state) && task.state === 'CANCELLED') {
+    throw new TaskError('A cancelled task does not take a result', 'ILLEGAL_TRANSITION')
+  }
+  const value = String(text ?? '').trim()
+  if (value === '') throw new TaskError('A result needs some text', 'INVALID_RESULT')
+  db.prepare('UPDATE tasks SET result_text = ?, updated_at = ? WHERE id = ?').run(value, nowIso(now), taskId)
+  return findTask(db, taskId)
 }
 
 export function publicTaskEvent(event) {

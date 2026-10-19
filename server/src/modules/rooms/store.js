@@ -26,6 +26,7 @@ export class RoomError extends Error {
 
 const ROOM_NAME_MAX = 120
 const ROOM_NOTICE_MAX = 2000
+const ROOM_WORK_DIR_MAX = 1024
 const ROOM_SUMMARY_PREVIEW_MAX = 80
 const INVITATION_TTL_SECONDS_DEFAULT = 60 * 60 * 24 * 7
 export const ROOM_ROLES = ['owner', 'admin', 'member']
@@ -157,14 +158,32 @@ export function requireLiveRoom(db, { roomId, userId }) {
   return { room, membership }
 }
 
+/**
+ * The columns every room read needs, with the one derived fact publicRoom depends on.
+ *
+ * `leader_active` answers "is the Bot named as leader still a leading member of this room": the row
+ * must still be an active `room_bots` entry *and* still be its owner's Main Bot. Computing it in the
+ * read is what keeps "the leader is gone" from being re-derived by each caller, which is how a
+ * client and the server end up disagreeing about who answers.
+ */
+const ROOM_SELECT = `r.*,
+  CASE WHEN r.admin_bot_id IS NOT NULL AND rb.room_id IS NOT NULL THEN 1 ELSE 0 END AS leader_active`
+const ROOM_LEADER_JOIN = `LEFT JOIN room_bots rb
+  ON rb.room_id = r.id
+  AND rb.owner_user_id = r.admin_bot_owner_user_id
+  AND rb.bot_id = r.admin_bot_id
+  AND rb.removed_at IS NULL
+  AND rb.is_chief = 1`
+
 export function findRoom(db, roomId) {
-  return db.prepare('SELECT * FROM rooms WHERE id = ?').get(roomId)
+  return db.prepare(`SELECT ${ROOM_SELECT} FROM rooms r ${ROOM_LEADER_JOIN} WHERE r.id = ?`).get(roomId)
 }
 
 export function listRoomsFor(db, userId) {
   return db.prepare(`
-    SELECT r.*, m.role AS member_role, m.joined_at AS member_joined_at
+    SELECT ${ROOM_SELECT}, m.role AS member_role, m.joined_at AS member_joined_at
     FROM rooms r
+    ${ROOM_LEADER_JOIN}
     JOIN room_members m ON m.room_id = r.id
     WHERE m.user_id = ? AND m.removed_at IS NULL
     ORDER BY r.created_at
@@ -180,17 +199,18 @@ export function listRoomsFor(db, userId) {
  */
 export function listRoomSummariesFor(db, userId) {
   return db.prepare(`
-    SELECT r.*, m.role AS member_role, m.joined_at AS member_joined_at,
+    SELECT ${ROOM_SELECT}, m.role AS member_role, m.joined_at AS member_joined_at,
       (SELECT COUNT(*) FROM room_members rm
         WHERE rm.room_id = r.id AND rm.removed_at IS NULL) AS member_count,
-      (SELECT COUNT(*) FROM room_bots rb
-        WHERE rb.room_id = r.id AND rb.removed_at IS NULL) AS bot_count,
+      (SELECT COUNT(*) FROM room_bots count_rb
+        WHERE count_rb.room_id = r.id AND count_rb.removed_at IS NULL) AS bot_count,
       lm.created_at AS last_message_at,
       lm.body AS last_message_body,
       COALESCE(lm.room_seq, 0) AS last_message_seq,
       (SELECT COUNT(*) FROM tasks t
         WHERE t.room_id = r.id AND t.owner_user_id = ? AND t.state = 'PENDING_APPROVAL') AS pending_approval_count
     FROM rooms r
+    ${ROOM_LEADER_JOIN}
     JOIN room_members m ON m.room_id = r.id
     LEFT JOIN messages lm ON lm.room_id = r.id
       AND lm.room_seq = (SELECT MAX(room_seq) FROM messages WHERE room_id = r.id)
@@ -218,6 +238,34 @@ export function listMembers(db, roomId) {
 // ---------------------------------------------------------------- creation
 
 /**
+ * The Bot that leads a new workgroup, or throw.
+ *
+ * Two rules, both from the requirement: the group needs at least two Bots to exist at all, and the
+ * leader must be one of them *and* be its owner's Main Bot. The second is what makes "the leader is
+ * the group owner's administrator" a checked fact rather than a claim, because `is_chief` is read
+ * from what the owner's machine reported.
+ *
+ * @param {{ joiningBots: object[], adminBotId?: string }} options
+ * @returns the directory row of the leading Bot
+ * @throws {RoomError} `INVALID_BOT_COUNT` below two Bots, `NOT_A_CHIEF_BOT` when the named leader is
+ *   absent, not joining, or not a Main Bot.
+ */
+function resolveLeader({ joiningBots, adminBotId }) {
+  if (joiningBots.length < 2) {
+    throw new RoomError('A workgroup needs at least two Bots: the owner\'s Main Bot and one more', 'INVALID_BOT_COUNT')
+  }
+  const named = typeof adminBotId === 'string' ? adminBotId.trim() : ''
+  if (named === '') {
+    throw new RoomError('A workgroup needs an administrator: name the owner\'s Main Bot', 'NOT_A_CHIEF_BOT')
+  }
+  const leader = joiningBots.find(entry => entry.bot_id === named)
+  if (leader === undefined || leader.is_chief !== 1) {
+    throw new RoomError('The workgroup administrator must be your own Main Bot and must join the room', 'NOT_A_CHIEF_BOT')
+  }
+  return leader
+}
+
+/**
  * Create a room with the creator as owner.
  *
  * Room and owner membership are written in one transaction: a room whose creator is not a
@@ -226,7 +274,7 @@ export function listMembers(db, roomId) {
  * `kind` is recorded here rather than inferred later from members or name. The audit entry
  * carries it too, so "was this room ever a workgroup" is answerable from the trail alone.
  */
-export function createRoom(db, { name, ownerUserId, ownerDeviceId, kind, botIds = [], actorOperatorId, now = new Date() }) {
+export function createRoom(db, { name, ownerUserId, ownerDeviceId, kind, botIds = [], adminBotId, actorOperatorId, now = new Date() }) {
   const roomName = assertRoomName(name)
   const roomKind = assertRoomKind(kind)
   // The creator's own Bots may join at creation. Validated before the transaction starts: a room
@@ -236,24 +284,38 @@ export function createRoom(db, { name, ownerUserId, ownerDeviceId, kind, botIds 
     ? [...new Set(botIds.map(value => String(value ?? '').trim()).filter(value => value !== ''))]
     : []
   const joiningBots = wantedBots.map((botId) => {
-    const entry = db.prepare('SELECT bot_id, display_name FROM bot_directory WHERE owner_user_id = ? AND bot_id = ?')
+    const entry = db.prepare('SELECT bot_id, display_name, is_chief FROM bot_directory WHERE owner_user_id = ? AND bot_id = ?')
       .get(ownerUserId, botId)
     if (entry === undefined) throw new RoomError('That Bot is not published', 'NO_SUCH_BOT')
     return entry
   })
+  // A workgroup's own rules, asked only of workgroups: an ordinary room has no Bot members and no
+  // leader, and applying these to it would refuse every ordinary room the Hub admin creates.
+  // A workgroup made by a person carries that person's Bots and needs a leader among them. A room an
+  // operator creates from the Hub admin has no Bot members at all — it is a place colleagues are
+  // added to — so asking it for a leader would refuse a room the operator is entitled to make. The
+  // distinguishing fact is who is creating it, not the kind.
+  const leader = roomKind === 'workgroup' && actorOperatorId === undefined
+    ? resolveLeader({ joiningBots, adminBotId })
+    : undefined
   const id = randomUUID()
   const createdAt = nowIso(now)
   db.exec('BEGIN IMMEDIATE')
   try {
-    db.prepare('INSERT INTO rooms (id, name, owner_user_id, next_seq, created_at, kind) VALUES (?, ?, ?, 1, ?, ?)')
-      .run(id, roomName, ownerUserId, createdAt, roomKind)
+    db.prepare(`INSERT INTO rooms
+      (id, name, owner_user_id, next_seq, created_at, kind, reply_mode, admin_bot_owner_user_id, admin_bot_id)
+      VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)`)
+      .run(id, roomName, ownerUserId, createdAt, roomKind,
+        leader === undefined ? 'everyone' : 'admin',
+        leader === undefined ? null : ownerUserId,
+        leader === undefined ? null : leader.bot_id)
     db.prepare('INSERT INTO room_members (room_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)')
       .run(id, ownerUserId, 'owner', createdAt)
     for (const entry of joiningBots) {
       db.prepare(`INSERT INTO room_bots
-        (room_id, owner_user_id, bot_id, display_name, added_by_user_id, added_at, removed_at)
-        VALUES (?, ?, ?, ?, ?, ?, NULL)`)
-        .run(id, ownerUserId, entry.bot_id, entry.display_name, ownerUserId, createdAt)
+        (room_id, owner_user_id, bot_id, display_name, added_by_user_id, added_at, removed_at, is_chief)
+        VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`)
+        .run(id, ownerUserId, entry.bot_id, entry.display_name, ownerUserId, createdAt, entry.is_chief === 1 ? 1 : 0)
     }
     audit(db, {
       actorUserId: actorOperatorId === undefined ? ownerUserId : null,
@@ -263,7 +325,13 @@ export function createRoom(db, { name, ownerUserId, ownerDeviceId, kind, botIds 
       objectType: 'room',
       objectId: id,
       outcome: 'success',
-      details: { name: roomName, kind: roomKind, ...(joiningBots.length === 0 ? {} : { botIds: joiningBots.map(entry => entry.bot_id) }), ...(actorOperatorId === undefined ? {} : { operator: true }) },
+      details: {
+        name: roomName,
+        kind: roomKind,
+        ...(joiningBots.length === 0 ? {} : { botIds: joiningBots.map(entry => entry.bot_id) }),
+        ...(leader === undefined ? {} : { adminBotId: leader.bot_id }),
+        ...(actorOperatorId === undefined ? {} : { operator: true }),
+      },
       now,
     })
     db.exec('COMMIT')
@@ -310,18 +378,72 @@ export function renameRoom(db, { roomId, name, actorUserId, actorDeviceId, actor
   return findRoom(db, roomId)
 }
 
-/** Update the two room-profile fields an admin can edit without creating a new room. */
+/**
+ * Who may change which of a workgroup's settings.
+ *
+ * Two different authorities, and keeping them apart is what makes the rule checkable:
+ *
+ *   * **governance** — the name, the notice, how answers are routed, the working folder, and who
+ *     leads. The owner and whoever owns the leading Bot may set these, because the original group
+ *     chat lets its administrator Bot change the group it leads.
+ *   * **execution policy** — the permission preset. The owner alone sets this: it decides what every
+ *     member's Bot may do on their own machines, so a Bot that could widen it would be giving itself
+ *     authority its owner never granted.
+ *
+ * A plain member gets `NOT_ALLOWED`; a non-member never reaches here (`requireMember` answers first).
+ *
+ * @throws {RoomError} `NOT_ALLOWED` when the caller's standing does not cover the field.
+ */
+function assertSettingsAuthority(db, { room, actorUserId, changes }) {
+  const membership = requireMember(db, { roomId: room.id, userId: actorUserId })
+  const ownsLeader = room.admin_bot_owner_user_id === actorUserId && membership !== undefined
+  const governanceOnly = changes.permission === undefined
+  if (governanceOnly) {
+    if (membership.role === 'owner' || ownsLeader) return
+    throw new RoomError('Only the workgroup owner or its administrator\'s owner can change this', 'NOT_ALLOWED')
+  }
+  // A request that includes the permission preset is the owner's alone, whatever else it carries:
+  // splitting one request across two authorities would let a governor widen the preset by attaching
+  // it to a rename.
+  const ownerOnly = changes.name === undefined && changes.notice === undefined
+    && changes.replyMode === undefined && changes.workDir === undefined && changes.adminBot === undefined
+  if (ownerOnly && membership.role === 'owner') return
+  throw new RoomError('Only the workgroup owner can set its permissions', 'NOT_ALLOWED')
+}
+
+/** Update a room's profile and its workgroup governance fields. */
 export function updateRoom(db, {
-  roomId, name, notice, actorUserId, actorDeviceId, now = new Date(),
+  roomId, name, notice, replyMode, workDir, permission, adminBot, actorUserId, actorDeviceId, now = new Date(),
 }) {
   const room = findRoom(db, roomId)
   if (room === undefined) throw new RoomError('No such room', 'NO_SUCH_ROOM')
   if (isDissolved(room)) throw new RoomError('This workgroup has been dissolved', 'ROOM_DISSOLVED')
+  assertSettingsAuthority(db, {
+    room,
+    actorUserId,
+    changes: { name, notice, replyMode, workDir, permission, adminBot },
+  })
   const roomName = name === undefined ? room.name : assertRoomName(name)
   const roomNotice = notice === undefined ? (room.notice ?? '') : assertRoomNotice(notice)
+  const nextReplyMode = replyMode === undefined ? (room.reply_mode ?? 'everyone') : assertReplyMode(replyMode)
+  const nextWorkDir = workDir === undefined ? (room.work_dir ?? null) : assertWorkDir(db, workDir)
+  const nextPermission = permission === undefined ? (room.permission ?? null) : assertPermission(permission)
+  const nextLeader = adminBot === undefined
+    ? { ownerUserId: room.admin_bot_owner_user_id ?? null, botId: room.admin_bot_id ?? null }
+    : resolveNewLeader(db, { room, adminBot })
+  const changes = []
+  if (name !== undefined && roomName !== room.name) changes.push({ name: roomName })
+  if (notice !== undefined && roomNotice !== (room.notice ?? '')) changes.push({ notice: roomNotice })
+  if (replyMode !== undefined && nextReplyMode !== (room.reply_mode ?? 'everyone')) changes.push({ replyMode: nextReplyMode })
+  if (workDir !== undefined && nextWorkDir !== (room.work_dir ?? null)) changes.push({ workDir: nextWorkDir })
+  if (permission !== undefined && nextPermission !== (room.permission ?? null)) changes.push({ permission: nextPermission })
+  if (adminBot !== undefined) changes.push({ adminBot: nextLeader })
   db.exec('BEGIN IMMEDIATE')
   try {
-    db.prepare('UPDATE rooms SET name = ?, notice = ? WHERE id = ?').run(roomName, roomNotice, roomId)
+    db.prepare(`UPDATE rooms SET name = ?, notice = ?, reply_mode = ?, work_dir = ?, permission = ?,
+      admin_bot_owner_user_id = ?, admin_bot_id = ? WHERE id = ?`)
+      .run(roomName, roomNotice, nextReplyMode, nextWorkDir, nextPermission,
+        nextLeader.ownerUserId, nextLeader.botId, roomId)
     audit(db, {
       actorUserId,
       actorDeviceId,
@@ -329,7 +451,14 @@ export function updateRoom(db, {
       objectType: 'room',
       objectId: roomId,
       outcome: 'success',
-      details: { ...(name === undefined ? {} : { name: roomName }), ...(notice === undefined ? {} : { notice: roomNotice }) },
+      details: {
+        ...(name === undefined ? {} : { name: roomName }),
+        ...(notice === undefined ? {} : { notice: roomNotice }),
+        ...(replyMode === undefined ? {} : { replyMode: nextReplyMode }),
+        ...(workDir === undefined ? {} : { workDir: nextWorkDir }),
+        ...(permission === undefined ? {} : { permission: nextPermission }),
+        ...(adminBot === undefined ? {} : { adminBot: nextLeader.botId }),
+      },
       now,
     })
     db.exec('COMMIT')
@@ -337,7 +466,65 @@ export function updateRoom(db, {
     try { db.exec('ROLLBACK') } catch { /* preserve the original failure */ }
     throw error
   }
-  return findRoom(db, roomId)
+  return { room: findRoom(db, roomId), changes }
+}
+
+/** How a room routes an unmentioned message. */
+export function assertReplyMode(value) {
+  if (value !== 'admin' && value !== 'everyone') {
+    throw new RoomError('A reply mode must be admin or everyone', 'INVALID_REPLY_MODE')
+  }
+  return value
+}
+
+/**
+ * The group working folder, as given.
+ *
+ * Kept as a string with no filesystem check, because the Hub does not run on the machines the folder
+ * names: whether a path is usable is answered by each member's Host when it gets there, and a Hub that
+ * refused a path it cannot see would reject a folder that is perfectly valid on the owner's machine.
+ */
+function assertWorkDir(db, value) {
+  if (value === null || value === '') return null
+  const path = String(value).trim()
+  if (path.length === 0) return null
+  if (path.length > ROOM_WORK_DIR_MAX) {
+    throw new RoomError(`A working folder may be at most ${ROOM_WORK_DIR_MAX} characters`, 'INVALID_WORK_DIR')
+  }
+  return path
+}
+
+/** The group permission preset name, as given; each Host resolves it against its own catalog. */
+function assertPermission(value) {
+  if (value === null || value === '') return null
+  const name = String(value).trim()
+  if (name.length === 0) return null
+  if (!/^[a-z][a-z0-9-]{0,63}$/.test(name)) {
+    throw new RoomError('A permission preset name is lowercase letters, digits and dashes', 'INVALID_PERMISSION')
+  }
+  return name
+}
+
+/**
+ * The leader a transfer names, or throw.
+ *
+ * `null` hands the room back to "everyone answers"; a named Bot must already be an active member of
+ * this room *and* still be its owner's Main Bot. Both halves are checked here rather than trusted from
+ * the client, so a transfer cannot install a Bot the owner never reported as a chief and cannot name a
+ * Bot that is not in the room at all.
+ */
+function resolveNewLeader(db, { room, adminBot }) {
+  if (adminBot === null) return { ownerUserId: null, botId: null }
+  const ownerUserId = typeof adminBot?.ownerUserId === 'string' ? adminBot.ownerUserId.trim() : ''
+  const botId = typeof adminBot?.botId === 'string' ? adminBot.botId.trim() : ''
+  if (ownerUserId === '' || botId === '') {
+    throw new RoomError('A new administrator needs its owner and its Bot id', 'INVALID_ADMIN_BOT')
+  }
+  const active = db.prepare(`SELECT is_chief FROM room_bots
+    WHERE room_id = ? AND owner_user_id = ? AND bot_id = ? AND removed_at IS NULL`).get(room.id, ownerUserId, botId)
+  if (active === undefined) throw new RoomError('That Bot is not in this workgroup', 'NOT_A_CHIEF_BOT')
+  if (active.is_chief !== 1) throw new RoomError('The workgroup administrator must be that member\'s Main Bot', 'NOT_A_CHIEF_BOT')
+  return { ownerUserId, botId }
 }
 
 // ---------------------------------------------------------------- invitations
@@ -598,8 +785,17 @@ export function setMemberRole(db, { roomId, userId, role, actorUserId, actorDevi
   return membershipOf(db, { roomId, userId })
 }
 
-/** Public shape of a room row for a response, including the caller's own role and its kind. */
+/**
+ * Public shape of a room row for a response, including the caller's own role and its kind.
+ *
+ * `replyMode` is what the room was set to; `effectiveReplyMode` is what actually happens. They
+ * differ in exactly one case — a room set to "admin leads" whose leader is no longer an active Main
+ * Bot of the room — and reading the effective value here is what stops every client from
+ * re-deriving that fallback differently.
+ */
 export function publicRoom(room) {
+  const hasLeader = room.leader_active === 1 || room.leader_active === true
+  const replyMode = room.reply_mode === 'admin' ? 'admin' : 'everyone'
   return {
     id: room.id,
     name: room.name,
@@ -607,11 +803,18 @@ export function publicRoom(room) {
     ownerUserId: room.owner_user_id,
     notice: room.notice ?? '',
     createdAt: room.created_at,
+    replyMode,
+    effectiveReplyMode: hasLeader ? replyMode : 'everyone',
     // Omitted while the workgroup is live, so every existing caller sees exactly what it saw before
     // this column existed. A client that wants the state asks for the field, and a client that does
     // not know about it is not handed a null it has to interpret.
     ...(room.dissolved_at === null || room.dissolved_at === undefined ? {} : { dissolvedAt: room.dissolved_at }),
     ...(room.member_role === undefined ? {} : { myRole: room.member_role }),
+    // Each governance field is omitted when it has no value, like `dissolvedAt` above: a reader that
+    // does not know the field is not handed a null it must interpret.
+    ...(hasLeader ? { adminBotOwnerUserId: room.admin_bot_owner_user_id, adminBotId: room.admin_bot_id } : {}),
+    ...(room.work_dir === null || room.work_dir === undefined ? {} : { workDir: room.work_dir }),
+    ...(room.permission === null || room.permission === undefined ? {} : { permission: room.permission }),
   }
 }
 

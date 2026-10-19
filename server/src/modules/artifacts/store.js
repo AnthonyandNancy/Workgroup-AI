@@ -324,6 +324,37 @@ export function deleteArtifact(db, config, { artifactId, actorUserId, actorDevic
   return row
 }
 
+/**
+ * Publish a finished task's artifacts to everyone currently in the room.
+ *
+ * Sharing a result is one act with two halves: the text becomes a room message and the files become
+ * readable by the people that text reached. Doing only the first would show a result nobody outside
+ * the original recipient list could open, which is a worse state than not sharing at all.
+ *
+ * Called inside the sharing transaction, so the task's state and the files' visibility cannot disagree.
+ *
+ * @param {object} db
+ * @param {string} taskId the finished task whose artifacts are being published.
+ * @param {string} roomId the room they become readable in.
+ * @returns {string[]} the ids of the artifacts whose recipients were widened.
+ */
+export function shareTaskArtifactsWithRoom(db, { taskId, roomId }) {
+  const rows = db.prepare('SELECT * FROM artifacts WHERE task_id = ? AND room_id = ?').all(taskId, roomId)
+  if (rows.length === 0) return []
+  // Everyone with a live membership, which is the same set the room message reaches.
+  const members = db.prepare('SELECT user_id FROM room_members WHERE room_id = ? AND removed_at IS NULL').all(roomId)
+    .map(row => row.user_id)
+  const widened = []
+  for (const row of rows) {
+    const acl = aclOf(row)
+    const next = { ...acl, userIds: [...new Set([...acl.userIds, ...members])] }
+    if (next.userIds.length === acl.userIds.length) continue
+    db.prepare('UPDATE artifacts SET acl_json = ? WHERE id = ?').run(JSON.stringify(next), row.id)
+    widened.push(row.id)
+  }
+  return widened
+}
+
 export function publicArtifact(row, contentType, viewerUserId) {
   const acl = aclOf(row)
   return {

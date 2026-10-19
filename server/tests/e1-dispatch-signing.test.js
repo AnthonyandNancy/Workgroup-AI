@@ -29,6 +29,7 @@ import { loadConfig } from '../src/config/index.js'
 import { openDatabase } from '../src/db/index.js'
 import { migrate } from '../src/db/migrate.js'
 import { createServer } from '../src/server.js'
+import { makeWorkgroup } from './helpers/workgroup.js'
 import { createGrantSigner, verifyGrantSignature } from '../src/modules/tasks/signing.js'
 import { findGrantByNonce } from '../src/modules/tasks/grants.js'
 
@@ -137,7 +138,7 @@ async function taskReadyForGrant(call) {
   }
   const alice = await register('e1-alice')
   const bob = await register('e1-bob')
-  const room = await call('POST', '/rooms', { name: 'E1', kind: 'workgroup' }, alice.token)
+  const room = await makeWorkgroup(call, alice, { name: 'E1' })
   assert.equal(room.status, 201, room.raw)
   await call('POST', `/rooms/${room.body.room.id}/invitations`, { targetUserId: bob.userId }, alice.token)
   const pending = await call('GET', '/invitations', undefined, bob.token)

@@ -119,6 +119,7 @@ export function makeRoomRoutes({ requireAuth }) {
           ownerUserId: request.auth.user.id,
           ownerDeviceId: request.auth.deviceId,
           botIds: body.botIds,
+          adminBotId: body.adminBotId,
         })
         return reply.code(201).send({
           room: publicRoom({ ...room, member_role: 'owner' }),
@@ -277,22 +278,46 @@ export function makeRoomRoutes({ requireAuth }) {
     fastify.patch('/api/v1/rooms/:roomId', { preHandler: requireAuth }, async (request, reply) => {
       const body = request.body ?? {}
       try {
-        requireRoomAdmin(db, { roomId: request.params.roomId, userId: request.auth.user.id })
+        // Membership is the gate the store's own authority check then narrows; asking here keeps a
+        // non-member answered exactly like an unknown room before any field is looked at.
+        requireMember(db, { roomId: request.params.roomId, userId: request.auth.user.id })
         const before = findRoom(db, request.params.roomId)
-        const room = updateRoom(db, {
+        const { room, changes } = updateRoom(db, {
           roomId: request.params.roomId,
           ...(body.name === undefined ? {} : { name: body.name }),
           ...(body.notice === undefined ? {} : { notice: body.notice }),
+          ...(body.replyMode === undefined ? {} : { replyMode: body.replyMode }),
+          ...(body.workDir === undefined ? {} : { workDir: body.workDir }),
+          ...(body.permission === undefined ? {} : { permission: body.permission }),
+          ...(body.adminBot === undefined ? {} : { adminBot: body.adminBot }),
           actorUserId: request.auth.user.id,
           actorDeviceId: request.auth.deviceId,
         })
-        if (body.name !== undefined && room.name !== before?.name) {
-          fastify.hub.realtime.publishToRoom(request.params.roomId,
-            makeEvent('room.renamed', { roomId: request.params.roomId, name: room.name }, { roomId: request.params.roomId }))
-        }
+        const published = (name, payload) => fastify.hub.realtime.publishToRoom(
+          request.params.roomId,
+          makeEvent(name, { roomId: request.params.roomId, ...payload }, { roomId: request.params.roomId }),
+        )
+        if (body.name !== undefined && room.name !== before?.name) published('room.renamed', { name: room.name })
         if (body.notice !== undefined && room.notice !== (before?.notice ?? '')) {
-          fastify.hub.realtime.publishToRoom(request.params.roomId,
-            makeEvent('room.notice_changed', { roomId: request.params.roomId, notice: room.notice }, { roomId: request.params.roomId }))
+          published('room.notice_changed', { notice: room.notice })
+        }
+        // One event for the three settings that are not the profile: they change together from the
+        // settings page, and a reader applies them together.
+        const settings = changes.filter(change => change.replyMode !== undefined || change.workDir !== undefined || change.permission !== undefined)
+        if (settings.length > 0) {
+          published('room.settings_changed', {
+            ...(room.reply_mode === undefined ? {} : { replyMode: room.reply_mode }),
+            workDir: room.work_dir ?? null,
+            permission: room.permission ?? null,
+          })
+        }
+        if (changes.some(change => change.adminBot !== undefined)) {
+          published('room.admin_bot_changed', {
+            effectiveReplyMode: publicRoom(room).effectiveReplyMode,
+            ...(room.admin_bot_id === null || room.admin_bot_id === undefined
+              ? {}
+              : { adminBotOwnerUserId: room.admin_bot_owner_user_id, adminBotId: room.admin_bot_id }),
+          })
         }
         return reply.code(200).send({ room: publicRoom(room) })
       } catch (error) {

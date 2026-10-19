@@ -1,8 +1,12 @@
 # 工作群复刻原版群聊：技术拆解与技术设计
 
+> **本文件已被 `workgroup-parity-technical-design-v2.md` 取代，仅作历史调查记录保留。**
+> 主要差异：v1 假设「主持管理员应答 = 生成待审批任务」；需求 R14a / D2 裁决后，v2 改为「消息直接进入该 Bot 在本群的长期会话」，并相应新增 `host/workgroup-turns` 与 `state.workgroupRooms`。
+> 请以 v2 为实现依据。
+
 | 字段 | 内容 |
 |---|---|
-| 文档状态 | 技术调查与技术设计，待评审 |
+| 文档状态 | 已被 v2 取代（历史记录） |
 | 需求来源 | `docs/requirements/workgroup-parity-requirement.md` |
 | 调查范围 | `application/packages/bundle/ds-bot`、`application/integrations/workgroup`、`server/` |
 | 代码阶段 | 仅调查与设计，未进入 Coding |

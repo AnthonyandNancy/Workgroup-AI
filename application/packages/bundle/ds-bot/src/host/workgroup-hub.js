@@ -187,6 +187,12 @@ export function install(rt) {
       const next = reduceWorkgroup(current, event)
       if (next !== current) roomStates.set(roomId, next)
     }
+    // A dissolved room has no leading Bot left to answer in it, so its turn state goes with it. Done
+    // here rather than in the turn module so the room and the state that names it are removed in the
+    // same step, whatever the reason for the dissolution.
+    if (event?.type === 'room.dissolved' && typeof roomId === 'string') {
+      void rt.forgetWorkgroupRoom?.(roomId)
+    }
     rt.ctx?.emit?.('workgroup/event', event)
     rt.onWorkgroupEvent?.(event)
   }
@@ -350,6 +356,9 @@ export function install(rt) {
         publishedBots.set(entry.botId, {
           displayName: typeof entry.displayName === 'string' ? entry.displayName : '',
           visibility: entry.visibility === 'room' || entry.visibility === 'public' ? entry.visibility : 'private',
+          // What the Hub currently holds, so a Host that agrees with it publishes nothing and a Host
+          // whose Bot became (or stopped being) a Main Bot while it was down republishes once.
+          isChief: entry.isChief === true,
         })
       }
     }
@@ -388,25 +397,29 @@ export function install(rt) {
     }
     for (const bot of bots) {
       const displayName = bot.name.trim()
-      // The Hub entry is keyed by (owner, botId) and updated in place, so an unchanged name needs
+      // Whether this Bot is its owner's Main Bot is a fact only this machine has; the Hub mirrors it
+      // so a workgroup's leader can be checked on the server. It travels with the name and the
+      // visibility decision, and nothing about how the Bot works.
+      const isChief = rt.isMain?.(bot.id) === true
+      // The Hub entry is keyed by (owner, botId) and updated in place, so an unchanged report needs
       // no request at all: this is what keeps ordinary saves out of the directory. The visibility
       // is the one already recorded, so a rename does not silently narrow a shared Bot.
       const known = publishedBots.get(bot.id)
-      if (known?.displayName === displayName && known.visibility !== undefined) continue
+      if (known?.displayName === displayName && known.visibility !== undefined && known.isChief === isChief) continue
       const visibility = known?.visibility ?? 'private'
       try {
         await current.request('POST', '/bots', {
-          // The whole body: the directory holds a name, a visibility decision, and the id this
-          // runtime answers for. Instructions, model, Session, folder, tools, and capabilities are
-          // execution details and never leave this machine.
-          body: { botId: bot.id, displayName, visibility },
+          // The whole body: the directory holds a name, a visibility decision, a standing, and the
+          // id this runtime answers for. Instructions, model, Session, folder, tools, and
+          // capabilities are execution details and never leave this machine.
+          body: { botId: bot.id, displayName, visibility, isChief },
         })
       } catch (error) {
         warnDirectory('publish', bot.id, error)
         continue
       }
       if (generation !== publishGeneration) return
-      publishedBots.set(bot.id, { displayName, visibility })
+      publishedBots.set(bot.id, { displayName, visibility, isChief })
       // Publishing records an intention to be reachable; the first heartbeat is what makes the
       // entry online, so it follows immediately rather than waiting a whole interval.
       await heartbeatBot(current, bot.id)
@@ -685,6 +698,16 @@ export function install(rt) {
         return await client.request('PATCH', `/rooms/${body.roomId}`, { body: { name: body.name } })
       case 'hub-update-notice':
         return await client.request('PATCH', `/rooms/${body.roomId}`, { body: { notice: body.notice } })
+      case 'hub-update-settings': {
+        // Only the fields the caller named: an omitted field is "leave it alone", and sending `null`
+        // for the others would clear settings nobody asked to change.
+        const patch = {}
+        for (const key of ['replyMode', 'workDir', 'permission']) {
+          if (body[key] !== undefined) patch[key] = body[key]
+        }
+        if (body.adminBot !== undefined) patch.adminBot = body.adminBot
+        return await client.request('PATCH', `/rooms/${body.roomId}`, { body: patch })
+      }
       case 'hub-add-bot':
         return await client.request('POST', `/rooms/${body.roomId}/bots`, { body: { botId: body.botId } })
       case 'hub-remove-bot':
@@ -755,6 +778,12 @@ export function install(rt) {
         return body.afterSeq === undefined
           ? await client.request('GET', `/rooms/${body.roomId}/messages?limit=${String(body.limit ?? 200)}`)
           : await workgroup.messagesAfter(body.roomId, body.afterSeq, body.limit ?? 200)
+      case 'hub-messages-before':
+        return await workgroup.messagesBefore(body.roomId, body.beforeSeq, body.limit ?? 200)
+      case 'hub-reaction-add':
+        return await workgroup.addReaction(body.roomId, body.messageId, body.emoji)
+      case 'hub-reaction-remove':
+        return await workgroup.removeReaction(body.roomId, body.messageId, body.emoji)
       case 'hub-head':
         return await workgroup.head(body.roomId)
       case 'hub-directory':
@@ -912,6 +941,8 @@ export function install(rt) {
   Object.assign(rt, {
     hubEndpoint,
     hubView,
+    /** One watched room's reduced state, which is what the turn module reads to decide who answers. */
+    workgroupRoomState: roomId => roomStates.get(roomId)?.room,
     // The authenticated client itself, for the one consumer that needs to read owner-scoped task
     // detail and mint/consume a grant: the approval is a Host-side act, and routing it through the
     // browser endpoint table would put the owner's scope on a renderer's wire.

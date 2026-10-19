@@ -100,6 +100,34 @@ describe('the copied workgroup conversation', () => {
     expect(container.querySelector('[data-wg-message="m1"] .bt-bubble [data-test-markdown="true"]')).not.toBeNull()
   })
 
+  it('draws a Bot’s line on the left as itself, even when its owner is the reader', async () => {
+    // The Hub records the Bot's owner as the accountable sender, so a renderer that only compares
+    // ids would put the Bot's words in the reader's own bubble on the right.
+    await mount('WorkgroupConversation', {
+      ...base,
+      messages: [{
+        id: 'bot-1',
+        roomSeq: 3,
+        senderUserId: 'u1',
+        senderBotId: 'b1',
+        senderBotDisplayName: 'Helper',
+        body: '任务完成',
+        createdAt: '2026-01-01T10:02:00.000Z',
+      }],
+    })
+    const line = container.querySelector('[data-wg-message="bot-1"]')
+    expect(line.className).toBe('bt-group-msg')
+    expect(container.querySelector('.bt-umsg')).toBeNull()
+    expect(container.textContent).toContain('Helper')
+  })
+
+  it('renders a group avatar for the header and details instead of a single default mark', async () => {
+    await mount('WorkgroupConversation', base)
+    expect(container.querySelector('.bt-head .bt-cluster')).not.toBeNull()
+    await click('[data-wg-details]')
+    expect(container.querySelector('.bt-pile')).not.toBeNull()
+  })
+
   it('marks an undelivered message instead of showing it as sent', async () => {
     await mount('WorkgroupConversation', { ...base, messages: [{ ...messages[1], failed: true }] })
     expect(container.querySelector('.bt-wg-message-failed').textContent).toBe('Not delivered')

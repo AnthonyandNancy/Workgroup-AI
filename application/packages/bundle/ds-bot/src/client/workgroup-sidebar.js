@@ -23,6 +23,7 @@ import { isMainOf } from './sources.js'
 import { currentPart, previewOf, relativeShort } from './text.js'
 import { PlusIcon, SearchIcon, PinMarkIcon, CloudDownloadIcon } from './icons.js'
 import { botState, BotAvatar, RoomAvatar } from './mark.js'
+import { WorkgroupAvatar } from './workgroup-ui/thread.js'
 import { reducedMotion } from './activity-row.js'
 import { Shimmer, workPhrase } from './cells.js'
 import { springEasing } from './motion.js'
@@ -422,24 +423,17 @@ const roleLabel = (role) => {
   return t('Member')
 }
 
-// A workgroup is people plus their Bots on the Hub, so the glyph is a small network rather than
-// the local group's faces. The row's text badge says "Workgroup" as well, so the two kinds of room
-// cannot be mistaken for one another even where the glyph is the only mark.
-function WorkgroupGlyph({ size = 20 }) {
-  return h('svg', {
-    width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
-    strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true,
-  },
-  h('circle', { cx: 12, cy: 7.5, r: 2.4 }),
-  h('circle', { cx: 6.5, cy: 16.5, r: 2.1 }),
-  h('circle', { cx: 17.5, cy: 16.5, r: 2.1 }),
-  h('path', { d: 'M12 9.9v2.4M10.3 13.7l-2.3 1.5M13.7 13.7l2.3 1.5' }))
-}
-
 function WorkgroupRow({ row, active, hubState, wide, onOpen, onMenu }) {
   const id = row.id
+  // The room list carries counts, not members, and reading each room to draw its faces would turn
+  // one list into one request per row. The row therefore seats the same number of faces the room
+  // reports: the shape of the original group avatar without inventing who is in it.
+  const placeholderPeople = Array.from({ length: countOf(row.memberCount) }, (_, index) => ({ userId: `member-${index}`, displayName: '' }))
+  const placeholderBots = Array.from({ length: countOf(row.botCount) }, (_, index) => ({ ownerUserId: 'room', botId: `${id}:${index}` }))
   const pinned = row.pinned === true
-  const unread = countOf(row.unread)
+  // The badge shows the combined marker: a room the member manually marked unread looks unread even
+  // when nothing new arrived, which is what "mark as unread" promises.
+  const unread = countOf(row.badge ?? row.unread)
   const pending = countOf(row.pendingApprovalCount)
   const preview = String(row.lastMessagePreview ?? '').replace(/\s+/g, ' ').trim()
   // An empty workgroup still needs a stamp; its creation time is the only activity it has.
@@ -473,7 +467,7 @@ function WorkgroupRow({ row, active, hubState, wide, onOpen, onMenu }) {
     onContextMenu: (event) => { event.preventDefault(); onMenu(row, event.clientX, event.clientY) },
   },
   h('span', { className: 'bt-row-ava bt-wg-row-ava' },
-    h(WorkgroupGlyph, { size: 20 }),
+    h(WorkgroupAvatar, { members: placeholderPeople, bots: placeholderBots, size: 36 }),
     h('span', { className: 'bt-wg-hub-dot', 'data-hub': hubState, 'aria-hidden': true })),
   pinned && !wide ? h(PinMark) : null,
   wide ? h('span', { className: 'bt-row-body' },
@@ -527,14 +521,46 @@ function WorkgroupMenu({ menu, actions, onClose }) {
     }
     onClose()
   }
+  // One action that is not a preference: it reaches the Hub or opens a surface, so it reports its own
+  // failure instead of writing a flag.
+  const call = (label, invoke, options = {}) => h('button', {
+    type: 'button',
+    role: 'menuitem',
+    className: options.danger === true ? 'bt-danger' : undefined,
+    'data-wg-menu-action': options.action,
+    onClick: () => {
+      onClose()
+      try {
+        const answer = invoke()
+        if (answer?.catch !== undefined) answer.catch(error => actions.reportError?.(error, 'workgroup-sidebar'))
+      } catch (error) {
+        actions.reportError?.(error, 'workgroup-sidebar')
+      }
+    },
+  }, h('span', { className: 'bt-menu-label' }, label))
+  // The same seven rows the original group's menu carries, in the same order and grouping: pin,
+  // unread, then the two settings entries, then the id, then hide and the destructive last row.
+  // "Delete group" becomes "Dissolve workgroup": a workgroup is ended by state, and its history stays
+  // readable, which a delete would not convey.
+  const dissolved = menu.row.dissolvedAt !== undefined && menu.row.dissolvedAt !== null
+  const mayDissolve = menu.row.myRole === 'owner' && !dissolved
   return createPortal(h('div', {
     className: 'bt-menu bt-wg-menu', role: 'menu', 'aria-label': menu.row.name,
     'data-workgroup-menu': menu.row.id, style: { left: menu.x, top: menu.y },
   },
-  h('button', { type: 'button', role: 'menuitem', onClick: () => run({ pinned: menu.row.pinned !== true }) },
+  h('button', { type: 'button', role: 'menuitem', 'data-wg-menu-action': 'pin', onClick: () => run({ pinned: menu.row.pinned !== true }) },
     h('span', { className: 'bt-menu-label' }, menu.row.pinned === true ? t('Unpin') : t('Pin to top'))),
-  h('button', { type: 'button', role: 'menuitem', onClick: () => run({ hidden: true }) },
-    h('span', { className: 'bt-menu-label' }, t('Hide from list')))), document.body)
+  h('div', { className: 'bt-menu-sep', role: 'separator' }),
+  call(t('Mark as unread'), () => actions.markWorkgroupUnread?.(menu.row.id), { action: 'unread' }),
+  call(t('Group settings'), () => actions.openSettings?.('groups', menu.row.id), { action: 'settings' }),
+  call(t('Rename group'), () => actions.renameWorkgroup?.(menu.row.id), { action: 'rename' }),
+  call(t('Copy conversation ID'), () => navigator.clipboard?.writeText?.(menu.row.id), { action: 'copy-id' }),
+  h('div', { className: 'bt-menu-sep', role: 'separator' }),
+  h('button', { type: 'button', role: 'menuitem', 'data-wg-menu-action': 'hide', onClick: () => run({ hidden: true }) },
+    h('span', { className: 'bt-menu-label' }, t('Hide from sidebar'))),
+  mayDissolve
+    ? call(t('Dissolve workgroup'), () => actions.dissolveWorkgroup?.(menu.row.id), { action: 'dissolve', danger: true })
+    : null), document.body)
 }
 
 function WorkgroupSectionHead({ hubState, hub, actions, wide }) {
@@ -793,7 +819,7 @@ export const WORKGROUP_SIDEBAR_CSS = `
 .bt-wg-invite-error{font-size:11px;line-height:15px;overflow-wrap:anywhere}
 .bt-wg-invites-rail{flex:none;display:flex;justify-content:center;margin:4px 0 2px}
 .bt-wg-invite-badge{min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--bt-accent);color:var(--bt-accent-ink,#fff);font-size:11px;line-height:18px;text-align:center;box-sizing:border-box}
-.bt-wg-row-ava{position:relative;flex:none;width:36px;height:36px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:var(--bt-tag-bg);color:var(--bt-tag-ink);box-sizing:border-box}
+.bt-wg-row-ava{position:relative;flex:none;width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box}
 .bt-wg-hub-dot{position:absolute;right:0;bottom:1px;width:9px;height:9px;border-radius:50%;background:var(--bt-ink-3);box-shadow:0 0 0 2px var(--bt-sidebar)}
 .bt-wg-hub-dot[data-hub=live]{background:var(--bt-green)}
 .bt-wg-hub-dot[data-hub=reconnecting]{background:var(--bt-accent,#4D6BFE);animation:bt-wg-hub-pulse 1.4s ease-in-out infinite}

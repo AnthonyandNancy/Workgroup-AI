@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom'
 import { CommandPalette } from './palette.js'
 import { NewChat } from './new-chat.js'
 import { WorkgroupCreate } from './workgroup-ui/create.js'
+import { WorkgroupSettingsForm } from './workgroup-ui/settings.js'
+import { workgroupRow } from './workgroup-roster.js'
 import { ExchangeDialog } from './exchange.js'
 import { VoiceMode } from './voice.js'
 import { SettingsDialog } from './settings.js'
@@ -17,7 +19,7 @@ import { t } from './i18n.js'
 const DIALOG_EXIT_MS = 160
 const MENU_EXIT_MS = 120
 
-export function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity, useWork, useRegistry, useBrowserPages, useBrowserTabs, useUpdate, useWorkgroups, useHub, workgroupHub, sessions, actions }) {
+export function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity, useWork, useRegistry, useBrowserPages, useBrowserTabs, useUpdate, useWorkgroups, useHub, useWorkgroupRoster, useWorkgroupPrefs, workgroupHub, sessions, actions }) {
   const roster = useRoster(value => value)
   const ui = useUi(value => value)
   const hub = useHub(value => value)
@@ -26,6 +28,14 @@ export function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useA
   // answer is confirmed asynchronously by the Host and can change while the window is open: a prop
   // captured at mount would freeze the first answer, and with it the menu entry.
   const workgroups = useWorkgroups(value => value)
+  // The settings page draws workgroups from the same polled roster the sidebar uses, so a room's
+  // settings and its sidebar row can never disagree about the room's name or its members.
+  const workgroupRoster = useWorkgroupRoster === undefined ? undefined : useWorkgroupRoster(value => value)
+  const workgroupPrefs = useWorkgroupPrefs === undefined ? undefined : useWorkgroupPrefs(value => value)
+  // The sidebar's own rows, so a room's settings page and its sidebar row describe the same room.
+  const workgroupRows = workgroupRoster?.rows === undefined
+    ? undefined
+    : workgroupRoster.rows.map(row => workgroupRow(row, workgroupPrefs))
   const current = useSessions(list => Object.values(list.byId).find(session => (session?.retainedBy?.mainView ?? 0) > 0)?.id ?? null)
   // An open panel follows the conversation in the main view. Only a change of the
   // main view moves it, so opening details for another id (Rename) is not undone.
@@ -76,6 +86,49 @@ export function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useA
     menu ? createPortal(h(ContextMenu, { key: `${menu.kind ?? ''}:${menu.id}:${menu.x}:${menu.y}`, menu, roster, actions, leaving: menuLeaving }), document.body) : null,
     settings ? createPortal(h(SettingsDialog, {
       page: settings.page, id: settings.id, roster, actions, useUpdate, hub, workgroupHub, sessions, leaving: settingsLeaving,
+      // The groups page lists workgroups beside local groups and opens one in the same dialog: the
+      // sidebar's "group settings" row leads here, and a second settings surface would be a second set
+      // of the same rules.
+      externalGroups: workgroupRows === undefined ? {} : Object.fromEntries(workgroupRows.map(row => [row.id, row])),
+      // Drawn here rather than in the dialog because this layer is the one that knows what a workgroup
+      // is: the settings dialog only knows where the page goes.
+      renderGroup: workgroupRows === undefined ? undefined : ({ id }) => {
+        const row = workgroupRows.find(entry => entry.id === id)
+        if (row === undefined) return null
+        const snapshot = workgroups?.roomState?.(id)?.getSnapshot?.()
+        if (snapshot?.room === undefined) {
+          return h('div', { className: 'bt-muted', 'data-external-group-loading': id, role: 'status' }, t('Opening the workgroup…'))
+        }
+        return h(WorkgroupSettingsForm, {
+          room: snapshot.room,
+          members: snapshot.members ?? [],
+          bots: snapshot.bots ?? [],
+          selfUserId: workgroups?.identity?.userId,
+          identity: workgroups?.identity,
+          prefs: workgroupPrefs?.[id] ?? {},
+          onAction: async (operation, payload) => {
+            switch (operation) {
+              case 'renameRoom': return workgroups.renameRoom(id, payload)
+              case 'updateNotice': return workgroups.updateNotice(id, payload.notice)
+              case 'updateSettings': return workgroups.updateSettings(id, payload)
+              case 'addBot': return workgroups.addBot(id, payload.botId)
+              case 'inviteBot': return workgroups.inviteBot(id, payload)
+              case 'removeBot': return workgroups.removeBot(id, payload.ownerUserId, payload.botId)
+              case 'invite': return workgroups.invite(id, payload)
+              case 'setRole': return workgroups.setRole(id, payload.userId, payload.role)
+              case 'removeMember': return workgroups.removeMember(id, payload.userId)
+              case 'revokeInvitation': return workgroups.revokeInvitation(payload.invitationId)
+              case 'leaveRoom': return workgroups.leaveRoom(id)
+              default: throw new Error(`Unknown workgroup action ${operation}`)
+            }
+          },
+          onDissolve: async () => { await workgroups.dissolve(id); await workgroups.refresh?.() },
+          onClose: () => actions.closeSettings?.(),
+          onFlag: patch => workgroups.setWorkgroupFlag?.(id, patch),
+          loadOwnerBots: workgroups?.directory,
+          loadBotCandidates: workgroups?.botCandidates === undefined ? undefined : () => workgroups.botCandidates(id),
+        })
+      },
       extraGroups: workgroups === undefined ? [] : [{
         key: 'workgroup', label: t('Create workgroup chat'),
         run: () => { actions.closeSettings?.(); workgroups.openWorkgroupCreate(); return undefined },

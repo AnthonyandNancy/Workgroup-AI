@@ -240,6 +240,24 @@ export function createWorkgroupClient({ client, bridge, onBotsFromDirectory } = 
     messagesAfter: (roomId, afterSeq, limit = 200) =>
       client.request('GET', `/rooms/${roomId}/messages?afterSeq=${afterSeq}&limit=${limit}`),
 
+    /**
+     * One page of history before a sequence, for a reader scrolling up.
+     *
+     * The Hub answers with `nextBeforeSeq` and `hasMore`, so the caller keeps a cursor rather than
+     * guessing from the messages it received — a page that happened to be the room's first would
+     * otherwise be indistinguishable from one that was merely short.
+     */
+    messagesBefore: (roomId, beforeSeq, limit = 200) =>
+      client.request('GET', `/rooms/${roomId}/messages?beforeSeq=${beforeSeq}&limit=${limit}`),
+
+    /** Add a reaction to a message. The answer is the message's whole reaction set. */
+    addReaction: (roomId, messageId, emoji) =>
+      client.request('POST', `/rooms/${roomId}/messages/${messageId}/reactions`, { body: { emoji } }),
+
+    /** Withdraw one's own reaction. Removing one that is not there succeeds. */
+    removeReaction: (roomId, messageId, emoji) =>
+      client.request('DELETE', `/rooms/${roomId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`),
+
     /** The room's high-water sequence, so a fresh client knows whether it is behind. */
     head: (roomId) => client.request('GET', `/rooms/${roomId}/messages/head`),
 
@@ -329,6 +347,49 @@ export function reduceWorkgroup(state, event) {
     case 'room.bot_added':
     case 'room.bot_removed':
       return { ...state, botsStale: true }
+    case 'message.reaction_changed': {
+      const change = event.payload ?? {}
+      if (typeof change.messageId !== 'string') return state
+      const index = state.messages.findIndex(message => message.id === change.messageId)
+      if (index < 0) return state
+      // The Hub sends the whole set, so the client replaces rather than merges: merging would keep a
+      // reaction this reader had already been told was withdrawn.
+      const messages = [...state.messages]
+      messages[index] = { ...messages[index], reactions: Array.isArray(change.reactions) ? change.reactions : [] }
+      return { ...state, messages }
+    }
+    case 'room.settings_changed': {
+      const change = event.payload ?? {}
+      if (change.roomId !== undefined && change.roomId !== state.room?.id) return state
+      // Patched from what the Hub computed, not re-derived here: `effectiveReplyMode` depends on
+      // whether the leader is still a leading Main Bot of the room, which this client does not hold.
+      const room = { ...state.room }
+      if (typeof change.replyMode === 'string') room.replyMode = change.replyMode
+      if (typeof change.effectiveReplyMode === 'string') room.effectiveReplyMode = change.effectiveReplyMode
+      if (change.workDir !== undefined) {
+        if (change.workDir === null) delete room.workDir
+        else room.workDir = change.workDir
+      }
+      if (change.permission !== undefined) {
+        if (change.permission === null) delete room.permission
+        else room.permission = change.permission
+      }
+      return { ...state, room }
+    }
+    case 'room.admin_bot_changed': {
+      const change = event.payload ?? {}
+      if (change.roomId !== undefined && change.roomId !== state.room?.id) return state
+      const room = { ...state.room }
+      if (typeof change.effectiveReplyMode === 'string') room.effectiveReplyMode = change.effectiveReplyMode
+      if (typeof change.adminBotId === 'string') {
+        room.adminBotId = change.adminBotId
+        room.adminBotOwnerUserId = change.adminBotOwnerUserId
+      } else {
+        delete room.adminBotId
+        delete room.adminBotOwnerUserId
+      }
+      return { ...state, room }
+    }
     case 'room.dissolved': {
       const change = event.payload ?? {}
       if (change.roomId !== undefined && change.roomId !== state.room?.id) return state

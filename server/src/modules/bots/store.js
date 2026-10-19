@@ -84,13 +84,17 @@ export function listOwnEntries(db, ownerUserId) {
  * authenticated session, so a user cannot publish on another's behalf.
  */
 export function publishEntry(db, {
-  ownerUserId, ownerDeviceId, botId, displayName, visibility = 'private', now = new Date(),
+  ownerUserId, ownerDeviceId, botId, displayName, visibility = 'private', isChief = false, now = new Date(),
 }) {
   const id = assertBotId(botId)
   const name = assertDisplayName(displayName)
   if (!VISIBILITIES.includes(visibility)) {
     throw new DirectoryError(`Visibility must be one of ${VISIBILITIES.join(', ')}`, 'INVALID_VISIBILITY')
   }
+  // A room's leader has to be its owner's Main Bot, and that fact is produced on the owner's
+  // machine: `true` is the only value a client can send. Anything else is read as "not reported",
+  // so an unrecognised payload cannot promote a Bot to chief.
+  const chief = isChief === true ? 1 : 0
   const existing = findEntry(db, { ownerUserId, botId: id })
   const stamp = now.toISOString()
   db.exec('BEGIN IMMEDIATE')
@@ -102,9 +106,9 @@ export function publishEntry(db, {
       // its first heartbeat aged out — the owner would appear reachable when nothing can
       // answer for them. Presence becomes `online` only when a heartbeat says so.
       db.prepare(`INSERT INTO bot_directory
-        (owner_user_id, bot_id, display_name, visibility, state, updated_at, last_seen_at, published_at)
-        VALUES (?, ?, ?, ?, 'offline', ?, NULL, ?)`)
-        .run(ownerUserId, id, name, visibility, stamp, visibility === 'private' ? null : stamp)
+        (owner_user_id, bot_id, display_name, visibility, state, updated_at, last_seen_at, published_at, is_chief)
+        VALUES (?, ?, ?, ?, 'offline', ?, NULL, ?, ?)`)
+        .run(ownerUserId, id, name, visibility, stamp, visibility === 'private' ? null : stamp, chief)
     } else {
       // `published_at` records when visibility last became broader than private; narrowing
       // back to private clears it so the field answers "what have I shared right now".
@@ -113,9 +117,9 @@ export function publishEntry(db, {
         : (existing.published_at ?? stamp)
       // A visibility change must not manufacture presence either.
       db.prepare(`UPDATE bot_directory
-        SET display_name = ?, visibility = ?, updated_at = ?, published_at = ?
+        SET display_name = ?, visibility = ?, updated_at = ?, published_at = ?, is_chief = ?
         WHERE owner_user_id = ? AND bot_id = ?`)
-        .run(name, visibility, stamp, publishedAt, ownerUserId, id)
+        .run(name, visibility, stamp, publishedAt, chief, ownerUserId, id)
     }
     audit(db, {
       actorUserId: ownerUserId, actorDeviceId: ownerDeviceId,
@@ -265,6 +269,9 @@ export function publicEntry(row, { includeOwner = false, now = new Date() } = {}
     displayName: row.display_name,
     visibility: row.visibility,
     presence: presenceOf(row, now),
+    // Whether the owner reports this Bot as their Main Bot. A workgroup's leader must be one, so a
+    // reader showing a Bot's standing needs the same fact the Hub checks, not a client's guess.
+    isChief: row.is_chief === 1 || row.is_chief === true,
     ...(row.state === undefined ? {} : { state: row.state }),
     ...(includeOwner ? {
       ownerUserId: row.owner_user_id,

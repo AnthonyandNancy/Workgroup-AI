@@ -26,6 +26,7 @@ import { loadConfig } from '../src/config/index.js'
 import { openDatabase } from '../src/db/index.js'
 import { migrate } from '../src/db/migrate.js'
 import { createServer } from '../src/server.js'
+import { makeWorkgroup } from './helpers/workgroup.js'
 import { PersistentLimiter, heartbeatKeys, messageKeys } from '../src/security/ratelimit-store.js'
 
 const SIGNING_KEY = 'h14-limit-test-signing-key-long-enough-for-hs256'
@@ -297,7 +298,7 @@ async function withSeededHub(root, run, extra = {}) {
 test('a heartbeat flood is refused with 429 instead of writing the directory unbounded', async () => {
   const { root, cleanup } = tempRoot()
   try {
-    await withSeededHub(root, async ({ authed }) => {
+    await withSeededHub(root, async ({ authed, token }) => {
       const registered = await authed('POST', '/bots', {
         botId: 'flood-bot', displayName: 'Flood', description: 'for the rate limit case',
         capabilities: ['search'],
@@ -316,8 +317,8 @@ test('a heartbeat flood is refused with 429 instead of writing the directory unb
 test('a message flood is refused with 429 rather than taking the room write lock on every request', async () => {
   const { root, cleanup } = tempRoot()
   try {
-    await withSeededHub(root, async ({ authed }) => {
-      const room = await authed('POST', '/rooms', { name: 'Flood', kind: 'workgroup' })
+    await withSeededHub(root, async ({ authed, token }) => {
+      const room = await makeWorkgroup(authed, { token }, { name: 'Flood' })
       assert.equal(room.status, 201, room.raw)
       const statuses = []
       for (let i = 0; i < 60; i += 1) {

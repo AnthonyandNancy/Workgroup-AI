@@ -20,6 +20,7 @@ import { loadConfig } from '../src/config/index.js'
 import { openDatabase } from '../src/db/index.js'
 import { migrate } from '../src/db/migrate.js'
 import { createServer } from '../src/server.js'
+import { makeWorkgroup } from './helpers/workgroup.js'
 import {
   TASK_STATES, TERMINAL_STATES, TASK_TRANSITIONS, canTransition, isTerminal,
   transition, createTask, decideTask, cancelTask, findTask, taskInternals,
@@ -64,7 +65,7 @@ async function withHub(run) {
   const delegation = async () => {
     const alice = await person('finance.a', '财务 A')
     const bob = await person('finance.b', '财务 B')
-    const created = await call('POST', '/rooms', { name: 'Finance', kind: 'workgroup' }, alice.token)
+    const created = await makeWorkgroup(call, alice, { name: 'Finance' })
     const roomId = created.body.room.id
     const invited = await call('POST', `/rooms/${roomId}/invitations`, { targetUserId: bob.userId }, alice.token)
     await call('POST', `/invitations/${invited.body.invitation.id}/accept`, {}, bob.token)
@@ -154,12 +155,37 @@ test('creating a task requires membership of the room on both sides', async () =
   })
 })
 
-test('a task to yourself is refused, because that is what your own chat is for', async () => {
-  await withHub(async ({ delegation, askTask }) => {
-    const { alice, roomId } = await delegation()
-    const self = await askTask(alice, roomId, alice, 'x')
-    assert.equal(self.status, 409)
-    assert.equal(self.body.error.code, 'SELF_TASK')
+test('a task to your own Bot is accepted, and only you decide it', async () => {
+  await withHub(async ({ delegation, call, person }) => {
+    const { alice, bob, roomId } = await delegation()
+    // Alice publishes her own Bot and adds it to the room, exactly as a member does before asking
+    // it for work; room membership is a separate fact from directory visibility.
+    await call('POST', '/bots', { botId: 'mine', displayName: 'Mine', visibility: 'room' }, alice.token)
+    const joined = await call('POST', `/rooms/${roomId}/bots`, { botId: 'mine' }, alice.token)
+    assert.equal(joined.status, 201, joined.raw)
+
+    // A workgroup carries the original group chat's basic ability to put your own Bot to work, so
+    // addressing work to yourself is a request, not an error.
+    const created = await call('POST', `/rooms/${roomId}/tasks`, { ownerUserId: alice.userId, targetBotId: 'mine', description: '整理本周纪要' }, alice.token)
+    assert.equal(created.status, 201, created.raw)
+    assert.equal(created.body.task.state, 'PENDING_APPROVAL')
+    assert.equal(created.body.task.requesterUserId, alice.userId)
+    assert.equal(created.body.task.ownerUserId, alice.userId)
+
+    // Being the requester grants nothing: the task is still undecided, and somebody else cannot
+    // decide it on Alice's behalf.
+    assert.equal('approval' in created.body.task, false)
+    const decidedByBob = await call('POST', `/tasks/${created.body.task.id}/decision`, { decision: 'approve', expectedVersion: 0 }, bob.token)
+    assert.equal(decidedByBob.status, 403)
+
+    // Alice decides what she asked for, with the same scope fields any approval needs.
+    const decided = await call('POST', `/tasks/${created.body.task.id}/decision`, {
+      decision: 'approve', expectedVersion: 0, assignmentMode: 'existing_bot', assignedBotId: 'mine',
+    }, alice.token)
+    assert.equal(decided.status, 200, decided.raw)
+    assert.equal(decided.body.task.state, 'APPROVED')
+    assert.equal(decided.body.task.approval.scope.requesterUserId, alice.userId)
+    assert.equal(decided.body.task.approval.scope.ownerUserId, alice.userId)
   })
 })
 

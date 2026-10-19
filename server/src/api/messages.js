@@ -14,10 +14,12 @@
 import {
   MessageError, sendMessage, readMessages, latestSeq, publicMessage, proposeTasksForMentions,
 } from '../modules/messages/store.js'
-import { RoomError } from '../modules/rooms/store.js'
+import { addReaction, removeReaction, reactionsFor } from '../modules/messages/reactions.js'
+import { RoomError, requireMember } from '../modules/rooms/store.js'
 import { TaskError, publicTask } from '../modules/tasks/store.js'
 import { taskFailure } from './tasks.js'
 import { messageKeys } from '../security/ratelimit-store.js'
+import { makeEvent } from '../realtime/events.js'
 
 function messageFailure(reply, error) {
   if (error instanceof RoomError) {
@@ -37,6 +39,11 @@ function messageFailure(reply, error) {
   // mention into a 500.
   if (error instanceof TaskError) return taskFailure(reply, error)
   throw error
+}
+
+/** Reactions reuse the message route's statuses: a bad request stays a 400, a stranger a 404. */
+function reactionFailure(reply, error) {
+  return messageFailure(reply, error)
 }
 
 export function makeMessageRoutes({ requireAuth }) {
@@ -94,21 +101,81 @@ export function makeMessageRoutes({ requireAuth }) {
     fastify.get('/api/v1/rooms/:roomId/messages', { preHandler: requireAuth }, async (request, reply) => {
       const query = request.query ?? {}
       try {
+        // `beforeSeq` is absent rather than defaulted: the store tells "read forward from 0" apart from
+        // "read backwards", and passing 0 for a missing cursor would make the second request shape
+        // look like the first.
+        const beforeSeq = query.beforeSeq === undefined ? undefined : Number(query.beforeSeq)
         const afterSeq = query.afterSeq === undefined ? 0 : Number(query.afterSeq)
         const limit = query.limit === undefined ? undefined : Number(query.limit)
         const page = readMessages(db, {
           roomId: request.params.roomId,
           userId: request.auth.user.id,
           afterSeq,
+          ...(beforeSeq === undefined ? {} : { beforeSeq }),
           ...(limit === undefined ? {} : { limit }),
         })
+        // One query for the whole page's reactions, attached before the wire projection so a reader
+        // sees them beside the messages they belong to.
+        const reactions = reactionsFor(db, page.messages.map(message => message.id))
         return reply.code(200).send({
-          messages: page.messages.map(publicMessage),
-          nextAfterSeq: page.nextAfterSeq,
+          messages: page.messages.map(message => publicMessage({
+            ...message,
+            ...(reactions.has(message.id) ? { reactions: reactions.get(message.id) } : {}),
+          })),
+          ...(page.nextBeforeSeq === undefined ? { nextAfterSeq: page.nextAfterSeq } : { nextBeforeSeq: page.nextBeforeSeq }),
           hasMore: page.hasMore,
         })
       } catch (error) {
         return messageFailure(reply, error)
+      }
+    })
+
+    /**
+     * Add a reaction to one message.
+     *
+     * Membership is the gate; the message must be in the room. The answer carries the message's whole
+     * reaction set so a client can render what the Hub stored rather than its own guess, and the same
+     * set is published to the room — reactions are shared, so everyone sees the same result.
+     */
+    fastify.post('/api/v1/rooms/:roomId/messages/:messageId/reactions', { preHandler: requireAuth }, async (request, reply) => {
+      const body = request.body ?? {}
+      try {
+        requireMember(db, { roomId: request.params.roomId, userId: request.auth.user.id })
+        const result = addReaction(db, {
+          roomId: request.params.roomId,
+          messageId: request.params.messageId,
+          userId: request.auth.user.id,
+          emoji: body.emoji,
+        })
+        fastify.hub.realtime.publishToRoom(request.params.roomId,
+          makeEvent('message.reaction_changed', { messageId: result.messageId, reactions: result.reactions }, { roomId: request.params.roomId }))
+        return reply.code(200).send({ messageId: result.messageId, reactions: result.reactions })
+      } catch (error) {
+        return reactionFailure(reply, error)
+      }
+    })
+
+    /**
+     * Withdraw one's own reaction.
+     *
+     * Only the caller's own row is removed; another member's reaction is left as it was. Removing a
+     * reaction that is not there is a success, because the caller's intent ("my reaction is gone") is
+     * already true.
+     */
+    fastify.delete('/api/v1/rooms/:roomId/messages/:messageId/reactions/:emoji', { preHandler: requireAuth }, async (request, reply) => {
+      try {
+        requireMember(db, { roomId: request.params.roomId, userId: request.auth.user.id })
+        const result = removeReaction(db, {
+          roomId: request.params.roomId,
+          messageId: request.params.messageId,
+          userId: request.auth.user.id,
+          emoji: decodeURIComponent(request.params.emoji),
+        })
+        fastify.hub.realtime.publishToRoom(request.params.roomId,
+          makeEvent('message.reaction_changed', { messageId: result.messageId, reactions: result.reactions }, { roomId: request.params.roomId }))
+        return reply.code(200).send({ messageId: result.messageId, reactions: result.reactions })
+      } catch (error) {
+        return reactionFailure(reply, error)
       }
     })
 

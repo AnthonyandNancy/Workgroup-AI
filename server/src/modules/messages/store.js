@@ -66,12 +66,21 @@ export const ATTACHMENTS_MAX = 20
  * @returns the normalized array, or `undefined` when there are none (so the column stays NULL rather
  *   than holding `[]`, and a reader can tell "no mentions" from "not recorded").
  */
-export function assertMentions(db, { roomId, mentions }) {
+export function assertMentions(db, { roomId, mentions, requesterUserId }) {
   if (mentions === undefined || mentions === null) return undefined
   if (!Array.isArray(mentions)) throw new MessageError('mentions must be a list', 'INVALID_MENTIONS')
   if (mentions.length === 0) return undefined
   if (mentions.length > MENTIONS_MAX) {
     throw new MessageError(`A message may mention at most ${MENTIONS_MAX} people`, 'INVALID_MENTIONS')
+  }
+  // `@all` summons the room, so it is not a mention of anybody in particular and cannot be combined
+  // with one: a list holding both would make "everyone and also this Bot" ambiguous about whether the
+  // named Bot is called once or twice.
+  const all = mentions.filter(entry => entry?.all === true)
+  if (all.length > 0) {
+    if (mentions.length > 1) throw new MessageError('@all cannot be combined with other mentions', 'INVALID_MENTIONS')
+    assertCanSummonEveryone(db, { roomId, requesterUserId })
+    return [{ all: true }]
   }
   const seen = new Set()
   return mentions.map((entry) => {
@@ -98,6 +107,27 @@ export function assertMentions(db, { roomId, mentions }) {
     }
     return { userId, botId }
   })
+}
+
+/**
+ * Whether the caller may summon every Bot in the room.
+ *
+ * The same standing the original group chat gives its administrator: the room owner, a room admin, or
+ * whoever owns the room's leading Bot. Everyone else names the members they mean — a plain member who
+ * could summon the whole room could start work on every colleague's machine at once.
+ *
+ * @throws {MessageError} `MENTION_ALL_NOT_ALLOWED` when the caller's standing does not cover it.
+ */
+function assertCanSummonEveryone(db, { roomId, requesterUserId }) {
+  const membership = db.prepare('SELECT role FROM room_members WHERE room_id = ? AND user_id = ? AND removed_at IS NULL')
+    .get(roomId, requesterUserId)
+  if (membership !== undefined && (membership.role === 'owner' || membership.role === 'admin')) return
+  const leads = db.prepare(`SELECT 1 AS yes FROM rooms r
+    JOIN room_bots rb ON rb.room_id = r.id AND rb.owner_user_id = r.admin_bot_owner_user_id
+      AND rb.bot_id = r.admin_bot_id AND rb.removed_at IS NULL AND rb.is_chief = 1
+    WHERE r.id = ? AND r.admin_bot_owner_user_id = ?`).get(roomId, requesterUserId)
+  if (leads !== undefined) return
+  throw new MessageError('Only the workgroup owner, an admin, or its administrator\'s owner can summon everyone', 'MENTION_ALL_NOT_ALLOWED')
 }
 
 /**
@@ -166,8 +196,13 @@ function audit(db, { actorUserId, actorDeviceId, eventType, objectType, objectId
  * write: a reply that pointed at another room's message would leak the existence of a room the
  * sender may not be in, and quoting it back would leak its content.
  *
+ * A message may be sent on a Bot's behalf. `senderBotId` names which of the sender's own Bots spoke;
+ * it is refused when that Bot is not in the sender's directory, because a message claiming a Bot its
+ * owner never published is a claim nobody can check. The row still records the person as the sender,
+ * so a Bot's words stay attributable to whoever owns it.
+ *
  * @param {object} db
- * @param {{ roomId: string, senderUserId: string, senderDeviceId?: string, clientMessageId: string, body: string, replyToMessageId?: string, now?: Date }} options
+ * @param {{ roomId: string, senderUserId: string, senderDeviceId?: string, clientMessageId: string, body: string, replyToMessageId?: string, senderBotId?: string, now?: Date }} options
  */
 export function sendMessage(db, options) {
   const { roomId, senderUserId, senderDeviceId, clientMessageId, now = new Date() } = options
@@ -175,7 +210,7 @@ export function sendMessage(db, options) {
   const key = assertClientMessageId(clientMessageId)
   const replyToMessageId = assertReplyTarget(db, { roomId, replyToMessageId: options.replyToMessageId })
   // Checked before the membership check, so a malformed list is a 400 whatever else is wrong.
-  const mentions = assertMentions(db, { roomId, mentions: options.mentions })
+  const mentions = assertMentions(db, { roomId, mentions: options.mentions, requesterUserId: senderUserId })
   const attachments = assertAttachments(db, { roomId, attachments: options.attachments })
 
   // A dissolved workgroup refuses new messages. Checked here rather than in the route so every
@@ -189,6 +224,18 @@ export function sendMessage(db, options) {
   // The membership check happens before the transaction so a non-member cannot take the
   // write lock for a room they cannot post to.
   requireMember(db, { roomId, userId: senderUserId })
+
+  // A Bot sender is checked against the sender's own directory: the id comes from the server, never
+  // from a request body, but a stale one must still be refused rather than stored as a name no
+  // reader can resolve. Membership of the room is required too, so a Bot that left cannot speak.
+  const senderBotId = options.senderBotId
+  if (senderBotId !== undefined && senderBotId !== null) {
+    const owned = db.prepare('SELECT 1 AS yes FROM bot_directory WHERE owner_user_id = ? AND bot_id = ?').get(senderUserId, senderBotId)
+    if (owned === undefined) throw new MessageError('That Bot is not in your directory', 'BOT_NOT_IN_DIRECTORY')
+    if (!isBotInRoom(db, { roomId, ownerUserId: senderUserId, botId: senderBotId })) {
+      throw new MessageError('That Bot is not a member of this workgroup', 'BOT_NOT_IN_ROOM')
+    }
+  }
 
   const existing = db.prepare(`SELECT * FROM messages
     WHERE room_id = ? AND sender_user_id = ? AND client_message_id = ?`).get(roomId, senderUserId, key)
@@ -205,9 +252,9 @@ export function sendMessage(db, options) {
     if (room === undefined) throw new MessageError('No such room', 'NO_SUCH_ROOM')
     const roomSeq = room.next_seq
     db.prepare('UPDATE rooms SET next_seq = ? WHERE id = ?').run(roomSeq + 1, roomId)
-    db.prepare(`INSERT INTO messages (id, room_id, room_seq, sender_user_id, client_message_id, body, reply_to_message_id, mentions_json, attachments_json, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, roomId, roomSeq, senderUserId, key, body, replyToMessageId ?? null,
+    db.prepare(`INSERT INTO messages (id, room_id, room_seq, sender_user_id, sender_bot_id, client_message_id, body, reply_to_message_id, mentions_json, attachments_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, roomId, roomSeq, senderUserId, senderBotId ?? null, key, body, replyToMessageId ?? null,
         mentions === undefined ? null : JSON.stringify(mentions),
         attachments === undefined ? null : JSON.stringify(attachments),
         createdAt)
@@ -256,19 +303,58 @@ function assertReplyTarget(db, { roomId, replyToMessageId }) {
 /**
  * Read one page of a room's history.
  *
- * `afterSeq` is the reconnect path: a client sends the highest sequence it has seen and
- * receives everything later, ordered. `limit` is bounded so one request cannot pull an
- * entire room into memory.
+ * Two directions, because they answer two different questions:
+ *
+ *   * `afterSeq` is the reconnect path: a client sends the highest sequence it has seen and receives
+ *     everything later, in order. A client that keeps `nextAfterSeq` cannot skip a message even across
+ *     an empty page.
+ *   * `beforeSeq` is the history path: a reader scrolling up sends the lowest sequence it holds and
+ *     receives the page before it. `nextBeforeSeq` is the lowest sequence in that page and
+ *     `hasMore` says whether anything precedes it. Reading backwards in the query and reversing the
+ *     result is what makes "the page before N" the *nearest* page rather than the oldest one.
+ *
+ * The two are mutually exclusive: one request is either catching up or looking back, and a request
+ * that asked for both would have no single answer for "which page".
  */
-export function readMessages(db, { roomId, userId, afterSeq = 0, limit = MESSAGE_PAGE_MAX }) {
+export function readMessages(db, { roomId, userId, afterSeq = 0, beforeSeq, limit = MESSAGE_PAGE_MAX }) {
   requireMember(db, { roomId, userId })
-  if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) throw new MessageError('afterSeq must be a non-negative integer', 'INVALID_CURSOR')
+  const lookingBack = beforeSeq !== undefined && beforeSeq !== null
+  if (lookingBack && (afterSeq !== 0 || !Number.isSafeInteger(beforeSeq) || beforeSeq < 1)) {
+    throw new MessageError('Read either after a sequence or before one, and a cursor must be a positive integer', 'INVALID_CURSOR')
+  }
+  if (!lookingBack && (!Number.isSafeInteger(afterSeq) || afterSeq < 0)) {
+    throw new MessageError('afterSeq must be a non-negative integer', 'INVALID_CURSOR')
+  }
   const pageSize = Number.isSafeInteger(limit) ? Math.min(Math.max(limit, 1), MESSAGE_PAGE_MAX) : MESSAGE_PAGE_MAX
-  const rows = db.prepare(`SELECT * FROM messages WHERE room_id = ? AND room_seq > ? ORDER BY room_seq LIMIT ?`)
-    .all(roomId, afterSeq, pageSize)
+  // The sender's name travels with every page, not only with the send that produced it: a reader
+  // reloading the room has no other way to learn who wrote a line, and a Bot's line would otherwise
+  // have to show a raw id.
+  const select = `SELECT m.*,
+      u.display_name AS sender_display_name,
+      d.display_name AS sender_bot_display_name
+    FROM messages m
+    JOIN users u ON u.id = m.sender_user_id
+    LEFT JOIN bot_directory d
+      ON d.owner_user_id = m.sender_user_id AND d.bot_id = m.sender_bot_id`
+  if (lookingBack) {
+    const rows = db.prepare(`${select}
+      WHERE m.room_id = ? AND m.room_seq < ?
+      ORDER BY m.room_seq DESC
+      LIMIT ?`).all(roomId, beforeSeq, pageSize).reverse()
+    const first = rows.length > 0 ? rows[0].room_seq : beforeSeq
+    return {
+      messages: rows,
+      nextBeforeSeq: first,
+      // "Is there anything before this page" is answered by the page being full: a short page means
+      // the room's first message is already in it.
+      hasMore: rows.length === pageSize,
+    }
+  }
+  const rows = db.prepare(`${select}
+    WHERE m.room_id = ? AND m.room_seq > ?
+    ORDER BY m.room_seq
+    LIMIT ?`).all(roomId, afterSeq, pageSize)
   const last = rows.length > 0 ? rows[rows.length - 1].room_seq : afterSeq
-  // `nextAfterSeq` is what the client should send next; it equals the highest sequence in
-  // this page, so a client that keeps it cannot skip a message even across an empty page.
   return { messages: rows, nextAfterSeq: last, hasMore: rows.length === pageSize }
 }
 
@@ -297,6 +383,14 @@ export function publicMessage(message) {
     roomSeq: message.room_seq,
     senderUserId: message.sender_user_id,
     ...(message.sender_display_name === undefined ? {} : { senderDisplayName: message.sender_display_name }),
+    // A Bot's own line names the Bot, so a reader sees who spoke rather than the owner it is
+    // attributed to. Omitted entirely for a person's message, like every other optional field here.
+    ...(message.sender_bot_id === undefined || message.sender_bot_id === null
+      ? {}
+      : {
+        senderBotId: message.sender_bot_id,
+        ...(message.sender_bot_display_name === undefined ? {} : { senderBotDisplayName: message.sender_bot_display_name }),
+      }),
     clientMessageId: message.client_message_id,
     body: message.body,
     // Only present on a reply, so a reader can tell a reply from a message that happens to follow
@@ -309,6 +403,9 @@ export function publicMessage(message) {
     // does not have to treat null and undefined as different.
     ...(parseList(message.mentions_json) === undefined ? {} : { mentions: parseList(message.mentions_json) }),
     ...(parseList(message.attachments_json) === undefined ? {} : { attachments: parseList(message.attachments_json) }),
+    // Supplied by the caller, which reads a page's reactions in one query (see reactions.js). A page
+    // with no reactions omits the field, like every other absent list here.
+    ...(Array.isArray(message.reactions) && message.reactions.length > 0 ? { reactions: message.reactions } : {}),
     createdAt: message.created_at,
   }
 }
@@ -356,18 +453,40 @@ export const messageInternals = { BODY_MAX, CLIENT_MESSAGE_ID_MIN, CLIENT_MESSAG
  */
 export function proposeTasksForMentions(db, { roomId, requesterUserId, requesterDeviceId, message, text, now = new Date() }) {
   const mentions = parseList(message?.mentions_json) ?? []
+  // `@all` becomes one task per Bot in the room — except the room's leader. The leader is not asked
+  // for work through a task: it answers the message in its own group session, which is what "the
+  // administrator answers" means here. Making it a task as well would ask the same Bot twice.
+  const targets = mentions.some(mention => mention.all === true)
+    ? summonableBots(db, roomId)
+    : mentions.filter(mention => mention.botId !== undefined)
+      .map(mention => ({ ownerUserId: mention.userId, botId: mention.botId }))
   const proposals = []
-  for (const mention of mentions) {
-    if (mention.botId === undefined) continue
+  for (const target of targets) {
     proposals.push(createTask(db, {
       roomId,
       requesterUserId,
       requesterDeviceId,
-      ownerUserId: mention.userId,
-      targetBotId: mention.botId,
+      ownerUserId: target.ownerUserId,
+      targetBotId: target.botId,
       description: text,
       now,
     }))
   }
   return proposals
+}
+
+/**
+ * Every Bot `@all` summons: the room's active Bot members, less its leader.
+ *
+ * Read from `room_bots` rather than from the directory, because membership in this room is the fact
+ * that decides who is asked. The leader is filtered out here rather than at the call site so the rule
+ * "the leader answers, it is not tasked" lives in one place.
+ */
+function summonableBots(db, roomId) {
+  return db.prepare(`SELECT rb.owner_user_id AS ownerUserId, rb.bot_id AS botId
+    FROM room_bots rb
+    JOIN rooms r ON r.id = rb.room_id
+    WHERE rb.room_id = ? AND rb.removed_at IS NULL
+      AND NOT (rb.owner_user_id = r.admin_bot_owner_user_id AND rb.bot_id = r.admin_bot_id AND rb.is_chief = 1)
+    ORDER BY rb.owner_user_id, rb.bot_id`).all(roomId)
 }

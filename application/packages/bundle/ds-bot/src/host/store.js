@@ -16,7 +16,12 @@ export function install(rt) {
   // `adopt` clears every key before assigning the file's contents, so a field that is missing
   // here is a field the team file cannot hold: a task Session created before a reload would be
   // forgotten by the reload, which is exactly the persistence this record exists to provide.
-  const state = { version: 1, mainBotIds: [], bots: {}, rooms: {}, agents: {}, capabilities: { items: {} }, exchanges: [], exchangeTurns: {}, questions: {}, prefs: {}, taskSessions: {}, taskGrants: {}, revision: 0 }
+  //
+  // `workgroupRooms` is here for the same reason. A workgroup's leading Bot keeps one long-lived
+  // Session per room, and that record marks how far it has delivered. A watermark that did not
+  // survive a reload would make the Bot answer messages it already answered, so the record belongs
+  // in the saved shape rather than being added by `workgroup-turns` on first use.
+  const state = { version: 1, mainBotIds: [], bots: {}, rooms: {}, agents: {}, capabilities: { items: {} }, exchanges: [], exchangeTurns: {}, questions: {}, prefs: {}, taskSessions: {}, taskGrants: {}, workgroupRooms: {}, revision: 0 }
   let loaded = null
   let writing = Promise.resolve()
   const { warn } = rt
@@ -322,6 +327,15 @@ export function install(rt) {
         for (const segment of segments) pastOwners.set(segment.sessionId, { botId, roomId: room.id })
       }
       for (const [botId, sessionId] of Object.entries(room.sessions ?? {})) groupOwners.set(sessionId, { botId, roomId: room.id })
+    }
+    // A workgroup's leading Bot speaks in a room the Hub owns, so its Session is not in `state.rooms`.
+    // It is indexed here anyway, because `approvals.js` answers a group Session's tool requests with a
+    // card in that group: a leader whose Session resolved to nothing would wait for an approval nobody
+    // can see.
+    for (const [roomId, entry] of Object.entries(state.workgroupRooms ?? {})) {
+      for (const [botId, sessionId] of Object.entries(entry.sessions ?? {})) {
+        groupOwners.set(sessionId, { botId, roomId })
+      }
     }
     // The agents module owns the DSH Agent session index; it installs after this.
     rt.indexAgents?.()

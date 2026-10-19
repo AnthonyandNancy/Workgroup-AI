@@ -7,6 +7,7 @@ import { loadConfig } from '../src/config/index.js'
 import { openDatabase } from '../src/db/index.js'
 import { migrate } from '../src/db/migrate.js'
 import { createServer } from '../src/server.js'
+import { makeWorkgroup } from './helpers/workgroup.js'
 
 const SIGNING_KEY = 'h16-test-signing-key-long-enough-for-hs256'
 
@@ -49,7 +50,7 @@ async function withHub(run) {
 test('room notice is readable and writable by an admin', async () => {
   await withHub(async ({ call, person }) => {
     const alice = await person('alice')
-    const created = await call('POST', '/rooms', { name: 'Finance', kind: 'workgroup' }, alice.token)
+    const created = await makeWorkgroup(call, alice, { name: 'Finance' })
     assert.equal(created.status, 201, created.raw)
     const id = created.body.room.id
     const patched = await call('PATCH', `/rooms/${id}`, { notice: 'Read this first' }, alice.token)
@@ -64,7 +65,7 @@ test('room notice is readable and writable by an admin', async () => {
 test('a dissolved room refuses notice changes', async () => {
   await withHub(async ({ call, person }) => {
     const alice = await person('alice')
-    const created = await call('POST', '/rooms', { name: 'Finance', kind: 'workgroup' }, alice.token)
+    const created = await makeWorkgroup(call, alice, { name: 'Finance' })
     const id = created.body.room.id
     const dissolved = await call('POST', `/rooms/${id}/dissolve`, {}, alice.token)
     assert.equal(dissolved.status, 200, dissolved.raw)
@@ -77,7 +78,7 @@ test('a dissolved room refuses notice changes', async () => {
 test('a member can add an owned Bot and remove it again', async () => {
   await withHub(async ({ call, person }) => {
     const alice = await person('alice')
-    const room = await call('POST', '/rooms', { name: 'Finance', kind: 'workgroup' }, alice.token)
+    const room = await makeWorkgroup(call, alice, { name: 'Finance' })
     assert.equal(room.status, 201, room.raw)
     const roomId = room.body.room.id
     const published = await call('POST', '/bots', { botId: 'writer', displayName: 'Writer', visibility: 'private' }, alice.token)
@@ -85,12 +86,13 @@ test('a member can add an owned Bot and remove it again', async () => {
     const added = await call('POST', `/rooms/${roomId}/bots`, { botId: 'writer' }, alice.token)
     assert.equal(added.status, 201, added.raw)
     const opened = await call('GET', `/rooms/${roomId}`, undefined, alice.token)
-    assert.equal(opened.body.bots.length, 1)
-    assert.equal(opened.body.bots[0].botId, 'writer')
+    assert.ok(opened.body.bots.some(bot => bot.botId === 'writer'))
+    assert.equal(opened.body.bots.length, 3)
     const removed = await call('DELETE', `/rooms/${roomId}/bots/${alice.userId}/writer`, undefined, alice.token)
     assert.equal(removed.status, 200, removed.raw)
     const after = await call('GET', `/rooms/${roomId}`, undefined, alice.token)
-    assert.equal(after.body.bots.length, 0)
+    assert.equal(after.body.bots.some(bot => bot.botId === 'writer'), false)
+    assert.equal(after.body.bots.length, 2)
   })
 })
 
@@ -98,7 +100,7 @@ test('another member needs the Bot owner to accept a Bot invitation', async () =
   await withHub(async ({ call, person }) => {
     const alice = await person('alice')
     const bob = await person('bob')
-    const room = await call('POST', '/rooms', { name: 'Finance', kind: 'workgroup' }, alice.token)
+    const room = await makeWorkgroup(call, alice, { name: 'Finance' })
     const roomId = room.body.room.id
     const invited = await call('POST', `/rooms/${roomId}/invitations`, { targetUserId: bob.userId }, alice.token)
     assert.equal(invited.status, 201, invited.raw)
@@ -121,11 +123,11 @@ test('another member needs the Bot owner to accept a Bot invitation', async () =
 test('creating a workgroup adds the creator’s Bots in the same transaction', async () => {
   await withHub(async ({ call, person }) => {
     const alice = await person('alice')
-    assert.equal((await call('POST', '/bots', { botId: 'analyst', displayName: 'Analyst', visibility: 'private' }, alice.token)).status, 201)
+    assert.equal((await call('POST', '/bots', { botId: 'analyst', displayName: 'Analyst', visibility: 'private', isChief: true }, alice.token)).status, 201)
     assert.equal((await call('POST', '/bots', { botId: 'writer', displayName: 'Writer', visibility: 'private' }, alice.token)).status, 201)
 
     const created = await call('POST', '/rooms', {
-      name: 'Finance', kind: 'workgroup', botIds: ['analyst', 'writer', 'analyst'],
+      name: 'Finance', kind: 'workgroup', botIds: ['analyst', 'writer', 'analyst'], adminBotId: 'analyst',
     }, alice.token)
     assert.equal(created.status, 201, created.raw)
     assert.deepEqual(created.body.bots.map(bot => bot.botId).sort(), ['analyst', 'writer'])
@@ -137,7 +139,7 @@ test('creating a workgroup adds the creator’s Bots in the same transaction', a
     // the request and try again.
     const before = await call('GET', '/rooms', undefined, alice.token)
     const refused = await call('POST', '/rooms', {
-      name: 'Broken', kind: 'workgroup', botIds: ['analyst', 'never-published'],
+      name: 'Broken', kind: 'workgroup', botIds: ['analyst', 'never-published'], adminBotId: 'analyst',
     }, alice.token)
     assert.equal(refused.status, 404, refused.raw)
     assert.equal(refused.body.error.code, 'NO_SUCH_BOT')
@@ -151,7 +153,7 @@ test('declining a Bot invitation answers with the public invitation and resolves
   await withHub(async ({ call, person }) => {
     const alice = await person('alice')
     const bob = await person('bob')
-    const room = await call('POST', '/rooms', { name: 'Finance', kind: 'workgroup' }, alice.token)
+    const room = await makeWorkgroup(call, alice, { name: 'Finance' })
     const roomId = room.body.room.id
     const invited = await call('POST', `/rooms/${roomId}/invitations`, { targetUserId: bob.userId }, alice.token)
     await call('POST', `/invitations/${invited.body.invitation.id}/accept`, {}, bob.token)
@@ -182,7 +184,7 @@ test('a Bot mention is accepted only after the Bot is a room member', async () =
   await withHub(async ({ call, person }) => {
     const alice = await person('alice')
     const bob = await person('bob')
-    const room = await call('POST', '/rooms', { name: 'Finance', kind: 'workgroup' }, alice.token)
+    const room = await makeWorkgroup(call, alice, { name: 'Finance' })
     const roomId = room.body.room.id
     const invited = await call('POST', `/rooms/${roomId}/invitations`, { targetUserId: bob.userId }, alice.token)
     await call('POST', `/invitations/${invited.body.invitation.id}/accept`, {}, bob.token)
@@ -223,7 +225,7 @@ test('the room list carries a batched summary of members, Bots, last message and
   await withHub(async ({ call, person }) => {
     const alice = await person('alice')
     const bob = await person('bob')
-    const room = await call('POST', '/rooms', { name: 'Finance', kind: 'workgroup' }, alice.token)
+    const room = await makeWorkgroup(call, alice, { name: 'Finance' })
     const roomId = room.body.room.id
     const invited = await call('POST', `/rooms/${roomId}/invitations`, { targetUserId: bob.userId }, alice.token)
     await call('POST', `/invitations/${invited.body.invitation.id}/accept`, {}, bob.token)
@@ -235,7 +237,7 @@ test('the room list carries a batched summary of members, Bots, last message and
     const before = await call('GET', '/rooms', undefined, alice.token)
     const empty = before.body.rooms.find(item => item.id === roomId)
     assert.equal(empty.memberCount, 2)
-    assert.equal(empty.botCount, 2)
+    assert.equal(empty.botCount, 4)
     assert.equal(empty.lastMessageAt, null)
     assert.equal(empty.lastMessagePreview, '')
     assert.equal(empty.lastMessageSeq, 0)
@@ -261,12 +263,12 @@ test('the room list carries a batched summary of members, Bots, last message and
     }, bob.token)
     assert.equal(third.status, 201, third.raw)
 
-    const other = await call('POST', '/rooms', { name: 'Other', kind: 'workgroup' }, alice.token)
+    const other = await makeWorkgroup(call, alice, { name: 'Other' })
     assert.equal(other.status, 201, other.raw)
     const listed = await call('GET', '/rooms', undefined, alice.token)
     const summary = listed.body.rooms.find(item => item.id === roomId)
     assert.equal(summary.memberCount, 2)
-    assert.equal(summary.botCount, 2)
+    assert.equal(summary.botCount, 4)
     assert.equal(summary.lastMessageAt, third.body.message.createdAt)
     assert.equal(summary.lastMessageSeq, third.body.message.roomSeq)
     const expectedPreview = finalBody.replace(/\s+/g, ' ').trim().slice(0, 80)
@@ -289,11 +291,11 @@ test('the room list carries a batched summary of members, Bots, last message and
 test('a room with no messages or Bots has a zero summary', async () => {
   await withHub(async ({ call, person }) => {
     const alice = await person('alice')
-    const room = await call('POST', '/rooms', { name: 'Quiet', kind: 'workgroup' }, alice.token)
+    const room = await makeWorkgroup(call, alice, { name: 'Quiet' })
     const listed = await call('GET', '/rooms', undefined, alice.token)
     const summary = listed.body.rooms.find(item => item.id === room.body.room.id)
     assert.equal(summary.memberCount, 1)
-    assert.equal(summary.botCount, 0)
+    assert.equal(summary.botCount, 2)
     assert.equal(summary.lastMessageAt, null)
     assert.equal(summary.lastMessagePreview, '')
     assert.equal(summary.lastMessageSeq, 0)
@@ -306,7 +308,7 @@ test('Bot candidates include own and visible member Bots and mark room membershi
     const alice = await person('alice')
     const bob = await person('bob')
     const carol = await person('carol')
-    const room = await call('POST', '/rooms', { name: 'Finance', kind: 'workgroup' }, alice.token)
+    const room = await makeWorkgroup(call, alice, { name: 'Finance' })
     const roomId = room.body.room.id
     const invited = await call('POST', `/rooms/${roomId}/invitations`, { targetUserId: bob.userId }, alice.token)
     await call('POST', `/invitations/${invited.body.invitation.id}/accept`, {}, bob.token)
@@ -361,7 +363,7 @@ test('Bot candidates answer a non-member with the room 404', async () => {
   await withHub(async ({ call, person }) => {
     const alice = await person('alice')
     const carol = await person('carol')
-    const room = await call('POST', '/rooms', { name: 'Finance', kind: 'workgroup' }, alice.token)
+    const room = await makeWorkgroup(call, alice, { name: 'Finance' })
     const candidates = await call('GET', `/rooms/${room.body.room.id}/bot-candidates`, undefined, carol.token)
     assert.equal(candidates.status, 404, candidates.raw)
     assert.equal(candidates.body.error.code, 'NO_SUCH_ROOM')
@@ -372,7 +374,7 @@ test('removing a member removes their Bots and cancels their open tasks', async 
   await withHub(async ({ call, person }) => {
     const alice = await person('alice')
     const bob = await person('bob')
-    const room = await call('POST', '/rooms', { name: 'Finance', kind: 'workgroup' }, alice.token)
+    const room = await makeWorkgroup(call, alice, { name: 'Finance' })
     const roomId = room.body.room.id
     const invited = await call('POST', `/rooms/${roomId}/invitations`, { targetUserId: bob.userId }, alice.token)
     await call('POST', `/invitations/${invited.body.invitation.id}/accept`, {}, bob.token)
@@ -387,7 +389,8 @@ test('removing a member removes their Bots and cancels their open tasks', async 
     const removed = await call('POST', `/rooms/${roomId}/members/${bob.userId}/remove`, {}, alice.token)
     assert.equal(removed.status, 200, removed.raw)
     const opened = await call('GET', `/rooms/${roomId}`, undefined, alice.token)
-    assert.equal(opened.body.bots.length, 0)
+    assert.equal(opened.body.bots.some(bot => bot.botId === 'writer'), false)
+    assert.equal(opened.body.bots.length, 2)
     const tasks = await call('GET', `/rooms/${roomId}/tasks`, undefined, alice.token)
     assert.equal(tasks.body.tasks[0].state, 'CANCELLED')
   })

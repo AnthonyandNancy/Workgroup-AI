@@ -30,6 +30,7 @@ import { loadConfig } from '../src/config/index.js'
 import { openDatabase } from '../src/db/index.js'
 import { migrate } from '../src/db/migrate.js'
 import { createServer } from '../src/server.js'
+import { makeWorkgroup } from './helpers/workgroup.js'
 
 const SIGNING_KEY = 'd-dissolve-test-signing-key-long-enough'
 
@@ -77,7 +78,7 @@ async function withHub(run) {
 async function workgroupWithActivity(call, person) {
   const alice = await person('d-alice')
   const bob = await person('d-bob')
-  const room = await call('POST', '/rooms', { name: 'Dissolve me', kind: 'workgroup' }, alice.token)
+  const room = await makeWorkgroup(call, alice, { name: 'Dissolve me' })
   assert.equal(room.status, 201, room.raw)
   const roomId = room.body.room.id
 

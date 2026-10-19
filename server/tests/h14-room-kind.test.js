@@ -20,6 +20,7 @@ import { loadConfig } from '../src/config/index.js'
 import { openDatabase } from '../src/db/index.js'
 import { migrate } from '../src/db/migrate.js'
 import { createServer } from '../src/server.js'
+import { makeWorkgroup } from './helpers/workgroup.js'
 
 const SIGNING_KEY = 'h14-kind-test-signing-key-long-enough-for-hs256'
 
@@ -78,7 +79,7 @@ test('a room created without a kind is ordinary, so existing callers keep their 
 test('a room created as a workgroup stores and reports that kind', async () => {
   await withHub(async ({ call, person, db }) => {
     const alice = await person('alice')
-    const created = await call('POST', '/rooms', { name: 'Quarter close', kind: 'workgroup' }, alice.token)
+    const created = await makeWorkgroup(call, alice, { name: 'Quarter close' })
     assert.equal(created.status, 201, created.raw)
     assert.equal(created.body.room.kind, 'workgroup')
 
@@ -99,7 +100,7 @@ test('an unknown kind is refused rather than silently downgraded to ordinary', a
 test('reading a room and listing rooms both report the kind', async () => {
   await withHub(async ({ call, person }) => {
     const alice = await person('alice')
-    const workgroup = await call('POST', '/rooms', { name: 'Quarter close', kind: 'workgroup' }, alice.token)
+    const workgroup = await makeWorkgroup(call, alice, { name: 'Quarter close' })
     const ordinary = await call('POST', '/rooms', { name: 'Lunch' }, alice.token)
 
     const detail = await call('GET', `/rooms/${workgroup.body.room.id}`, undefined, alice.token)
@@ -116,7 +117,7 @@ test('reading a room and listing rooms both report the kind', async () => {
 test('the audit row for a created room records which kind it was', async () => {
   await withHub(async ({ call, person, db }) => {
     const alice = await person('alice')
-    const created = await call('POST', '/rooms', { name: 'Quarter close', kind: 'workgroup' }, alice.token)
+    const created = await makeWorkgroup(call, alice, { name: 'Quarter close' })
     const event = db.prepare(
       "SELECT safe_details_json FROM audit_events WHERE event_type = 'room.created' AND object_id = ?",
     ).get(created.body.room.id)

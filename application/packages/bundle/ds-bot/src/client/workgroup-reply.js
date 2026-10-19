@@ -26,7 +26,10 @@ export function replyPreview(message) {
     id: message?.id,
     // The name the Hub sent for the roster it answered against; a message from a member this copy
     // of the room has not named yet still quotes as a person rather than as nobody.
-    who: message?.senderDisplayName || message?.senderUserId || 'Unknown',
+    // A quoted Bot line names the Bot, like the bubble it came from.
+    who: message?.senderBotId !== undefined
+      ? (message?.senderBotDisplayName || message.senderBotId)
+      : (message?.senderDisplayName || message?.senderUserId || 'Unknown'),
     body: body.length > PREVIEW_MAX ? `${body.slice(0, PREVIEW_MAX)}…` : body,
   }
 }

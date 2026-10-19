@@ -41,6 +41,16 @@ export const EVENT_TYPES = Object.freeze([
   // The room's name changed. Additive in wg.v1: older clients ignore an unknown event, while a
   // client that knows it can update an open room without re-opening it.
   'room.renamed',
+  // A room's governance changed: how answers are routed, the working folder, the permission preset.
+  // One event because the settings page saves them together and a reader applies them together.
+  'room.settings_changed',
+  // Which Bot leads the room, or that none does. Separate from the settings event because it is the
+  // one governance fact a reader uses to decide who will answer, and it also changes on its own when
+  // a leader is removed from the room.
+  'room.admin_bot_changed',
+  // One message's reactions after a change, whole rather than as a delta: a reaction is per person
+  // and per emoji, so a delta would make every reader reconstruct the same set from its own state.
+  'message.reaction_changed',
 ])
 
 export class EventError extends Error {

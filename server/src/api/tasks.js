@@ -17,20 +17,22 @@
 
 import {
   TaskError,
-  createTask, decideTask, cancelTask, transition, findTask, findApprovalForTask, listTaskEvents,
+  createTask, decideTask, cancelTask, transition, findTask, findApprovalForTask, listTaskEvents, recordTaskResult,
   listTasksForRoom, listPendingForOwner, listApprovedForOwner, latestProgressReason, publicTask, publicTaskEvent,
   listTaskEventsForRoom,
 } from '../modules/tasks/store.js'
 import { RoomError, requireMember, listMembers } from '../modules/rooms/store.js'
 import { revokeGrantsForTask } from '../modules/tasks/grants.js'
+import { shareTaskArtifactsWithRoom } from '../modules/artifacts/store.js'
 import { makeEvent } from '../realtime/events.js'
+import { publicMessage, sendMessage } from '../modules/messages/store.js'
 
 /**
  * Map a task or room refusal to a response.
  *
  * Exported because the message route creates tasks when a Bot is mentioned, so it meets the same
  * refusals. Reusing this keeps one set of statuses for one set of rules; a second mapping would drift,
- * and it already did: the mention path answered 500 for `BOT_NOT_AVAILABLE` and `SELF_TASK`.
+ * and it already did: the mention path answered 500 for `BOT_NOT_AVAILABLE`.
  */
 export function taskFailure(reply, error) {
   if (error instanceof RoomError) {
@@ -53,7 +55,6 @@ export function taskFailure(reply, error) {
       case 'VERSION_CONFLICT':
       case 'ALREADY_DECIDED':
       case 'ALREADY_TERMINAL':
-      case 'SELF_TASK':
         return reply.code(409).send({ error: { code: error.code, message: error.message } })
       case 'ILLEGAL_TRANSITION':
         return reply.code(409).send({ error: { code: error.code, message: error.message } })
@@ -71,6 +72,42 @@ function publishTaskEvent(fastify, task, type, payload) {
     state: task.state,
     ...payload,
   }, { roomId: task.room_id }))
+}
+
+/**
+ * Write a shared result into the room as a message from the Bot that produced it.
+ *
+ * @returns the public message, or `undefined` when the task recorded no result text.
+ */
+function publishResultMessage(fastify, { task, senderUserId, senderDeviceId }) {
+  const text = typeof task.result_text === 'string' ? task.result_text.trim() : ''
+  if (text === '') return undefined
+  const botId = task.assigned_bot_id ?? task.target_bot_id
+  const result = sendMessage(fastify.hub.db, {
+    roomId: task.room_id,
+    senderUserId,
+    senderDeviceId,
+    clientMessageId: `task-result:${task.id}`,
+    body: text,
+    ...(botId === undefined || botId === null ? {} : { senderBotId: botId }),
+  })
+  // The stored row carries database column names; readers get the wire shape. The Bot's name is read
+  // back the same way a page read resolves it, so a live event and a reload agree.
+  const named = fastify.hub.db.prepare(`SELECT m.*,
+      u.display_name AS sender_display_name,
+      d.display_name AS sender_bot_display_name
+    FROM messages m
+    JOIN users u ON u.id = m.sender_user_id
+    LEFT JOIN bot_directory d
+      ON d.owner_user_id = m.sender_user_id AND d.bot_id = m.sender_bot_id
+    WHERE m.id = ?`).get(result.message.id)
+  const message = publicMessage(named ?? result.message)
+  // A retry of the same share finds its own message by its deterministic client id and writes
+  // nothing new, so sharing twice cannot duplicate the Bot's line.
+  if (result.duplicate !== true) {
+    fastify.hub.realtime.publishMessage(task.room_id, result.message.room_seq, message)
+  }
+  return message
 }
 
 export function makeTaskRoutes({ requireAuth }) {
@@ -328,7 +365,44 @@ export function makeTaskRoutes({ requireAuth }) {
           payload: { recipients: named.length },
         })
         publishTaskEvent(fastify, updated, 'task.shared', { recipients: [...new Set([...named, task.requester_user_id])] })
-        return reply.code(200).send({ task: publicTask(updated, { includeMachine: true }) })
+        // The files that went with this result become readable by everyone the message reaches. Sharing
+        // the text without the files would show a result nobody outside the recipient list could open.
+        const sharedArtifacts = shareTaskArtifactsWithRoom(fastify.hub.db, { taskId: updated.id, roomId: updated.room_id })
+        // Sharing is the act that publishes the result to the room, so the result becomes a message
+        // here rather than in a second route: one authorized decision, one visible outcome. The Bot
+        // that spoke is the one the owner approved for this task, named by the server so no client
+        // can put words in another Bot's mouth.
+        const spoken = publishResultMessage(fastify, {
+          task: updated,
+          senderUserId: request.auth.user.id,
+          senderDeviceId: request.auth.deviceId,
+        })
+        return reply.code(200).send({
+          task: publicTask(updated, { includeMachine: true }),
+          ...(spoken === undefined ? {} : { message: spoken }),
+          sharedArtifacts,
+        })
+      } catch (error) {
+        return taskFailure(reply, error)
+      }
+    })
+
+    /**
+     * Record what a finished task produced.
+     *
+     * Owner-only: the text describes work the owner's machine did. It is not published by this route;
+     * `share` is what turns it into a room message, which keeps "the result exists" and "the room may
+     * read it" as two separate, separately-authorized facts.
+     */
+    fastify.post('/api/v1/tasks/:taskId/result', { preHandler: requireAuth }, async (request, reply) => {
+      const body = request.body ?? {}
+      try {
+        const updated = recordTaskResult(db, {
+          taskId: request.params.taskId,
+          ownerUserId: request.auth.user.id,
+          text: body.text,
+        })
+        return reply.code(200).send({ task: publicTask(updated, { includeMachine: true, includeResult: true }) })
       } catch (error) {
         return taskFailure(reply, error)
       }

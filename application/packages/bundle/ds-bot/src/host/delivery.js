@@ -39,12 +39,16 @@ export function install(rt) {
   // exchange is recorded already too. `askedBy` is the member whose @mention called a
   // group turn (groups.js). `fromRoomId`: the group whose Session the sender wrote
   // from; the reply goes back to that Session (turns.js).
-  async function deliver({ fromId, toId, sessionId, text, role, hop = 0, replyTo, roomId, audience, note, exchangeId = randomUUID(), steer = false, deferred = false, resumed = false, retried = false, resent = false, askedBy, fromRoomId }) {
+  async function deliver({ fromId, toId, sessionId, text, role, hop = 0, replyTo, roomId, roomName, audience, note, exchangeId = randomUUID(), steer = false, deferred = false, resumed = false, retried = false, resent = false, askedBy, fromRoomId }) {
     const from = rt.botOf(fromId)
     const to = rt.botOf(toId)
     if (to === undefined) throw new Error(`Unknown Bot ${toId}`)
     const fromName = from?.name ?? 'You'
     const room = rt.roomOf(roomId)
+    // A workgroup is a room the Hub owns, so it is absent from `state.rooms` and `roomOf` cannot name
+    // it. The caller passes its name instead, which keeps this the one delivery path for both kinds of
+    // group.
+    const groupName = roomName ?? room?.name
     // Session events reject `undefined` members, so optional fields are omitted instead.
     const source = {
       kind: SOURCE_KIND,
@@ -73,7 +77,7 @@ export function install(rt) {
     // A steered message cuts into a running turn at its next step; a follow-up
     // queues for the next turn (see turns.js for how each is routed).
     const message = createUserMessage({
-      content: [{ type: 'text', text: `${headerFor(role, fromName, room?.name, audience, note, deferred, { resumed, retried })}\n${text}` }],
+      content: [{ type: 'text', text: `${headerFor(role, fromName, groupName, audience, note, deferred, { resumed, retried })}\n${text}` }],
       source,
     })
     if (steer) agent.steer(message)

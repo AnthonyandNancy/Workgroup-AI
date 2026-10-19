@@ -159,6 +159,9 @@ export function createWorkgroupHub({ bridge }) {
     dissolve: roomId => invoke('hub-dissolve', { roomId }),
     renameRoom: (roomId, patch) => invoke('hub-rename-room', { roomId, name: patch.name }),
     updateNotice: (roomId, notice) => invoke('hub-update-notice', { roomId, notice }),
+    // The three governance fields travel together because the settings form saves them one at a time
+    // but the Hub validates each against the caller's standing.
+    updateSettings: (roomId, patch) => invoke('hub-update-settings', { roomId, ...patch }),
     addBot: (roomId, botId) => invoke('hub-add-bot', { roomId, botId }),
     // The Bots a workgroup can pick from: the caller's own, plus the other members' Bots that the
     // Hub lets this user see. Membership and visibility are the Hub's decision, not the browser's.
@@ -188,6 +191,11 @@ export function createWorkgroupHub({ bridge }) {
     removeMember: (roomId, userId) => invoke('hub-kick', { roomId, userId }),
     sendMessage: (roomId, text, options = {}) => invoke('hub-send', { roomId, text, ...options }),
     messages: (roomId, options = {}) => invoke('hub-messages', { roomId, ...options }),
+    // One page of history before a sequence, for a reader scrolling up. Separate from `messages`,
+    // because the two cursors answer different questions and the Hub refuses a request that asks both.
+    messagesBefore: (roomId, beforeSeq, limit) => invoke('hub-messages-before', { roomId, beforeSeq, limit }),
+    addReaction: (roomId, messageId, emoji) => invoke('hub-reaction-add', { roomId, messageId, emoji }),
+    removeReaction: (roomId, messageId, emoji) => invoke('hub-reaction-remove', { roomId, messageId, emoji }),
     head: roomId => invoke('hub-head', { roomId }),
     directory: options => invoke('hub-directory', options ?? {}),
     tasks: roomId => invoke('hub-tasks', { roomId }),

@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { WORKGROUP_CSS } from '../src/client/workgroup-style.js'
+import { WORKGROUP_UI_CSS } from '../src/client/workgroup-ui/styles.js'
+
+// The workgroup's rules live in two sheets: the conversation surface and the sidebar rows. The
+// sidebar module imports shell packages, so its sheet is read as text rather than imported; a class
+// rendered by either surface must be styled by one of them, so both are searched.
+const SIDEBAR_SOURCE = readFileSync(new URL('../src/client/workgroup-sidebar.js', import.meta.url), 'utf8')
+const SIDEBAR_CSS = SIDEBAR_SOURCE.slice(SIDEBAR_SOURCE.indexOf('export const WORKGROUP_SIDEBAR_CSS'))
+const WORKGROUP_CSS = `${WORKGROUP_UI_CSS}
+${SIDEBAR_CSS}`
 
 // The workgroup view reuses the original room chrome, so it also reuses that chrome's class
 // convention: `bt-wg*` for this fork's own additions. A class with no rule is not a cosmetic
@@ -10,7 +18,17 @@ import { WORKGROUP_CSS } from '../src/client/workgroup-style.js'
 //
 // The list is read from the modules that use the names instead of being copied here, so a class
 // added to the view without a rule fails this test rather than shipping invisible.
-const SOURCES = ['workgroup.js', 'workgroup-pane.js']
+const SOURCES = [
+  'workgroup.js',
+  'workgroup-pane.js',
+  'workgroup-sidebar.js',
+  'workgroup-ui/index.js',
+  'workgroup-ui/composer.js',
+  'workgroup-ui/thread.js',
+  'workgroup-ui/activity.js',
+  'workgroup-ui/details.js',
+  'workgroup-ui/settings.js',
+]
 
 function classNamesUsed() {
   const names = new Set()
@@ -30,7 +48,12 @@ function classNamesUsed() {
 test('every workgroup class the view renders has a rule', () => {
   const css = WORKGROUP_CSS
   assert.equal(typeof css, 'string')
-  const missing = classNamesUsed().filter(name => !new RegExp(`\\.${name}(?![a-z-])`).test(css))
+  // `bt-wg-settings-form` is a modifier on the shared `bt-bs` card, which carries the rules; the
+  // modifier itself needs none, so it is exempt rather than demanding a duplicate rule.
+  const modifiers = new Set(['bt-wg-settings-form'])
+  const missing = classNamesUsed()
+    .filter(name => !modifiers.has(name))
+    .filter(name => !new RegExp(`\.${name}(?![a-z-])`).test(css))
   assert.deepEqual(missing, [], 'these classes would render unstyled')
 })
 

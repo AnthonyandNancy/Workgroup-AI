@@ -124,7 +124,7 @@ function BotsPage({ roster, actions, run }) {
   ]
 }
 
-function GroupsPage({ roster, actions, run, extraGroups = [] }) {
+function GroupsPage({ roster, actions, run, extraGroups = [], externalGroups = {} }) {
   const [creating, setCreating] = useState(false)
   return [
     creating
@@ -148,12 +148,28 @@ function GroupsPage({ roster, actions, run, extraGroups = [] }) {
                 admin ? h('span', { className: 'bt-tag bt-tag-admin' }, h(AdminStar), admin.name) : null,
                 room.hidden ? h('span', { className: 'bt-tag' }, t('Hidden')) : null),
               h('span', { className: 'bt-chevron' }, h(ChevronRightIcon)))
-          })),
+          }),
+      // Groups this dialog does not own, listed after the local ones: a workgroup is a different entity
+      // and says so, rather than being mixed in as if it were a local room.
+      Object.values(externalGroups).map(entry => h('button', {
+        key: entry.id,
+        type: 'button',
+        className: 'bt-set-row',
+        'data-external-group': entry.id,
+        onClick: () => actions.openSettings('groups', entry.id),
+      },
+      h('span', { className: 'bt-set-bot' },
+        h('span', { className: 'bt-row-title' }, entry.name),
+        h('span', { className: 'bt-tag' }, t('Workgroup')),
+        entry.memberCount === undefined ? null : h('span', { className: 'bt-tag' }, t('{count} members', { count: entry.memberCount })),
+        entry.pinned ? h('span', { className: 'bt-tag' }, t('Pinned')) : null,
+        entry.hidden ? h('span', { className: 'bt-tag' }, t('Hidden')) : null),
+      h('span', { className: 'bt-chevron' }, h(ChevronRightIcon))))),
   ]
 }
 
 // While `leaving`, the dialog plays its exit and takes no input.
-export function SettingsDialog({ page, id, roster, actions, useUpdate, extraGroups = [], leaving = false }) {
+export function SettingsDialog({ page, id, roster, actions, useUpdate, extraGroups = [], externalGroups = {}, renderGroup, leaving = false }) {
   const [error, setError] = useState('')
   const close = useCallback(() => actions.closeSettings(), [])
   useEscape(close)
@@ -163,16 +179,19 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, extraGrou
   // A Bot or group deleted while its form is open leaves its page on the list.
   const bot = page === 'bots' && id ? roster.byId[id] : undefined
   const room = page === 'groups' && id ? roster.roomsById[id] : undefined
+  // A workgroup is not in the local roster: it lives on the Hub. Read from the polled workgroup roster,
+  // which is what the sidebar draws from, so both surfaces describe the same room.
+  const workgroup = page === 'groups' && id && room === undefined ? externalGroups[id] : undefined
   const shown = SETTINGS_PAGES.some(([key]) => key === page) ? page : 'general'
   const usageFocus = shown === 'usage' && id ? id : null
   const label = t(SETTINGS_PAGES.find(([key]) => key === shown)[1])
-  const back = bot ? t('Back to Bots') : room ? t('Back to group chats') : usageFocus ? t('All usage') : null
+  const back = bot ? t('Back to Bots') : room || workgroup ? t('Back to group chats') : usageFocus ? t('All usage') : null
   const nav = useGlide(shown, { axis: 'y' })
   // A page enters from the right when it is one level in, from the left when it comes
   // back out, and from below beside it. Usage keeps its own entrance and its data
   // across its own levels, so they share one page.
-  const pageKey = `${shown}:${bot?.id ?? room?.id ?? ''}`
-  const depth = bot || room ? 1 : 0
+  const pageKey = `${shown}:${bot?.id ?? room?.id ?? workgroup?.id ?? ''}`
+  const depth = bot || room || workgroup ? 1 : 0
   const last = useRef({ key: pageKey, depth, move: 'up' })
   if (last.current.key !== pageKey) {
     last.current = { key: pageKey, depth, move: depth > last.current.depth ? 'in' : depth < last.current.depth ? 'out' : 'up' }
@@ -198,14 +217,20 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, extraGrou
       h('div', { className: 'bt-settings-main' },
         h('div', { className: 'bt-settings-head' },
           back ? h('button', { type: 'button', className: 'bt-icon-btn', 'aria-label': back, title: back, onClick: () => actions.openSettings(shown) }, h(ChevronLeftIcon)) : null,
-          h('h2', { key: bot?.id ?? room?.id ?? shown }, bot?.name ?? room?.name ?? label)),
+          h('h2', { key: bot?.id ?? room?.id ?? workgroup?.id ?? shown }, bot?.name ?? room?.name ?? workgroup?.name ?? label)),
         shown === 'usage' ? null : h('div', { key: pageKey, className: 'bt-settings-scroll bt-settings-page', 'data-move': last.current.move },
           errorLine,
           shown === 'general' ? h(GeneralPage, { roster, actions, run }) : null,
           bot ? h('div', { className: 'bt-settings-form' }, h(BotSettingsForm, { key: bot.id, bot, roster, actions, run })) : null,
           shown === 'bots' && !bot ? h(BotsPage, { roster, actions, run }) : null,
           room ? h('div', { className: 'bt-settings-form' }, h(GroupSettingsForm, { key: room.id, room, roster, actions, run })) : null,
-          shown === 'groups' && !room ? h(GroupsPage, { roster, actions, run, extraGroups }) : null,
+          shown === 'groups' && !room && !workgroup ? h(GroupsPage, { roster, actions, run, extraGroups, externalGroups }) : null,
+          // A group this dialog does not own (a workgroup lives on the Hub, not in the local roster)
+          // is rendered by whatever supplied it. Same pattern as `extraGroups`: the integrating
+          // surface knows what its entity is, this dialog only knows where the page goes.
+          workgroup !== undefined && renderGroup !== undefined
+            ? h('div', { className: 'bt-settings-form' }, renderGroup({ id: workgroup.id }))
+            : null,
           shown === 'connectors' ? h(ConnectorsPage, { roster, actions }) : null,
           shown === 'capabilities' ? h(CapabilitiesPage, { roster, actions, run }) : null,
           shown === 'schedules' ? h(SchedulesPage, { roster, actions, start: id ?? undefined }) : null,

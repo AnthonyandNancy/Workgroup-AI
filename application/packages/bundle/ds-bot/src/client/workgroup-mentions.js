@@ -10,6 +10,8 @@
 //     A mention of somebody outside the room would render as a summons to a person who cannot read the
 //     message; the Hub refuses it too, and this refuses it before a request is sent.
 
+import { t } from './i18n.js'
+
 /** The character that opens the picker. Kept as a name so the test and the UI cannot disagree. */
 export const MENTION_TRIGGER = '@'
 
@@ -20,10 +22,11 @@ export const MENTION_TRIGGER = '@'
  * listed under its owner because mentioning it is how the owner is asked to run it: the mention names
  * both, and the Hub creates the task for the owner.
  *
- * @param {{ members?: object[], bots?: object[] }} room - the roster as the Hub reports it.
+ * @param {{ members?: object[], bots?: object[], canSummonEveryone?: boolean }} room - the roster as
+ *   the Hub reports it, and whether this viewer may summon the whole room.
  * @returns {{ userId: string, botId?: string, label: string, kind: 'member'|'bot', detail?: string }[]}
  */
-export function mentionCandidates({ members = [], bots = [] } = {}) {
+export function mentionCandidates({ members = [], bots = [], canSummonEveryone = false } = {}) {
   const people = members
     .filter(member => typeof member?.userId === 'string' && member.userId.length > 0)
     .map(member => ({
@@ -44,7 +47,13 @@ export function mentionCandidates({ members = [], bots = [] } = {}) {
       kind: 'bot',
       detail: byOwner.get(bot.ownerUserId).label,
     }))
-  return [...people, ...owned]
+  // `@all` leads the list when the viewer may use it: it is the one entry that reaches everybody, and
+  // the Hub refuses it for anyone who is not the owner, an admin, or the leader's owner. Offering it
+  // only to those callers keeps the picker from proposing something that would be rejected.
+  const everyone = canSummonEveryone
+    ? [{ all: true, label: t('Everyone'), kind: 'all' }]
+    : []
+  return [...everyone, ...people, ...owned]
 }
 
 /**
@@ -74,6 +83,10 @@ export function filterCandidates(candidates, query) {
 export function composeMessage(text, picked = []) {
   return {
     text: String(text ?? ''),
-    mentions: picked.map(entry => (entry.botId === undefined ? { userId: entry.userId } : { userId: entry.userId, botId: entry.botId })),
+    mentions: picked.map(entry => {
+      // `@all` names no individual: it is its own entry, and the Hub expands it to the room's Bots.
+      if (entry.all === true) return { all: true }
+      return entry.botId === undefined ? { userId: entry.userId } : { userId: entry.userId, botId: entry.botId }
+    }),
   }
 }

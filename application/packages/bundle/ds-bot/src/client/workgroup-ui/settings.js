@@ -16,11 +16,16 @@
 
 import { createElement as h, useEffect, useState } from 'react'
 import { Card, InlineText, Row, SwitchRow } from '../bot-settings.js'
+import { Segmented } from '../motion.js'
+import { FolderMenu } from '../folder-menu.js'
 import { ChevronRightIcon, PlusIcon } from '../icons.js'
 import { BotAvatar, RoomAvatar } from '../mark.js'
 import { t } from '../i18n.js'
 
 const roleLabel = role => t(role === 'owner' ? 'Owner' : role === 'admin' ? 'Admin' : 'Member')
+
+/** How a workgroup answers an unmentioned message, in the original group chat's order. */
+const WHO_ANSWERS = [['admin', 'Admin leads'], ['everyone', 'Everyone']]
 
 function Hero({ room, members, bots }) {
   const humans = (members ?? []).length + (bots ?? []).length
@@ -108,6 +113,8 @@ export function WorkgroupSettingsForm({
   onFlag,
   loadOwnerBots,
   loadBotCandidates,
+  /** The permission presets this Host offers; empty when it has none. */
+  permissionOptions = [],
 }) {
   const [target, setTarget] = useState('')
   const [candidates, setCandidates] = useState([])
@@ -124,6 +131,14 @@ export function WorkgroupSettingsForm({
   const role = (members ?? []).find(member => member.userId === selfUserId)?.role
   const owner = role === 'owner'
   const manage = (owner || role === 'admin') && room.dissolvedAt === undefined
+  // Setting the permission preset is the owner's alone: it decides what every member's Bot may do on
+  // their own machine. The folder and who-answers belong to the owner and to the leader's owner, which
+  // is the same standing the original group chat gives its administrator Bot.
+  const canSetPermission = owner && room.dissolvedAt === undefined
+  const canGovern = (owner || room.adminBotOwnerUserId === selfUserId) && room.dissolvedAt === undefined
+  const leaderName = (bots ?? []).find(bot => bot.botId === room.adminBotId)?.displayName
+    ?? room.adminBotId
+    ?? ''
   const act = async (operation) => {
     if (busy) return
     setBusy(true); setError(undefined)
@@ -177,9 +192,48 @@ export function WorkgroupSettingsForm({
             onSave: next => act(() => onAction('updateNotice', { notice: next })),
           })
           : (room.notice ?? ''))),
-    // The original group's execution settings are replaced with an explanation, not removed
-    // silently: a member who looks for "who answers" or "working folder" must find out why a
-    // workgroup does not have one.
+    // The three settings the original group chat has, in its order. They apply here as they do there:
+    // the folder and the permission preset govern what every member's Bot does in this room.
+    h(Card, { title: t('Who answers') },
+      h('div', { className: 'bt-set-row bt-bs-row bt-bs-stack' },
+        h(Segmented, { label: t('Who answers'), value: room.effectiveReplyMode ?? 'everyone' },
+          WHO_ANSWERS.map(([id, label]) => h('button', {
+            key: id,
+            type: 'button',
+            'aria-pressed': (room.effectiveReplyMode ?? 'everyone') === id,
+            'data-wg-who': id,
+            disabled: !canGovern || (id === 'admin' && room.adminBotId === undefined),
+            onClick: () => act(() => onAction('updateSettings', { replyMode: id })),
+          }, t(label)))),
+        h('span', { className: 'bt-set-hint' },
+          room.adminBotId === undefined
+            ? t('No administrator Bot is in this workgroup, so every member answers in turn.')
+            : t('{name} leads this group: plain messages go to it first, and @Name picks who answers.', { name: leaderName })))),
+    h(Card, { title: t('Working folder') },
+      h('div', { className: 'bt-set-row bt-bs-row' },
+        h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Folder'))),
+        canGovern
+          ? h(FolderMenu, { value: room.workDir ?? '', group: true, actions: {}, run: act, onPick: value => act(() => onAction('updateSettings', { workDir: value })) })
+          : h('span', { className: 'bt-set-hint' }, room.workDir ?? t("Each Bot's own folder"))),
+      h('div', { className: 'bt-set-row bt-gs-note' },
+        h('span', { className: 'bt-set-hint' }, t("Every member works in this folder in this group. Each Bot's owner still approves work in it on their own machine.")))),
+    h(Card, { title: t('Permissions') },
+      h('div', { className: 'bt-set-row bt-bs-stack' },
+        h(Segmented, { label: t('Permissions'), value: room.permission ?? 'own', className: 'bt-gs-perm' },
+          [['own', t("Each Bot's own")], ...permissionOptions.map(option => [option.value, option.label])].map(([id, label]) => h('button', {
+            key: id,
+            type: 'button',
+            'aria-pressed': (room.permission ?? 'own') === id,
+            'data-wg-permission': id,
+            // Only the room's owner may set this: it decides what every member's Bot may do on their own
+            // machine. A member who cannot set it still sees the current value.
+            disabled: !canSetPermission,
+            onClick: () => act(() => onAction('updateSettings', { permission: id === 'own' ? null : id })),
+          }, label))),
+        h('span', { className: 'bt-set-hint' },
+          canSetPermission
+            ? t("This preset overrides every member's own permissions in this group.")
+            : t('Only the workgroup owner can change this.')))),
     h(Card, { title: t('Task collaboration') },
       h('div', { className: 'bt-set-row bt-bs-row bt-bs-stack' },
         h('span', { className: 'bt-set-hint' },

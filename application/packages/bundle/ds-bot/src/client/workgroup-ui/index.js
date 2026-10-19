@@ -13,11 +13,10 @@
 
 import { createElement as h, Fragment, useEffect, useState } from 'react'
 import { CheckIcon, ChevronLeftIcon, CloseIcon, GearIcon, ShareIcon } from '../icons.js'
-import { BotMark, RoomAvatar } from '../mark.js'
 import { useLinger } from '../motion.js'
 import { t } from '../i18n.js'
 import { replyPreview } from '../workgroup-reply.js'
-import { HumanFace, WorkgroupThread } from './thread.js'
+import { WorkgroupAvatar, WorkgroupThread } from './thread.js'
 import { WorkgroupComposer } from './composer.js'
 import { TaskCard, WorkgroupTasks } from './activity.js'
 import { WorkgroupDetails } from './details.js'
@@ -31,7 +30,6 @@ const GoArrow = () => h('svg', {
   strokeWidth: 2.2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true,
 }, h('path', { d: 'M-7 0H7M2 -5L7 0L2 5' }))
 
-const PILE_MAX = 4
 const PANEL_MIN = 320
 const PANEL_MAX = 520
 const MIN_CHAT = 420
@@ -43,33 +41,34 @@ const panelRange = () => {
 
 const clampPanel = (value, [low, high]) => Math.round(Math.max(low, Math.min(value, high)))
 
-/** The group's face: people and Bots, up to four discs, like the original group details. */
-function MemberPile({ members, bots }) {
-  const entries = [
-    ...(members ?? []).map(member => ({
-      key: `member:${member.userId}`,
-      node: h(HumanFace, { name: member.displayName ?? member.userId, size: 44 }),
-    })),
-    ...(bots ?? []).map(bot => ({
-      key: `bot:${bot.ownerUserId}:${bot.botId}`,
-      node: h(BotMark, { look: { shape: 'circle', color: 'blue' }, size: 44, live: false }),
-    })),
-  ]
-  if (entries.length === 0) return null
-  const shown = entries.length > PILE_MAX ? entries.slice(0, PILE_MAX - 1) : entries
-  const more = entries.length - shown.length
+/**
+ * The group's face in its details: the same workgroup avatar the header and the sidebar row draw.
+ *
+ * Four seats and a `+N` are `WorkgroupAvatar`'s own rule now, so the pile and the pill cannot drift
+ * apart into two different pictures of one room.
+ */
+function MemberPile({ members, bots, local }) {
+  if ((members ?? []).length === 0 && (bots ?? []).length === 0) return null
   return h('span', { className: 'bt-pile', 'aria-hidden': true },
-    shown.map((entry, index) => h('span', {
-      key: entry.key, className: 'bt-pile-face', style: { animationDelay: `${index * 40}ms` },
-    }, entry.node)),
-    more > 0
-      ? h('span', {
-        key: 'more', className: 'bt-pile-face bt-pile-more', style: { animationDelay: `${shown.length * 40}ms` },
-      }, `+${more}`)
-      : null)
+    h('span', { className: 'bt-pile-face' }, h(WorkgroupAvatar, { members, bots, local, size: 44 })))
 }
 
 /** The group's name in the details drawer, editable in place like the original group. */
+/**
+ * Whether this viewer may summon the whole room.
+ *
+ * The Hub enforces the same rule; this only decides whether the picker offers the entry. A member who
+ * is neither the owner, an admin, nor the leader's owner would have an `@all` rejected, so offering it
+ * would be a control that never works.
+ */
+function canSummonEveryone(room, identity) {
+  const me = identity?.userId
+  if (me === undefined || room === undefined) return false
+  const role = room.myRole
+  if (role === 'owner' || role === 'admin') return true
+  return room.adminBotOwnerUserId === me
+}
+
 function PanelName({ room, onRename }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -153,8 +152,12 @@ export function WorkgroupConversation({
   onSchedule,
   onCancelSchedule,
   onRoomAction,
+  onReact,
+  onUnreact,
+  onLoadEarlier,
   loadOwnerBots,
   loadBotCandidates,
+  localRoster: local,
   prefs,
   onFlag,
   memory,
@@ -167,6 +170,12 @@ export function WorkgroupConversation({
   const [shownPanel, panelLeaving] = useLinger(panel, 300)
   const [panelWidth, setPanelWidth] = useState(PANEL_MIN)
   const [resizing, setResizing] = useState(false)
+  // The history cursor starts from the oldest message the pane was opened with. `hasMore` comes from
+  // that same read, so the first paint already knows whether an earlier page exists.
+  const [earlier, setEarlier] = useState({ hasMore: false, loading: false, failed: false })
+  const oldestSeq = (messages ?? []).reduce((lowest, message) => (
+    Number.isInteger(message.roomSeq) && (lowest === undefined || message.roomSeq < lowest) ? message.roomSeq : lowest
+  ), undefined)
   useEffect(() => {
     const onResize = () => setPanelWidth(width => clampPanel(width, panelRange()))
     window.addEventListener('resize', onResize)
@@ -204,7 +213,10 @@ export function WorkgroupConversation({
   }
   const share = () => {
     const transcript = (messages ?? []).map((message) => {
-      const who = message.senderDisplayName ?? message.senderUserId ?? ''
+      // A Bot's line is attributed to the Bot in the copied transcript, matching the bubble beside it.
+      const who = message.senderBotId !== undefined
+        ? (message.senderBotDisplayName ?? message.senderBotId)
+        : (message.senderDisplayName ?? message.senderUserId ?? '')
       const files = (message.attachments ?? [])
         .map(entry => entry.fileName ?? entry.artifactId)
         .join(', ')
@@ -236,12 +248,7 @@ export function WorkgroupConversation({
       'aria-label': t('View conversation details'), title: t('Group details'),
       onClick: () => setPanel(value => (value === null ? 'details' : null)),
     },
-    room
-      ? h(RoomAvatar, {
-        room: { ...room, members: (members ?? []).map(member => member.userId) },
-        roster: { byId: {}, bots: [] }, size: 24,
-      })
-      : null,
+    room ? h(WorkgroupAvatar, { members, bots, local, size: 24 }) : null,
     h('span', { className: 'bt-pill-name' }, room?.name ?? ''),
     h('span', { className: `bt-wg-hub-dot bt-wg-hub-dot-${hubState ?? 'unknown'}`, 'aria-hidden': true }),
     h('span', { className: 'bt-pill-go', 'aria-hidden': true }, h(GoArrow)))),
@@ -251,7 +258,24 @@ export function WorkgroupConversation({
         messages,
         tasks,
         selfUserId,
+        leaderBotId: room?.adminBotId,
         empty,
+        earlier,
+        onLoadEarlier: async () => {
+          if (typeof onLoadEarlier !== 'function' || oldestSeq === undefined || earlier.loading) return
+          setEarlier({ hasMore: true, loading: true, failed: false })
+          try {
+            const page = await onLoadEarlier(oldestSeq)
+            setEarlier({ hasMore: page?.hasMore === true, loading: false, failed: false })
+          } catch (failure) {
+            // The messages already on screen stay: a failed earlier page is a missing page, not a
+            // reason to empty the conversation.
+            setEarlier({ hasMore: true, loading: false, failed: true })
+            setError(failure?.message ?? String(failure))
+          }
+        },
+        onReact,
+        onUnreact,
         onReply: message => setReply(replyPreview(message)),
         onDownload: async (entry) => {
           try { await onDownload?.(entry) } catch (failure) { setError(failure?.message ?? String(failure)) }
@@ -274,6 +298,9 @@ export function WorkgroupConversation({
       error === undefined ? null : h('div', { role: 'alert', className: 'bt-danger bt-wg-inline-error' }, error),
       h(WorkgroupComposer, {
         room,
+        // The Hub decides this too; the picker only mirrors it so a member is not offered an `@all`
+        // the send would refuse.
+        canSummonEveryone: canSummonEveryone(room, identity),
         members,
         bots,
         reply,
@@ -349,7 +376,7 @@ export function WorkgroupConversation({
               'data-wg-details-close': 'true', onClick: () => setPanel(null),
             }, h(CloseIcon))),
           h('div', { className: 'bt-drawer-id' },
-            h(MemberPile, { members, bots }),
+            h(MemberPile, { members, bots, local }),
             h(PanelName, { room, onRename: renameRoom }),
             h('span', { className: 'bt-drawer-role' },
               t('Workgroup · {count} members', { count: (members ?? []).length + (bots ?? []).length }))),

@@ -44,6 +44,7 @@ export function makeBotRoutes({ requireAuth }) {
           botId: body.botId,
           displayName: body.displayName,
           visibility: body.visibility ?? 'private',
+          isChief: body.isChief,
         })
         return reply.code(201).send({ bot: publicEntry(entry) })
       } catch (error) {

@@ -37,7 +37,6 @@ import { ErrorToast, FEEDBACK_CSS } from './feedback.js'
 import { ABOUT_CSS } from './about.js'
 import { MEMBER_CSS, MemberDock } from './member-status.js'
 import { USER_MESSAGE_CSS, UserMessageCell, canDrawUserMessages } from './user-message.js'
-import { WORKGROUP_CSS } from './workgroup-style.js'
 import { WORKGROUP_UI_CSS } from './workgroup-ui/styles.js'
 import { createWorkgroupRoster, loadWorkgroupPrefs, saveWorkgroupPrefs } from './workgroup-roster.js'
 import { noticeApprovals } from './approval-notices.js'
@@ -375,6 +374,24 @@ export function apply(ctx) {
     answerWorkgroupInvitation: (invitationId, decision) => workgroupActions.answerWorkgroupInvitation(invitationId, decision),
     answerWorkgroupBotInvitation: (invitationId, decision) => workgroupActions.answerWorkgroupBotInvitation(invitationId, decision),
     setWorkgroupFlag: (roomId, patch) => workgroupActions.setWorkgroupFlag(roomId, patch),
+    // The sidebar's own rows reach the same actions the conversation does: one implementation per
+    // operation, so a room renamed from the menu behaves exactly like one renamed from its settings.
+    markWorkgroupUnread: (roomId) => {
+      workgroupRoster.setFlag(roomId, { marked: true })
+      const next = loadWorkgroupPrefs()
+      saveWorkgroupPrefs(next)
+      workgroupPrefs.set(next)
+      return next[roomId] ?? {}
+    },
+    renameWorkgroup: (roomId) => {
+      // The original opens the details drawer in its rename state. A workgroup's settings page is where
+      // its name is edited, so the menu opens that page rather than inventing a second rename surface.
+      actions.openSettings?.('groups', roomId)
+    },
+    dissolveWorkgroup: async (roomId) => {
+      await workgroupHub.dissolve(roomId)
+      await workgroupRoster.refresh()
+    },
     // The full-pane overlays sit above the conversation, so opening one must dismiss them
     // or the click appears to do nothing.
     isAgentSession: id => isAgentSessionId(id),
@@ -862,7 +879,7 @@ export function apply(ctx) {
   // The overlay's own inject face: `face()` plus the workgroup source under `hooks`, which is what
   // makes the menu see changes. Injected props are cached per slot entry, so a plain value in the
   // returned object would freeze the first answer.
-  const overlayFace = () => ({ ...face(), sessions: ctx.sessions, workgroupHub, hooks: { ...face().hooks, workgroups, hub, workgroupRoster: workgroupRoster.view, workgroupPrefs }, keyedHooks: { workgroupRoom: roomId => workgroupHub.roomState(roomId) } })
+  const overlayFace = () => ({ ...face(), sessions: ctx.sessions, workgroupHub, hooks: { ...face().hooks, workgroups, hub, workgroupRoster: workgroupRoster.view, workgroupPrefs, useWorkgroupRoster: workgroupRoster.view, useWorkgroupPrefs: workgroupPrefs }, keyedHooks: { workgroupRoom: roomId => workgroupHub.roomState(roomId) } })
   // The copied sidebar replaces the team's own `sidebar.workspaces` seat, so it must receive the same
   // local face plus the workgroup sources it adds rows from.
   const sidebarFace = () => ({ ...face(), hooks: { ...face().hooks, workgroups, hub, workgroupRoster: workgroupRoster.view, workgroupPrefs } })
@@ -983,7 +1000,6 @@ export function apply(ctx) {
     installCompiledStyles(ABOUT_CSS, 'about'),
     installCompiledStyles(MEMBER_CSS, 'members'),
     installCompiledStyles(USER_MESSAGE_CSS, 'user-messages'),
-    installCompiledStyles(WORKGROUP_CSS, 'workgroups'),
     installCompiledStyles(WORKGROUP_UI_CSS, 'workgroup-ui'),
     installCompiledStyles(WORKGROUP_SIDEBAR_CSS, 'workgroup-sidebar'),
     browsers ? installCompiledStyles(BROWSER_CSS, 'browser') : null,

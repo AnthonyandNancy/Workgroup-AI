@@ -24,6 +24,7 @@ import { loadConfig } from '../src/config/index.js'
 import { openDatabase } from '../src/db/index.js'
 import { migrate } from '../src/db/migrate.js'
 import { createServer } from '../src/server.js'
+import { makeWorkgroup } from './helpers/workgroup.js'
 
 const SIGNING_KEY = 'e-mention-test-signing-key-long-enough'
 
@@ -86,7 +87,7 @@ async function withHub(run) {
 async function workgroup(call, person) {
   const alice = await person('e-alice')
   const bob = await person('e-bob')
-  const room = await call('POST', '/rooms', { name: 'Mentions', kind: 'workgroup' }, alice.token)
+  const room = await makeWorkgroup(call, alice, { name: 'Mentions' })
   assert.equal(room.status, 201, room.raw)
   const roomId = room.body.room.id
 
@@ -189,19 +190,27 @@ test('mentioning a Bot that is not available in the room does not create a task'
   })
 })
 
-test('mentioning your own Bot is refused, because a task is a request to somebody else', async () => {
+test('mentioning your own Bot proposes a task you approve yourself', async () => {
   await withHub(async ({ call, db, person }) => {
     const { alice, bob, roomId } = await workgroup(call, person)
     await call('POST', '/bots', { botId: 'e-alice-bot', displayName: 'Mine', description: 'm', capabilities: ['x'], visibility: 'room' }, alice.token)
-    // `createTask` refuses this with SELF_TASK, and the mention path goes through the same rule rather
-    // than around it: two paths to the same act must not have two sets of rules.
+    // A mention may only name a Bot that is in the room; directory visibility alone is discovery.
+    const joined = await call('POST', `/rooms/${roomId}/bots`, { botId: 'e-alice-bot' }, alice.token)
+    assert.equal(joined.status, 201, joined.raw)
+    // A workgroup keeps the original group chat's basic ability to put your own Bot to work, so a
+    // mention of your own Bot goes through the same path as any other: a task, then your approval.
     const mentioned = await send(call, roomId, alice.token, {
       body: 'Mine, help me', mentions: [{ userId: alice.userId, botId: 'e-alice-bot' }],
     })
-    // 409 with SELF_TASK, the same refusal a task requested through the task route gets for this.
-    assert.equal(mentioned.status, 409, mentioned.raw)
-    assert.match(mentioned.raw, /SELF_TASK/)
-    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM tasks WHERE room_id = ?').get(roomId).n, 0)
+    assert.equal(mentioned.status, 201, mentioned.raw)
+    const tasks = db.prepare('SELECT * FROM tasks WHERE room_id = ?').all(roomId)
+    assert.equal(tasks.length, 1, 'the mention proposes exactly one task')
+    assert.equal(tasks[0].state, 'PENDING_APPROVAL')
+    assert.equal(tasks[0].requester_user_id, alice.userId)
+    assert.equal(tasks[0].owner_user_id, alice.userId)
+    // Being both requester and owner still starts nothing: no approval, no grant, no running work.
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM approvals WHERE task_id = ?').get(tasks[0].id).n, 0)
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM dispatch_grants').get().n, 0)
     assert.equal(bob.userId !== undefined, true)
   })
 })
@@ -265,7 +274,7 @@ test('an attachment from another room cannot be posted into this one', async () 
     const { alice, bob, roomId } = await workgroup(call, person)
     // Alice's own second room, so the upload is hers and the refusal is about the room rather than
     // about ownership.
-    const other = await call('POST', '/rooms', { name: 'Elsewhere', kind: 'workgroup' }, alice.token)
+    const other = await makeWorkgroup(call, alice, { name: 'Elsewhere' })
     const elsewhere = await upload(other.body.room.id, 'secret.txt', 'not for this room', alice.token)
 
     const sent = await send(call, roomId, alice.token, {
