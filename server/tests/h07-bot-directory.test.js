@@ -296,11 +296,13 @@ test('a directory entry carries no model, Session, path, or capability informati
     for (const forbidden of ['model', 'session_id', 'sessionId', 'work_dir', 'workspace', 'path', 'capabilities', 'tools', 'api_key']) {
       assert.equal(names.includes(forbidden), false, `bot_directory must not carry ${forbidden}`)
     }
-    // And the response shape confirms the same: the whole wire contract is six fields.
+    // And the response shape confirms the same: the wire contract is these fields and nothing about
+    // how the Bot works. `isChief` is one of them: whether a Bot is its owner's Main Bot is a fact the
+    // Hub mirrors so a workgroup's leader can be checked, and it says nothing about the owner's machine.
     const entry = (await call('GET', '/bots/directory', undefined, alice.token)).body.bots[0]
     assert.deepEqual(
       Object.keys(entry).sort(),
-      ['botId', 'displayName', 'ownerDisplayName', 'ownerHandle', 'ownerUserId', 'presence', 'state', 'visibility'],
+      ['botId', 'displayName', 'isChief', 'ownerDisplayName', 'ownerHandle', 'ownerUserId', 'presence', 'state', 'visibility'],
     )
   })
 })

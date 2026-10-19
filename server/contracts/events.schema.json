@@ -12,7 +12,9 @@
       "message.created", "invitation.created", "member.changed", "presence.changed",
       "task.approval_requested", "task.approved", "task.cancelled", "task.progress", "task.shared",
       "group_memory.changed", "room.dissolved", "room.renamed", "room.notice_changed",
-      "room.bot_added", "room.bot_removed", "bot_invitation.created", "bot_invitation.changed", "ack", "error", "hello"
+      "room.bot_added", "room.bot_removed", "bot_invitation.created", "bot_invitation.changed",
+      "room.settings_changed", "room.admin_bot_changed", "message.reaction_changed",
+      "ack", "error", "hello"
     ] },
     "issuedAt": { "type": "string", "format": "date-time" },
     "roomId": { "type": "string" },

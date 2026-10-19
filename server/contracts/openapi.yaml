@@ -37,6 +37,30 @@ components:
           type: string
           enum: [owner, admin, member]
           description: 调用者在本房间的角色；仅成员视角的读取/创建响应返回。
+        replyMode:
+          type: string
+          enum: [admin, everyone]
+          description: 工作群的应答设置；普通房间恒为 everyone。
+        effectiveReplyMode:
+          type: string
+          enum: [admin, everyone]
+          description: >-
+            实际生效的应答方式。与 replyMode 只有一个区别：设置为 admin 但主持 Bot 已不在房间（或不再是
+            其所有者的管家 Bot）时，这里返回 everyone。客户端读取该字段而不是自行推导。
+        adminBotOwnerUserId:
+          type: string
+          format: uuid
+          description: 主持 Bot 的所有者；无主持（或主持已失效）时不返回。
+        adminBotId:
+          type: string
+          description: 主持 Bot 的 id；与其所有者一起标识。无主持时不返回。
+        workDir:
+          type: string
+          maxLength: 1024
+          description: 群工作目录；覆盖成员 Bot 自有目录。未设置时不返回。
+        permission:
+          type: string
+          description: 群级权限预设名；覆盖成员在本群的预设。仅群主可设置。未设置时不返回。
     RoomSummary:
       allOf:
         - $ref: '#/components/schemas/Room'
@@ -301,8 +325,19 @@ paths:
                   type: array
                   description: >-
                     创建者自己的 Bot id。房间、owner 成员关系与这些 Bot 在同一事务中写入；
-                    任一 Bot 未发布则整个创建被拒绝，不会留下半个工作群。
+                    任一 Bot 未发布则整个创建被拒绝，不会留下半个工作群。`kind: workgroup` 时至少要
+                    两个，否则返回 400 INVALID_BOT_COUNT。
                   items: {type: string, minLength: 1, maxLength: 128}
+                adminBotId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  description: >-
+                    主持 Bot 的 id，可省略。省略时由 Hub 自动生成：取 botIds 中第一个管家 Bot（按调用方
+                    给出的顺序），与原群聊取首个主 Bot 的规则一致；一个管家 Bot 都没有则返回 400
+                    NOT_A_CHIEF_BOT。显式给出时必须同时出现在 botIds 中且其所有者上报它为管家 Bot，
+                    否则同样返回 400 NOT_A_CHIEF_BOT。普通房间忽略该字段。
+                    该 Bot 成为房间的主持：普通消息先交给它应答，且它可以解散房间。
       responses:
         '201':
           description: Created
@@ -340,7 +375,12 @@ paths:
                     items: {$ref: '#/components/schemas/RoomBot'}
         '404': {description: 房间不存在，或调用者不是成员（两者不可区分）}
     patch:
-      summary: 修改房间名称或公告（owner/admin）
+      summary: 修改房间资料与工作群治理设置
+      description: >-
+        两套不同的权限。**治理字段**（name、notice、replyMode、workDir、adminBot）由群主或主持 Bot 的
+        所有者修改——原群聊允许它的管理员 Bot 修改它主持的群；**permission** 只有群主可以修改，因为它
+        决定每个成员的 Bot 在各自机器上能做什么，一个 Bot 若能放宽它就是给自己授权。一次请求里只要带上
+        permission，整条请求就按群主专属处理。
       requestBody:
         required: true
         content:
@@ -350,6 +390,29 @@ paths:
               properties:
                 name: {type: string, minLength: 1, maxLength: 120}
                 notice: {type: string, maxLength: 2000}
+                replyMode:
+                  type: string
+                  enum: [admin, everyone]
+                  description: 普通消息先交给主持 Bot，还是每位成员依次应答。
+                workDir:
+                  type: string
+                  maxLength: 1024
+                  nullable: true
+                  description: 群工作目录；空值清除，回到各 Bot 自有目录。
+                permission:
+                  type: string
+                  nullable: true
+                  description: 群级权限预设名；空值清除，回到各 Bot 自有权限。仅群主可设置。
+                adminBot:
+                  type: object
+                  nullable: true
+                  description: >-
+                    移交给新的主持 Bot；null 表示本群暂时没有主持（普通消息按每人轮流应答）。被指定的 Bot
+                    必须已在房间内且是其所有者的管家 Bot，否则 400 NOT_A_CHIEF_BOT。
+                  required: [ownerUserId, botId]
+                  properties:
+                    ownerUserId: {type: string, format: uuid}
+                    botId: {type: string}
       responses:
         '200':
           description: Updated room
@@ -360,7 +423,8 @@ paths:
                 required: [room]
                 properties:
                   room: {$ref: '#/components/schemas/Room'}
-        '403': {description: 调用者不是 owner/admin}
+        '400': {description: 字段取值非法，或指定的主持 Bot 不合格（NOT_A_CHIEF_BOT / INVALID_REPLY_MODE / INVALID_PERMISSION / INVALID_WORK_DIR）}
+        '403': {description: 调用者的身份不足以修改该字段（NOT_ALLOWED）}
         '404': {description: 房间不存在，或调用者不是成员}
         '409': {description: 房间已解散}
   /rooms/{roomId}/bot-candidates:
@@ -576,11 +640,22 @@ paths:
   /rooms/{roomId}/messages:
     parameters: [{name: roomId, in: path, required: true, schema: {type: string, format: uuid}}]
     get:
-      summary: 获取工作群消息，用于断线补拉
+      summary: 获取工作群消息（向后补拉或向前翻页）
+      description: >-
+        两种方向回答两个不同问题：`afterSeq` 是断线补拉（返回该序号之后的消息，按序号升序），
+        `beforeSeq` 是历史浏览（返回该序号之前最近的一页，页内同样按序号升序）。两者互斥，同时给出
+        返回 400 INVALID_CURSOR；每页上限 500 条。
       parameters:
         - name: afterSeq
           in: query
           schema: {type: integer, minimum: 0, default: 0}
+        - name: beforeSeq
+          in: query
+          description: 向前翻页游标；取调用者当前持有的最小序号。
+          schema: {type: integer, minimum: 1}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 500}
       responses:
         '200':
           description: Ordered messages
@@ -601,12 +676,97 @@ paths:
               properties:
                 clientMessageId: {type: string, minLength: 8, maxLength: 96}
                 body: {type: string, minLength: 1, maxLength: 50000}
+                mentions:
+                  type: array
+                  description: >-
+                    提及。普通提及为 `{userId, botId?}`，带 `botId` 时为对该 Bot 的任务候选；`{all: true}`
+                    召集本房间所有 Bot，仅群主、房间管理员或主持 Bot 的所有者可以发送，否则返回 400
+                    MENTION_ALL_NOT_ALLOWED，且不能与其它提及同时出现。@all 不会把主持 Bot 变成任务：
+                    它按普通消息进入主持 Bot 的会话应答。
+                  items:
+                    type: object
+                    properties:
+                      userId: {type: string, format: uuid}
+                      botId: {type: string}
+                      all: {type: boolean}
+                senderBotId:
+                  type: string
+                  description: >-
+                    以调用者自己的某个 Bot 的身份发言。该 Bot 必须已发布且在房间内，否则返回
+                    BOT_NOT_IN_DIRECTORY / BOT_NOT_IN_ROOM。行仍记录真人为 sender_user_id。
       responses:
         '201':
           description: Message accepted
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Message'}
+  /rooms/{roomId}/messages/{messageId}/reactions:
+    parameters:
+      - {name: roomId, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: messageId, in: path, required: true, schema: {type: string, format: uuid}}
+    post:
+      summary: 给一条消息加表情回应（成员）
+      description: >-
+        回应在全群可见，由 Hub 记录谁加了什么，而不是像原群聊那样只存在本机。响应返回该消息变更后的
+        完整回应集合，客户端据此渲染而不必自行合并。同一 (消息, 人, 表情) 重复提交是幂等的。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [emoji]
+              properties:
+                emoji: {type: string, enum: ['👍', '❤️', '😂', '🎉', '👀', '🙏']}
+      responses:
+        '200':
+          description: The message's reactions after the change
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messageId, reactions]
+                properties:
+                  messageId: {type: string, format: uuid}
+                  reactions:
+                    type: array
+                    items:
+                      type: object
+                      required: [emoji, userIds]
+                      properties:
+                        emoji: {type: string}
+                        userIds: {type: array, items: {type: string, format: uuid}}
+        '400': {description: 表情不在允许集合内（INVALID_EMOJI），或消息不属于该房间（NO_SUCH_MESSAGE）}
+        '404': {description: 调用者不是房间成员}
+  /rooms/{roomId}/messages/{messageId}/reactions/{emoji}:
+    parameters:
+      - {name: roomId, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: messageId, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: emoji, in: path, required: true, schema: {type: string}}
+    delete:
+      summary: 撤回自己的表情回应（成员）
+      description: >-
+        只删除调用者自己的那一行。别人的回应既不会被删除也不会报错——它保持原样，因为撤回同事的回应
+        等于改写别人的表态。自己的回应本来就不存在时视为成功：调用者要的状态已经成立。
+      responses:
+        '200':
+          description: The message's reactions after the change
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messageId, reactions]
+                properties:
+                  messageId: {type: string, format: uuid}
+                  reactions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        emoji: {type: string}
+                        userIds: {type: array, items: {type: string, format: uuid}}
+        '400': {description: 表情不在允许集合内，或消息不属于该房间}
+        '404': {description: 调用者不是房间成员}
   /rooms/{roomId}/dissolve:
     parameters: [{name: roomId, in: path, required: true, schema: {type: string, format: uuid}}]
     post:

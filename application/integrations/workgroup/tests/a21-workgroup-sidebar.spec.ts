@@ -264,7 +264,10 @@ describe('the copied workgroup sidebar', () => {
     expect(rows[1].getAttribute('data-workgroup-id')).toBe('wg-1')
   })
 
-  it('offers pin and hide for a workgroup through the local flag action', async () => {
+  // The menu carries the same rows the original group's room menu does, in the same order. "Delete
+  // group" becomes "Dissolve workgroup": a workgroup is ended by state and its history stays readable,
+  // which a delete would not convey.
+  it("offers the same rows the original room menu carries, ending in dissolve for the owner", async () => {
     const actionSet = actions()
     await mount(props({ actionSet, workgroupRoster: snapshot({ rooms: [workgroup()] }) }))
     const row = container.querySelector('[data-workgroup-id="wg-1"]')
@@ -274,16 +277,74 @@ describe('the copied workgroup sidebar', () => {
     const menu = document.querySelector('[data-workgroup-menu="wg-1"]')
     expect(menu).not.toBeNull()
     const items = [...menu.querySelectorAll('[role="menuitem"]')]
-    expect(items.map(item => item.textContent)).toEqual(['Pin to top', 'Hide from list'])
-    await act(async () => items[0].click())
+    expect(items.map(item => item.textContent)).toEqual([
+      'Pin to top',
+      'Mark as unread',
+      'Group settings',
+      'Rename group',
+      'Copy conversation ID',
+      'Hide from sidebar',
+    ])
+    await act(async () => menu.querySelector('[data-wg-menu-action="pin"]').click())
     expect(actionSet.setWorkgroupFlag).toHaveBeenCalledWith('wg-1', { pinned: true })
 
     await act(async () => {
       row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 12, clientY: 20 }))
     })
-    const hide = document.querySelector('[data-workgroup-menu="wg-1"] [role="menuitem"]:last-child')
-    await act(async () => hide.click())
+    await act(async () => document.querySelector('[data-workgroup-menu="wg-1"] [data-wg-menu-action="hide"]').click())
     expect(actionSet.setWorkgroupFlag).toHaveBeenCalledWith('wg-1', { hidden: true })
+  })
+
+  // Each row closes the menu, so each row gets its own mount: reopening a closed menu is a different
+  // gesture, and mixing the two would test the toggle rather than the row.
+  const openWorkgroupMenu = async (actionSet) => {
+    await mount(props({ actionSet, workgroupRoster: snapshot({ rooms: [workgroup()] }) }))
+    const row = container.querySelector('[data-workgroup-id="wg-1"]')
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 12, clientY: 20 }))
+    })
+    const menu = document.querySelector('[data-workgroup-menu="wg-1"]')
+    expect(menu).not.toBeNull()
+    return menu
+  }
+
+  it('marks a workgroup unread from the menu', async () => {
+    const actionSet = { ...actions(), markWorkgroupUnread: vi.fn() }
+    // The helper mounts and opens the menu, both inside their own `act`; wrapping it in another one
+    // nests two flushes and leaves the row unrendered when it is looked up.
+    const menu = await openWorkgroupMenu(actionSet)
+    await act(async () => menu.querySelector('[data-wg-menu-action="unread"]').click())
+    expect(actionSet.markWorkgroupUnread).toHaveBeenCalledWith('wg-1')
+  })
+
+  it('opens a workgroup in the same settings page the original uses', async () => {
+    const actionSet = { ...actions(), openSettings: vi.fn() }
+    const menu = await openWorkgroupMenu(actionSet)
+    await act(async () => menu.querySelector('[data-wg-menu-action="settings"]').click())
+    expect(actionSet.openSettings).toHaveBeenCalledWith('groups', 'wg-1')
+  })
+
+  it('offers a plain member no dissolve row at all', async () => {
+    // Ending the room is the owner's, and a control that only ever fails is worse than an absent one.
+    const menu = await openWorkgroupMenu(actions())
+    expect(menu.querySelector('[data-wg-menu-action="dissolve"]')).toBeNull()
+  })
+
+  it('offers dissolve to the owner and to nobody else', async () => {
+    const owned = { ...actions(), dissolveWorkgroup: vi.fn().mockResolvedValue(undefined) }
+    await mount(props({ actionSet: owned, workgroupRoster: snapshot({ rooms: [workgroup({ myRole: 'owner' })] }) }))
+    const row = container.querySelector('[data-workgroup-id="wg-1"]')
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 12, clientY: 20 }))
+    })
+    const dissolve = document.querySelector('[data-workgroup-menu="wg-1"] [data-wg-menu-action="dissolve"]')
+    expect(dissolve).not.toBeNull()
+    expect(dissolve.textContent).toBe('Dissolve workgroup')
+    // The last row is the destructive one, as in the original menu.
+    const items = [...document.querySelectorAll('[data-workgroup-menu="wg-1"] [role="menuitem"]')]
+    expect(items[items.length - 1]).toBe(dissolve)
+    await act(async () => dissolve.click())
+    expect(owned.dissolveWorkgroup).toHaveBeenCalledWith('wg-1')
   })
 
   it('renders human and Bot invitations and calls the matching answer actions', async () => {

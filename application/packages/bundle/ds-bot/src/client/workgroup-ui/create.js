@@ -97,11 +97,28 @@ export function WorkgroupCreate({ workgroups, hub, onCreated, onCancel, report }
       .join(t(', '))
       .slice(0, 60)
   const roomName = name.trim() === '' ? defaultName : name.trim()
+  // Which Bot the Hub will pick as administrator, computed with the same rule it uses: the first
+  // Main Bot in the order the user added them. The form does not send it — the Hub generates it, as
+  // a local group does — but knowing it here is what lets the button be disabled with a reason
+  // instead of the click ending in a 400.
+  const leaderBotId = pickedBots.find(bot => bot.isChief === true)?.botId
+  // The two conditions the Hub checks, asked here first. They are the original group chat's own
+  // two conditions: at least two Bots, and a Main Bot among them.
+  const missingLeader = pickedBots.length > 0 && leaderBotId === undefined
+  const missingSecondBot = pickedBots.length === 1
   const canCreate = !busy
     && created === undefined
     && !blocked
-    && pickedBots.length > 0
+    && pickedBots.length >= 2
+    && leaderBotId !== undefined
     && roomName !== ''
+  // Why the submit is disabled, on the button itself: a hover explains the same two conditions the
+  // notice above spells out, for a user who reaches for the button first.
+  const blockedTitle = pickedBots.length === 0
+    ? t('Add at least one Bot')
+    : (missingLeader
+        ? t('This workgroup needs a Main Bot to lead it. Publish one and add it here.')
+        : (missingSecondBot ? t('A workgroup needs at least two Bots: your Main Bot and one more.') : undefined))
 
   const toggleBot = (botId) => {
     setPicked(list => (list.includes(botId) ? list.filter(id => id !== botId) : [...list, botId]))
@@ -146,6 +163,8 @@ export function WorkgroupCreate({ workgroups, hub, onCreated, onCancel, report }
       // The room and the creator's chosen Bots are one Hub transaction: a room that exists without
       // the Bots it was created with would be a half-made workgroup. Invitations are separate by
       // nature — they are pending until each colleague accepts.
+      // No `adminBotId`: the Hub generates the leader from `botIds` the way a local group takes its
+      // first Main Bot. Naming it here would duplicate a rule the Hub already owns.
       room = await workgroups.createRoom(roomName, { kind: 'workgroup', botIds: pickedBots.map(bot => bot.botId) })
     } catch (failure) {
       setError(failure?.message ?? String(failure))
@@ -210,7 +229,7 @@ export function WorkgroupCreate({ workgroups, hub, onCreated, onCancel, report }
         h('button', {
           type: 'button', className: 'bt-send bt-to-create', 'data-wg-create-submit': 'true',
           disabled: !canCreate,
-          title: pickedBots.length === 0 ? t('Add at least one Bot') : undefined,
+          title: blockedTitle,
           onClick: () => { void create() },
         }, t('Create workgroup chat')),
         h('button', { type: 'button', className: 'bt-x', 'aria-label': t('Close'), onClick: onCancel }, '×')),
@@ -226,11 +245,18 @@ export function WorkgroupCreate({ workgroups, hub, onCreated, onCancel, report }
             },
             h(BotMark, { bot: { id: bot.botId, name: bot.displayName ?? bot.botId }, size: 22 }),
             h('span', { className: 'bt-option-label' }, bot.displayName ?? bot.botId),
+            bot.isChief === true ? h('span', { className: 'bt-option-hint', 'data-wg-create-chief': bot.botId }, t('Main Bot')) : null,
             picked.includes(bot.botId) ? h('span', { className: 'bt-option-hint' }, t('Added')) : null)))),
       h('div', { className: 'bt-nc-spacer' }),
       blockedReason === undefined
         ? null
         : h('div', { className: 'bt-error', role: 'status', 'data-wg-create-unavailable': 'true' }, blockedReason),
+      missingLeader || missingSecondBot
+        ? h('div', { className: 'bt-error', role: 'status', 'data-wg-create-blocked': missingLeader ? 'leader' : 'second-bot' },
+          missingLeader
+            ? t('This workgroup needs a Main Bot to lead it. Publish one and add it here.')
+            : t('A workgroup needs at least two Bots: your Main Bot and one more.'))
+        : null,
       error === undefined
         ? null
         : h('div', { className: 'bt-error', role: 'alert', 'data-wg-create-error': 'true' }, error),
@@ -250,7 +276,7 @@ export function WorkgroupCreate({ workgroups, hub, onCreated, onCancel, report }
           h('button', {
             type: 'button', className: 'bt-nc-send', 'data-wg-create-send': 'true',
             'aria-label': t('Create workgroup chat'),
-            title: pickedBots.length === 0 ? t('Add at least one Bot') : undefined,
+            title: blockedTitle,
             disabled: !canCreate,
             onClick: () => { void create() },
           }, h(ArrowUpIcon))))))

@@ -119,13 +119,29 @@ async function signIn(userHandle, password) {
   return { client, bridge: createBridge({ hubUrl: await baseUrl, client, WebSocketImpl: globalThis.WebSocket, logger: {} }) }
 }
 
+/**
+ * Publish two Bots for `client` and create a workgroup from them.
+ *
+ * A workgroup needs two Bots, one of them its owner's Main Bot — the same condition a local group
+ * has. The leader is not named here on purpose: generating it from the Bots that are joining is the
+ * behaviour under test, not a detail to work around.
+ */
+async function createWorkgroup(client, name) {
+  for (const [botId, isChief] of [['chief', true], ['worker', false]]) {
+    await client.request('POST', '/bots', { body: { botId, displayName: botId, visibility: 'public', isChief } })
+  }
+  return client.request('POST', '/rooms', { body: { name, kind: 'workgroup', botIds: ['chief', 'worker'] } })
+}
+
 describe('A1 end to end against the real Hub process', () => {
   it('creates a workgroup and reads it back as a workgroup', async () => {
     const alice = await signIn('alice', 'correct horse battery staple')
 
     // The same request the host module's `hub-create-room` issues.
-    const created = await alice.client.request('POST', '/rooms', { body: { name: 'Finance', kind: 'workgroup' } })
+    const created = await createWorkgroup(alice.client, 'Finance')
     expect(created.room.kind).toBe('workgroup')
+    // The leader is generated from the joining Bots, so a real workgroup always has one.
+    expect(created.room.adminBotId).toBe('chief')
 
     // Read back through a second request, so this asserts the Hub stored a workgroup rather than
     // that it echoed the request.
@@ -147,7 +163,7 @@ describe('A1 end to end against the real Hub process', () => {
     const workgroup = createWorkgroupClient({ client: alice.client, bridge: alice.bridge })
     const carolWorkgroup = createWorkgroupClient({ client: carol.client, bridge: carol.bridge })
 
-    const created = await alice.client.request('POST', '/rooms', { body: { name: 'Ops', kind: 'workgroup' } })
+    const created = await createWorkgroup(alice.client, 'Ops')
     const roomId = created.room.id
     await workgroup.invite(roomId, { targetUserId: carol.client.identity.userId })
 
@@ -173,7 +189,7 @@ describe('A1 end to end against the real Hub process', () => {
 
   it('delivers a realtime event over the real socket', async () => {
     const dave = await signIn('dave', 'correct horse battery staple')
-    const created = await dave.client.request('POST', '/rooms', { body: { name: 'Realtime', kind: 'workgroup' } })
+    const created = await createWorkgroup(dave.client, 'Realtime')
     const roomId = created.room.id
 
     const seen = []

@@ -363,7 +363,11 @@ describe('the copied workgroup creation form', () => {
     return {
       available: true,
       identity: { userId: 'u1' },
-      directory: vi.fn(async () => [{ botId: 'mine', displayName: 'Mine', ownerUserId: 'u1' }]),
+      directory: vi.fn(async () => [
+        { botId: 'chief', displayName: 'Chief', ownerUserId: 'u1', isChief: true },
+        { botId: 'mine', displayName: 'Mine', ownerUserId: 'u1', isChief: false },
+        { botId: 'other', displayName: 'Other', ownerUserId: 'u1', isChief: false },
+      ]),
       createRoom: vi.fn(async () => ({ id: 'room-9', name: 'New' })),
       addBot: vi.fn(async () => ({})),
       invite: vi.fn(async () => ({ id: 'inv-1' })),
@@ -388,41 +392,74 @@ describe('the copied workgroup creation form', () => {
 
   it('picks a Bot with the same arrow/Enter movement as the original list', async () => {
     await mount('WorkgroupCreate', { workgroups: workgroups(), onCreated: vi.fn(), onCancel: vi.fn() })
-    await vi.waitFor(() => expect(container.querySelector('[data-wg-create-bot="mine"]')).not.toBeNull())
+    await vi.waitFor(() => expect(container.querySelector('[data-wg-create-bot="chief"]')).not.toBeNull())
     const input = container.querySelector('[aria-label="Add your Bot"]')
     expect(input).not.toBeNull()
+    // The first entry is highlighted without any key, so the ArrowDown is what proves the movement:
+    // Enter then takes the second entry.
     await act(async () => Simulate.keyDown(input, { key: 'ArrowDown' }))
     await act(async () => Simulate.keyDown(input, { key: 'Enter' }))
     expect(container.querySelectorAll('.bt-to .bt-token')).toHaveLength(1)
     expect(container.querySelector('.bt-to .bt-token').textContent).toContain('Mine')
   })
 
-  it('creates with a Bot alone and names the workgroup after its members', async () => {
+  it('does not create from a single Bot, and says the workgroup needs two', async () => {
+    const hub = workgroups()
+    await mount('WorkgroupCreate', { workgroups: hub, onCreated: vi.fn(), onCancel: vi.fn() })
+    await vi.waitFor(() => expect(container.querySelector('[data-wg-create-bot="chief"]')).not.toBeNull())
+    await click('[data-wg-create-bot="chief"]')
+    expect(container.querySelector('[data-wg-create-submit="true"]').disabled).toBe(true)
+    expect(container.querySelector('[data-wg-create-blocked="second-bot"]')).not.toBeNull()
+    expect(hub.createRoom).not.toHaveBeenCalled()
+  })
+
+  it('creates with two Bots, one of them a Main Bot, and names the workgroup after its members', async () => {
     const hub = workgroups()
     const onCreated = vi.fn()
     await mount('WorkgroupCreate', { workgroups: hub, onCreated, onCancel: vi.fn() })
-    await vi.waitFor(() => expect(container.querySelector('[data-wg-create-bot="mine"]')).not.toBeNull())
+    await vi.waitFor(() => expect(container.querySelector('[data-wg-create-bot="chief"]')).not.toBeNull())
+    // The Main Bot's standing is visible before the click, not only after a refusal.
+    expect(container.querySelector('[data-wg-create-chief="chief"]')).not.toBeNull()
+    expect(container.querySelector('[data-wg-create-submit="true"]').disabled).toBe(true)
+    await click('[data-wg-create-bot="chief"]')
     expect(container.querySelector('[data-wg-create-submit="true"]').disabled).toBe(true)
     await click('[data-wg-create-bot="mine"]')
     expect(container.querySelector('[data-wg-create-submit="true"]').disabled).toBe(false)
     await click('[data-wg-create-submit="true"]')
     await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith({ id: 'room-9', name: 'New' }))
-    // The chosen Bots travel with the creation call: the Hub makes the room and its Bots one unit.
-    expect(hub.createRoom).toHaveBeenCalledWith('You, Mine', { kind: 'workgroup', botIds: ['mine'] })
+    // The Hub generates the leader from botIds; the form deliberately names nobody.
+    expect(hub.createRoom).toHaveBeenCalledWith('You, Chief, Mine', { kind: 'workgroup', botIds: ['chief', 'mine'] })
     expect(hub.addBot).not.toHaveBeenCalled()
+  })
+
+  it('does not create without a Main Bot, and says one is needed to lead', async () => {
+    const hub = workgroups({
+      directory: vi.fn(async () => [
+        { botId: 'mine', displayName: 'Mine', ownerUserId: 'u1', isChief: false },
+        { botId: 'other', displayName: 'Other', ownerUserId: 'u1', isChief: false },
+      ]),
+    })
+    await mount('WorkgroupCreate', { workgroups: hub, onCreated: vi.fn(), onCancel: vi.fn() })
+    await vi.waitFor(() => expect(container.querySelector('[data-wg-create-bot="mine"]')).not.toBeNull())
+    await click('[data-wg-create-bot="mine"]')
+    await click('[data-wg-create-bot="other"]')
+    expect(container.querySelector('[data-wg-create-submit="true"]').disabled).toBe(true)
+    expect(container.querySelector('[data-wg-create-blocked="leader"]')).not.toBeNull()
+    expect(hub.createRoom).not.toHaveBeenCalled()
   })
 
   it('creates with a Bot and an invite when the name is left empty', async () => {
     const hub = workgroups()
     const onCreated = vi.fn()
     await mount('WorkgroupCreate', { workgroups: hub, onCreated, onCancel: vi.fn() })
-    await vi.waitFor(() => expect(container.querySelector('[data-wg-create-bot="mine"]')).not.toBeNull())
+    await vi.waitFor(() => expect(container.querySelector('[data-wg-create-bot="chief"]')).not.toBeNull())
+    await click('[data-wg-create-bot="chief"]')
     await click('[data-wg-create-bot="mine"]')
     await fill('[aria-label="User ID to invite"]', 'u3')
     await click('[data-wg-create-invite="add"]')
     await click('[data-wg-create-submit="true"]')
     await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith({ id: 'room-9', name: 'New' }))
-    expect(hub.createRoom).toHaveBeenCalledWith('You, Mine', { kind: 'workgroup', botIds: ['mine'] })
+    expect(hub.createRoom).toHaveBeenCalledWith('You, Chief, Mine', { kind: 'workgroup', botIds: ['chief', 'mine'] })
     expect(hub.invite).toHaveBeenCalledWith('room-9', { targetUserId: 'u3', role: 'member' })
   })
 
@@ -439,12 +476,13 @@ describe('the copied workgroup creation form', () => {
     const hub = workgroups()
     const onCreated = vi.fn()
     await mount('WorkgroupCreate', { workgroups: hub, onCreated, onCancel: vi.fn() })
-    await vi.waitFor(() => expect(container.querySelector('[data-wg-create-bot="mine"]')).not.toBeNull())
+    await vi.waitFor(() => expect(container.querySelector('[data-wg-create-bot="chief"]')).not.toBeNull())
     await fill('[aria-label="Workgroup name"]', 'Launch')
+    await click('[data-wg-create-bot="chief"]')
     await click('[data-wg-create-bot="mine"]')
     await click('[data-wg-create-submit="true"]')
     await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith({ id: 'room-9', name: 'New' }))
-    expect(hub.createRoom).toHaveBeenCalledWith('Launch', { kind: 'workgroup', botIds: ['mine'] })
+    expect(hub.createRoom).toHaveBeenCalledWith('Launch', { kind: 'workgroup', botIds: ['chief', 'mine'] })
   })
 
   it('opens the created room even when an invitation fails, and reports that failure once', async () => {
@@ -452,7 +490,8 @@ describe('the copied workgroup creation form', () => {
     const onCreated = vi.fn()
     const report = vi.fn()
     await mount('WorkgroupCreate', { workgroups: hub, onCreated, onCancel: vi.fn(), report })
-    await vi.waitFor(() => expect(container.querySelector('[data-wg-create-bot="mine"]')).not.toBeNull())
+    await vi.waitFor(() => expect(container.querySelector('[data-wg-create-bot="chief"]')).not.toBeNull())
+    await click('[data-wg-create-bot="chief"]')
     await click('[data-wg-create-bot="mine"]')
     await fill('[aria-label="User ID to invite"]', 'u3')
     await click('[data-wg-create-invite="add"]')

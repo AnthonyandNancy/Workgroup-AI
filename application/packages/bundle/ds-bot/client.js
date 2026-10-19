@@ -778,6 +778,7 @@ var ZH = {
   "Not delivered": "未送达",
   "That Bot is not available in this workgroup any more.": "这个 Bot 已不在当前工作群中。",
   "This workgroup has been dissolved, so no new message can be sent.": "这个工作群已解散，不能再发送消息。",
+  "This workgroup needs a Main Bot to lead it. Publish one and add it here.": "这个工作群需要一个主 Bot 来主持。请先发布一个，再把它加进来。",
   "Approval needed": "需要你审批",
   "Requested by": "发起人",
   "Requested Bot": "请求指定的 Bot",
@@ -1081,6 +1082,7 @@ var ZH = {
   "A Bot’s owner approves every task it runs. A workgroup never appoints a Bot as an administrator.": "Bot 的每次任务都由其所有者批准。工作群不会任命 Bot 为管理员。",
   "A scheduled message is a normal message sent later, even if this window is closed. It cannot run a Bot without the owner’s approval.": "定时消息只是稍后发送的普通消息，即使关闭窗口也会发送；@ Bot 仍需要其所有者批准。",
   "A workgroup message cannot reference a private chat on this machine.": "工作群消息不能引用这台机器上的私人会话。",
+  "A workgroup needs at least two Bots: your Main Bot and one more.": "工作群至少需要两个 Bot：你的主 Bot，再加一个。",
   "Add Bot": "添加 Bot",
   "Add a Bot": "添加 Bot",
   "Add your Bot": "添加你的 Bot",
@@ -10471,7 +10473,11 @@ function WorkgroupCreate({ workgroups, hub, onCreated, onCancel, report }) {
   const pickedBots = picked.map((id) => bots.find((bot) => bot.botId === id)).filter(Boolean);
   const defaultName = pickedBots.length === 0 ? "" : [t("You"), ...pickedBots.map((bot) => bot.displayName ?? bot.botId)].join(t(", ")).slice(0, 60);
   const roomName = name.trim() === "" ? defaultName : name.trim();
-  const canCreate = !busy && created === void 0 && !blocked && pickedBots.length > 0 && roomName !== "";
+  const leaderBotId = pickedBots.find((bot) => bot.isChief === true)?.botId;
+  const missingLeader = pickedBots.length > 0 && leaderBotId === void 0;
+  const missingSecondBot = pickedBots.length === 1;
+  const canCreate = !busy && created === void 0 && !blocked && pickedBots.length >= 2 && leaderBotId !== void 0 && roomName !== "";
+  const blockedTitle = pickedBots.length === 0 ? t("Add at least one Bot") : missingLeader ? t("This workgroup needs a Main Bot to lead it. Publish one and add it here.") : missingSecondBot ? t("A workgroup needs at least two Bots: your Main Bot and one more.") : void 0;
   const toggleBot = (botId) => {
     setPicked((list) => list.includes(botId) ? list.filter((id) => id !== botId) : [...list, botId]);
     setQuery("");
@@ -10592,7 +10598,7 @@ function WorkgroupCreate({ workgroups, hub, onCreated, onCancel, report }) {
           className: "bt-send bt-to-create",
           "data-wg-create-submit": "true",
           disabled: !canCreate,
-          title: pickedBots.length === 0 ? t("Add at least one Bot") : void 0,
+          title: blockedTitle,
           onClick: () => {
             void create();
           }
@@ -10619,12 +10625,18 @@ function WorkgroupCreate({ workgroups, hub, onCreated, onCancel, report }) {
             },
             (0, import_react23.createElement)(BotMark, { bot: { id: bot.botId, name: bot.displayName ?? bot.botId }, size: 22 }),
             (0, import_react23.createElement)("span", { className: "bt-option-label" }, bot.displayName ?? bot.botId),
+            bot.isChief === true ? (0, import_react23.createElement)("span", { className: "bt-option-hint", "data-wg-create-chief": bot.botId }, t("Main Bot")) : null,
             picked.includes(bot.botId) ? (0, import_react23.createElement)("span", { className: "bt-option-hint" }, t("Added")) : null
           ))
         )
       ),
       (0, import_react23.createElement)("div", { className: "bt-nc-spacer" }),
       blockedReason === void 0 ? null : (0, import_react23.createElement)("div", { className: "bt-error", role: "status", "data-wg-create-unavailable": "true" }, blockedReason),
+      missingLeader || missingSecondBot ? (0, import_react23.createElement)(
+        "div",
+        { className: "bt-error", role: "status", "data-wg-create-blocked": missingLeader ? "leader" : "second-bot" },
+        missingLeader ? t("This workgroup needs a Main Bot to lead it. Publish one and add it here.") : t("A workgroup needs at least two Bots: your Main Bot and one more.")
+      ) : null,
       error === void 0 ? null : (0, import_react23.createElement)("div", { className: "bt-error", role: "alert", "data-wg-create-error": "true" }, error),
       (0, import_react23.createElement)(
         "div",
@@ -10652,7 +10664,7 @@ function WorkgroupCreate({ workgroups, hub, onCreated, onCancel, report }) {
             className: "bt-nc-send",
             "data-wg-create-send": "true",
             "aria-label": t("Create workgroup chat"),
-            title: pickedBots.length === 0 ? t("Add at least one Bot") : void 0,
+            title: blockedTitle,
             disabled: !canCreate,
             onClick: () => {
               void create();

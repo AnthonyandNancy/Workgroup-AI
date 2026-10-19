@@ -240,15 +240,20 @@ export function listMembers(db, roomId) {
 /**
  * The Bot that leads a new workgroup, or throw.
  *
- * Two rules, both from the requirement: the group needs at least two Bots to exist at all, and the
- * leader must be one of them *and* be its owner's Main Bot. The second is what makes "the leader is
- * the group owner's administrator" a checked fact rather than a claim, because `is_chief` is read
- * from what the owner's machine reported.
+ * The same two rules the original group chat has, applied to a Hub room: at least two Bots, and a
+ * leader among them that is its owner's Main Bot (`roster.createRoom`'s `checkMembers` and
+ * `members.find(rt.isMain)`). The standing is read from what the owner's machine reported, which is
+ * what makes "the leader is the group owner's administrator" a checked fact rather than a claim.
+ *
+ * The leader is *generated* when the caller names none, exactly as a local group picks its first
+ * Main Bot: the UI has no "choose the administrator" step, so requiring one here would make every
+ * workgroup a 400. `adminBotId` stays supported — and stays validated — for callers that do know
+ * which Bot should lead, such as a later hand-over or a script.
  *
  * @param {{ joiningBots: object[], adminBotId?: string }} options
  * @returns the directory row of the leading Bot
  * @throws {RoomError} `INVALID_BOT_COUNT` below two Bots, `NOT_A_CHIEF_BOT` when the named leader is
- *   absent, not joining, or not a Main Bot.
+ *   absent or not a Main Bot, or when no Main Bot is joining at all.
  */
 function resolveLeader({ joiningBots, adminBotId }) {
   if (joiningBots.length < 2) {
@@ -256,7 +261,11 @@ function resolveLeader({ joiningBots, adminBotId }) {
   }
   const named = typeof adminBotId === 'string' ? adminBotId.trim() : ''
   if (named === '') {
-    throw new RoomError('A workgroup needs an administrator: name the owner\'s Main Bot', 'NOT_A_CHIEF_BOT')
+    const chief = joiningBots.find(entry => entry.is_chief === 1)
+    if (chief === undefined) {
+      throw new RoomError('A workgroup needs your Main Bot in it: publish one, then add it to this workgroup', 'NOT_A_CHIEF_BOT')
+    }
+    return chief
   }
   const leader = joiningBots.find(entry => entry.bot_id === named)
   if (leader === undefined || leader.is_chief !== 1) {

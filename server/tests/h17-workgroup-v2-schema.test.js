@@ -112,29 +112,54 @@ test('publishing reports whether the Bot is its owner\'s Main Bot', async () => 
   })
 })
 
-test('a workgroup needs two Bots and its creator\'s own Main Bot as leader', async () => {
+test('a workgroup needs two Bots and generates its leader from the creator\'s Main Bot', async () => {
   await withHub(async ({ person, publish, workgroup }) => {
     const alice = await person('alice')
     await publish(alice, 'chief', { isChief: true })
     await publish(alice, 'worker')
 
+    // The original group chat's first condition, unchanged: two Bots or no group.
     const alone = await workgroup(alice, { botIds: ['chief'], adminBotId: 'chief' })
     assert.equal(alone.status, 400, alone.raw)
     assert.equal(alone.body.error.code, 'INVALID_BOT_COUNT')
 
-    const noLeader = await workgroup(alice, { botIds: ['chief', 'worker'] })
-    assert.equal(noLeader.status, 400, noLeader.raw)
-    assert.equal(noLeader.body.error.code, 'NOT_A_CHIEF_BOT')
+    // Naming no leader is not an error when a Main Bot is joining: the Hub generates the leader the
+    // way a local group takes its first Main Bot. List order is the input, so putting the ordinary
+    // Bot first proves the rule looks for the standing, not for position one.
+    const generated = await workgroup(alice, { botIds: ['worker', 'chief'] })
+    assert.equal(generated.status, 201, generated.raw)
+    assert.equal(generated.body.room.adminBotId, 'chief')
+    assert.equal(generated.body.room.adminBotOwnerUserId, alice.userId)
+    assert.equal(generated.body.room.replyMode, 'admin')
 
     const wrongLeader = await workgroup(alice, { botIds: ['chief', 'worker'], adminBotId: 'worker' })
     assert.equal(wrongLeader.status, 400, wrongLeader.raw)
     assert.equal(wrongLeader.body.error.code, 'NOT_A_CHIEF_BOT')
 
-    const ok = await workgroup(alice, { botIds: ['chief', 'worker'], adminBotId: 'chief' })
-    assert.equal(ok.status, 201, ok.raw)
-    assert.equal(ok.body.room.adminBotId, 'chief')
-    assert.equal(ok.body.room.adminBotOwnerUserId, alice.userId)
-    assert.equal(ok.body.room.replyMode, 'admin')
+    // An explicit leader is still honoured and still checked.
+    const named = await workgroup(alice, { botIds: ['chief', 'worker'], adminBotId: 'chief' })
+    assert.equal(named.status, 201, named.raw)
+    assert.equal(named.body.room.adminBotId, 'chief')
+    assert.equal(named.body.room.replyMode, 'admin')
+  })
+})
+
+test('a workgroup with no Main Bot among its Bots is refused', async () => {
+  await withHub(async ({ person, publish, workgroup }) => {
+    const alice = await person('alice')
+    await publish(alice, 'worker')
+    await publish(alice, 'other')
+
+    // Two Bots is satisfied; the second condition — a Main Bot — is not.
+    const refused = await workgroup(alice, { botIds: ['worker', 'other'] })
+    assert.equal(refused.status, 400, refused.raw)
+    assert.equal(refused.body.error.code, 'NOT_A_CHIEF_BOT')
+
+    // Naming an ordinary Bot as the administrator is still refused: the standing is checked, not
+    // taken on the caller's word.
+    const namedOrdinary = await workgroup(alice, { botIds: ['worker', 'other'], adminBotId: 'worker' })
+    assert.equal(namedOrdinary.status, 400, namedOrdinary.raw)
+    assert.equal(namedOrdinary.body.error.code, 'NOT_A_CHIEF_BOT')
   })
 })
 
